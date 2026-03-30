@@ -1,0 +1,10 @@
+pre-commit:
+  parallel: true
+  commands:
+    repo-pre-commit:
+      run: make hook-pre-commit
+
+pre-push:
+  commands:
+    repo-pre-push:
+      run: make hook-pre-push
