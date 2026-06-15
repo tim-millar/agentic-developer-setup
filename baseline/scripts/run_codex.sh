@@ -77,7 +77,7 @@ Environment:
   GITHUB_APP_ID                Numeric GitHub App ID (required when GITHUB_ACCESS_MODE=app)
   GITHUB_APP_INSTALLATION_ID   Numeric GitHub App installation ID (required when GITHUB_ACCESS_MODE=app)
   GITHUB_APP_PRIVATE_KEY_PATH  Path to GitHub App private key PEM (required when GITHUB_ACCESS_MODE=app)
-  EXPECTED_OWNER               GitHub owner/org for issue lookup (default: palaceskateboards)
+  EXPECTED_OWNER               GitHub owner/org for issue lookup (default: tim-millar)
   EXPECTED_REPO                GitHub repo for issue lookup (default: basename of repo root)
   CODEX_BIN                    Codex executable to run (default: codex)
   CODEX_PROFILE                Default Codex profile to use

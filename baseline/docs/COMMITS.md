@@ -67,7 +67,7 @@ Add archive import validation for missing product dates
 
 Agent: codex
 Agent-Mode: assisted
-Launched-By: Tim Millar <tim@palaceskateboards.com>
+Launched-By: Tim Millar <tim.millar2@gmail.com>
 Issue: #123
 ```
 
