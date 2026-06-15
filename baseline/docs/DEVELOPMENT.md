@@ -298,6 +298,7 @@ Link related documents here as they are created.
 Typical examples:
 
 - `AGENTS.md`
+- `CLAUDE.md`
 - `README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/DOMAIN.md`
