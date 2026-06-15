@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Add repo-specific runtime/tooling setup here.
+      #
+      # Examples:
+      # - actions/setup-node
+      # - actions/setup-python
+      # - ruby/setup-ruby
+      # - service containers
+      # - Docker / Compose setup
+      #
+      # Keep the workflow structure stable, but allow repo-specific
+      # execution details here.
+
+      - name: Verify make is available
+        run: make --version
+
+      - name: Run lint checks
+        run: make ci-lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Add repo-specific runtime/tooling setup here.
+
+      - name: Verify make is available
+        run: make --version
+
+      - name: Run test suite
+        run: make ci-test
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Add repo-specific runtime/tooling setup here.
+
+      - name: Verify make is available
+        run: make --version
+
+      - name: Run type checks
+        run: make ci-typecheck
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Add repo-specific runtime/tooling setup here.
+
+      - name: Verify make is available
+        run: make --version
+
+      - name: Run build checks
+        run: make ci-build
