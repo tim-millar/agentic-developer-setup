@@ -1,0 +1,206 @@
+schema_version: 1
+framework:
+  name: agent-development-framework
+  framework_version: 0.1.0
+  description: >
+    A reusable framework for enabling safe, productive agent-assisted
+    development across application repositories.
+  intended_for:
+    - greenfield repositories
+    - existing repositories
+    - legacy repositories
+  primary_goals:
+    - standardise agent operating contracts
+    - improve issue execution readiness
+    - provide reusable documentation scaffolding
+    - standardise local command surfaces
+    - support hooks and CI quality gates
+    - make agent involvement more reviewable and traceable
+
+usage_modes:
+  - id: greenfield-bootstrap
+    name: Greenfield bootstrap
+    description: >
+      Instantiate the baseline and relevant adapters for a new repository
+      intended to support agent-led development from the start.
+  - id: existing-repo-audit
+    name: Existing repo audit
+    description: >
+      Compare an existing repository against the framework and adopt the
+      highest-value artefacts incrementally.
+  - id: legacy-safe-enablement
+    name: Legacy safe enablement
+    description: >
+      Use the framework as a safety and clarity overlay for a long-running
+      or high-risk codebase.
+
+prompts:
+  - id: greenfield-bootstrap
+    path: prompts/greenfield-bootstrap.md
+    purpose: Instantiate the framework into a new repository using baseline files, adapters, and project planning materials.
+  - id: existing-repo-audit
+    path: prompts/existing-repo-audit.md
+    purpose: Assess an existing repository against the framework and recommend a minimal, safe adaptation path.
+  - id: legacy-safe-enablement
+    path: prompts/legacy-safe-enablement.md
+    purpose: Identify the smallest, safest framework overlay that improves agent safety and legibility in a legacy production repository.
+
+baseline:
+  required:
+    - path: AGENTS.md
+      category: agent-contract
+    - path: docs/AGENT_PROMPT.txt
+      category: agent-session-brief
+    - path: Makefile
+      category: command-surface
+    - path: docs/ARCHITECTURE.md
+      category: architecture-scaffold
+    - path: docs/DEVELOPMENT.md
+      category: local-development-guide
+    - path: .github/PULL_REQUEST_TEMPLATE.md
+      category: review-handoff
+    - path: .github/workflows/ci.yml
+      category: ci-validation
+    - path: lefthook.yml
+      category: git-hooks
+  recommended:
+    - path: docs/DOMAIN.md
+      category: domain-context
+    - path: docs/TESTING.md
+      category: testing-strategy
+    - path: docs/COMMITS.md
+      category: commit-metadata
+    - path: scripts/run_codex.sh
+      category: agent-launcher
+    - path: scripts/mint_gh_app_token.sh
+      category: github-access-helper
+    - path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+      category: issue-template
+    - path: .github/ISSUE_TEMPLATE/bug-report.md
+      category: issue-template
+    - path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      category: issue-template
+    - path: .github/ISSUE_TEMPLATE/config.yml
+      category: issue-template-config
+    - path: CLAUDE.md
+      category: claude-agent-entrypoint
+
+adoption_tiers:
+  - id: tier-1
+    name: agent-aware
+    description: >
+      Basic documentation and workflow scaffolding that makes a repository
+      more legible and safer for agent-assisted work.
+    includes:
+      - AGENTS.md
+      - CLAUDE.md
+      - docs/DEVELOPMENT.md
+      - .github/PULL_REQUEST_TEMPLATE.md
+      - .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+  - id: tier-2
+    name: agent-operable
+    description: >
+      Standard command surfaces, launcher, hooks, and CI that make agent work
+      practically executable in the repository.
+    includes:
+      - Makefile
+      - scripts/run_codex.sh
+      - lefthook.yml
+      - .github/workflows/ci.yml
+  - id: tier-3
+    name: agent-optimised
+    description: >
+      Fuller architecture, domain, testing, and commit convention support for
+      repositories intended to support robust long-term agent usage.
+    includes:
+      - docs/ARCHITECTURE.md
+      - docs/DOMAIN.md
+      - docs/TESTING.md
+      - docs/COMMITS.md
+
+adapters:
+  - id: node
+    type: stack
+    path: adapters/node
+    description: >
+      Overlay for Node-based repositories, including command, CI, and hook
+      patterns relevant to the JavaScript/TypeScript ecosystem.
+  - id: ruby
+    type: stack
+    path: adapters/ruby
+    description: >
+      Overlay for Ruby-based repositories, including command, CI, and testing
+      patterns relevant to Ruby applications.
+  - id: python
+    type: stack
+    path: adapters/python
+    description: >
+      Overlay for Python-based repositories, including command, CI, and testing
+      patterns relevant to Python applications.
+  - id: elixir
+    type: stack
+    path: adapters/elixir
+    description: >
+      Overlay for Elixir-based repositories, including command, CI, and testing
+      patterns relevant to Elixir applications.
+  - id: docker
+    type: environment
+    path: adapters/docker
+    description: >
+      Overlay for repositories that hide container complexity behind the
+      standard command surface.
+  - id: non-containerised
+    type: environment
+    path: adapters/non-containerised
+    description: >
+      Overlay for repositories that use local tooling directly rather than
+      container-based development environments.
+
+issue_templates:
+  primary:
+    id: agent-ready-implementation
+    path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    purpose: >
+      Primary template for deterministic implementation work intended to be
+      executable by a developer or agent with minimal ambiguity.
+  additional:
+    - id: bug-report
+      path: .github/ISSUE_TEMPLATE/bug-report.md
+      purpose: >
+        Template for defects or unintended behaviour, including cases that are
+        either implementation-ready or still require investigation.
+    - id: discovery-or-shaping
+      path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      purpose: >
+        Template for work that is not yet ready for deterministic implementation
+        and still requires investigation, design, or clarification.
+
+conventions:
+  issue_workflow:
+    implementation_ready_issues_are_primary: true
+    discovery_work_should_be_explicit: true
+    issue_execution_readiness_is_part_of_scope_control: true
+
+  command_surface:
+    makefile_is_primary_interface: true
+    local_and_ci_commands_share_conceptual_surface: true
+    ci_specific_overlays_supported: true
+
+  hooks:
+    standard_runner: lefthook
+    hook_targets:
+      - make hook-pre-commit
+      - make hook-pre-push
+
+  ci:
+    semantically_grouped_jobs_preferred: true
+    typical_targets:
+      - make ci-lint
+      - make ci-test
+      - make ci-typecheck
+      - make ci-build
+
+  commit_metadata:
+    documented_in: docs/COMMITS.md
+    default_authorship_model: developer-author
+    agent_metadata_recorded_in_trailers: true
