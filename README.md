@@ -151,6 +151,66 @@ Typical flow:
 4. expose a safe command surface
 5. expand automation and documentation gradually
 
+## Example Adoption Workflow
+
+The framework is intended to be adopted incrementally. A typical existing-repository adoption might look like this:
+
+```text
+Target repository:
+  Existing web application with an established development workflow
+
+Selected adapters:
+  ecosystem: node
+  framework: nextjs
+  runtime: non-containerised
+  app-shape: frontend-application
+```
+
+1. **Audit the repository**
+
+   Use the existing-repo audit prompt to identify the current development commands, test coverage, CI behaviour, documentation gaps, and agent-readiness risks.
+
+2. **Apply the baseline**
+
+   Copy or adapt the baseline artefacts into the target repository using the `source_path` and `target_path` mappings in `framework.yml`.
+
+   Examples:
+
+   ```text
+   baseline/AGENTS.md             -> AGENTS.md
+   baseline/docs/DEVELOPMENT.md   -> docs/DEVELOPMENT.md
+   baseline/docs/TESTING.md       -> docs/TESTING.md
+   baseline/Makefile              -> Makefile
+   ```
+
+3. **Wire the command interface**
+
+   Update the Makefile so agents and humans have a common command surface for routine checks.
+
+   Example targets:
+
+   ```text
+   make setup
+   make lint
+   make test
+   make typecheck
+   make check
+   ```
+
+4. **Document repository-specific constraints**
+
+   Fill in the target repository’s architecture, domain, development, and testing notes so agents have grounded context before making changes.
+
+5. **Run agents with constrained access**
+
+   Start with local-only agent sessions and GitHub access disabled. Enable GitHub App access only when the repository contract, permissions, and intended workflow are understood.
+
+6. **Feed failures back into the framework**
+
+   When an agent fails, update the relevant prompt, checklist, adapter, command, or repository document so the same class of failure is less likely to recur.
+
+The goal is not just to complete one agent task, but to make the repository progressively more legible, testable, and safe for repeated agent-assisted development.
+
 ## Adoption Tiers
 
 The framework supports incremental adoption.
