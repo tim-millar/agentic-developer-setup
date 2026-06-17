@@ -49,7 +49,9 @@ framework.yml  Machine-readable framework metadata
 
 The `baseline/` directory contains the shared artefacts that define the default framework shape.
 
-These include documents and automation such as:
+In this source repository, baseline artefacts live under `baseline/`. When adopted into an application repository, they are intended to land at the target paths described in `framework.yml`.
+
+These include target-repository documents and automation such as:
 
 - `AGENTS.md`
 - `docs/AGENT_PROMPT.txt`
@@ -60,7 +62,7 @@ These include documents and automation such as:
 - `docs/COMMITS.md`
 - `Makefile`
 - `lefthook.yml`
-- `scripts/run_agent.sh`
+- `scripts/run_codex.sh`
 - GitHub issue and PR templates
 - baseline CI workflow
 
@@ -113,7 +115,7 @@ Use the framework to initialise a new repository that is intended to support age
 
 Typical flow:
 
-1. copy or instantiate the `baseline/`
+1. copy or instantiate artefacts from `baseline/` into their target paths
 2. apply relevant adapters
 3. specialise the docs for the project domain, architecture, and workflow
 4. wire up hooks, Make targets, and CI
@@ -166,7 +168,7 @@ Choose the path that matches your goal.
 
 ### Starting a new project
 
-- begin with `baseline/`
+- begin with the artefacts under `baseline/` and the target paths in `framework.yml`
 - select the relevant ecosystem, framework, runtime, and app-shape adapters
 - use the greenfield checklist
 - instantiate repo-specific docs from the project plan, architecture, and issue set
@@ -201,6 +203,8 @@ The `prompts/` directory exists to support those workflows.
 ## Machine-Readable Framework Metadata
 
 The file `framework.yml` provides structured metadata about the framework, including baseline artefacts, adoption tiers, and adapter definitions.
+
+For baseline artefacts, `framework.yml` records both the source path in this framework repository and the intended target path in an adopted repository. This makes the baseline usable by humans, agents, and future scaffolding scripts.
 
 This is intended to make auditing, instantiation, and automated use easier for both humans and agents.
 

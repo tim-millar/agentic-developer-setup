@@ -37,7 +37,7 @@ usage_modes:
 prompts:
   - id: greenfield-bootstrap
     path: prompts/greenfield-bootstrap.md
-    purpose: Instantiate the framework into a new repository using baseline files, adapters, and project planning materials.
+    purpose: Instantiate the framework into a new repository using baseline artefacts, adapters, and project planning materials.
   - id: existing-repo-audit
     path: prompts/existing-repo-audit.md
     purpose: Assess an existing repository against the framework and recommend a minimal, safe adaptation path.
@@ -45,45 +45,130 @@ prompts:
     path: prompts/legacy-safe-enablement.md
     purpose: Identify the smallest, safest framework overlay that improves agent safety and legibility in a legacy production repository.
 
+path_conventions:
+  baseline:
+    source_path: Path inside this framework source repository.
+    target_path: Intended path inside an instantiated target repository.
+  adapters:
+    path: Path inside this framework source repository.
+  prompts:
+    path: Path inside this framework source repository.
+
 baseline:
+  description: Baseline artefacts that can be copied or adapted into a target repository.
+  path_semantics:
+    source_path: Path inside this framework source repository.
+    target_path: Intended path inside an instantiated target repository.
+
   required:
-    - path: AGENTS.md
+    - name: agent_instructions
       category: agent-contract
-    - path: docs/AGENT_PROMPT.txt
+      source_path: baseline/AGENTS.md
+      target_path: AGENTS.md
+      description: Canonical instructions for agents working in the target repository.
+
+    - name: agent_prompt
       category: agent-session-brief
-    - path: Makefile
+      source_path: baseline/docs/AGENT_PROMPT.txt
+      target_path: docs/AGENT_PROMPT.txt
+      description: Base prompt used to orient an agent session in the target repository.
+
+    - name: command_interface
       category: command-surface
-    - path: docs/ARCHITECTURE.md
-      category: architecture-scaffold
-    - path: docs/DEVELOPMENT.md
+      source_path: baseline/Makefile
+      target_path: Makefile
+      description: Standard command interface for development, validation, and agent-executable workflows.
+
+    - name: development_guide
       category: local-development-guide
-    - path: .github/PULL_REQUEST_TEMPLATE.md
-      category: review-handoff
-    - path: .github/workflows/ci.yml
-      category: ci-validation
-    - path: lefthook.yml
-      category: git-hooks
-  recommended:
-    - path: docs/DOMAIN.md
-      category: domain-context
-    - path: docs/TESTING.md
+      source_path: baseline/docs/DEVELOPMENT.md
+      target_path: docs/DEVELOPMENT.md
+      description: Local development guide for humans and agents working in the target repository.
+
+    - name: testing_strategy
       category: testing-strategy
-    - path: docs/COMMITS.md
-      category: commit-metadata
-    - path: scripts/run_codex.sh
-      category: agent-launcher
-    - path: scripts/mint_gh_app_token.sh
-      category: github-access-helper
-    - path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
-      category: issue-template
-    - path: .github/ISSUE_TEMPLATE/bug-report.md
-      category: issue-template
-    - path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
-      category: issue-template
-    - path: .github/ISSUE_TEMPLATE/config.yml
-      category: issue-template-config
-    - path: CLAUDE.md
+      source_path: baseline/docs/TESTING.md
+      target_path: docs/TESTING.md
+      description: Testing and validation expectations for the target repository.
+
+  recommended:
+    - name: claude_agent_entrypoint
       category: claude-agent-entrypoint
+      source_path: baseline/CLAUDE.md
+      target_path: CLAUDE.md
+      description: Claude-specific entrypoint that points back to the shared agent contract.
+
+    - name: git_hooks
+      category: git-hooks
+      source_path: baseline/lefthook.yml
+      target_path: lefthook.yml
+      description: Standard local hook configuration for pre-commit and pre-push validation.
+
+    - name: architecture_scaffold
+      category: architecture-scaffold
+      source_path: baseline/docs/ARCHITECTURE.md
+      target_path: docs/ARCHITECTURE.md
+      description: Architecture documentation scaffold for target repository structure and decisions.
+
+    - name: commit_metadata
+      category: commit-metadata
+      source_path: baseline/docs/COMMITS.md
+      target_path: docs/COMMITS.md
+      description: Commit authorship and metadata conventions for human and agent-assisted work.
+
+    - name: domain_context
+      category: domain-context
+      source_path: baseline/docs/DOMAIN.md
+      target_path: docs/DOMAIN.md
+      description: Domain documentation scaffold for target repository concepts and rules.
+
+    - name: pull_request_template
+      category: review-handoff
+      source_path: baseline/.github/PULL_REQUEST_TEMPLATE.md
+      target_path: .github/PULL_REQUEST_TEMPLATE.md
+      description: Pull request template for review handoff and validation evidence.
+
+    - name: ci_workflow
+      category: ci-validation
+      source_path: baseline/.github/workflows/ci.yml
+      target_path: .github/workflows/ci.yml
+      description: Baseline CI workflow for framework validation commands.
+
+    - name: agent_launcher
+      category: agent-launcher
+      source_path: baseline/scripts/run_codex.sh
+      target_path: scripts/run_codex.sh
+      description: Helper script for launching a Codex session with repo-local context.
+
+    - name: github_access_helper
+      category: github-access-helper
+      source_path: baseline/scripts/mint_gh_app_token.sh
+      target_path: scripts/mint_gh_app_token.sh
+      description: Helper script for minting GitHub App tokens when a target repo uses that workflow.
+
+    - name: agent_ready_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/agent-ready-implementation.md
+      target_path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+      description: Primary template for deterministic implementation work.
+
+    - name: bug_report_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/bug-report.md
+      target_path: .github/ISSUE_TEMPLATE/bug-report.md
+      description: Template for reporting defects or unintended behaviour.
+
+    - name: discovery_or_shaping_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      target_path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      description: Template for work that needs investigation, design, or clarification.
+
+    - name: issue_template_config
+      category: issue-template-config
+      source_path: baseline/.github/ISSUE_TEMPLATE/config.yml
+      target_path: .github/ISSUE_TEMPLATE/config.yml
+      description: GitHub issue template chooser configuration.
 
 adoption_tiers:
   - id: tier-1
@@ -170,18 +255,21 @@ adapters:
 issue_templates:
   primary:
     id: agent-ready-implementation
-    path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    source_path: baseline/.github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    target_path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
     purpose: >
       Primary template for deterministic implementation work intended to be
       executable by a developer or agent with minimal ambiguity.
   additional:
     - id: bug-report
-      path: .github/ISSUE_TEMPLATE/bug-report.md
+      source_path: baseline/.github/ISSUE_TEMPLATE/bug-report.md
+      target_path: .github/ISSUE_TEMPLATE/bug-report.md
       purpose: >
         Template for defects or unintended behaviour, including cases that are
         either implementation-ready or still require investigation.
     - id: discovery-or-shaping
-      path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      source_path: baseline/.github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      target_path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
       purpose: >
         Template for work that is not yet ready for deterministic implementation
         and still requires investigation, design, or clarification.

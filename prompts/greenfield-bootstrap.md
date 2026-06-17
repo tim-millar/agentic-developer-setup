@@ -51,11 +51,12 @@ You may be given some or all of the following:
 ## Framework Usage Rules
 
 1. Start from the framework baseline.
-2. Apply only the adapters that are materially justified by the project inputs.
-3. Preserve the baseline structure unless the project inputs clearly justify a specialisation.
-4. Prefer the minimum set of overrides needed.
-5. Instantiate the documents and automation conservatively.
-6. When information is missing, leave unresolved sections explicit rather than inventing confident but unsupported detail.
+2. Use `framework.yml` to identify each baseline artefact's `source_path` in this framework repository and intended `target_path` in the target repository.
+3. Apply only the adapters that are materially justified by the project inputs.
+4. Preserve the baseline structure unless the project inputs clearly justify a specialisation.
+5. Prefer the minimum set of overrides needed.
+6. Instantiate the documents and automation conservatively.
+7. When information is missing, leave unresolved sections explicit rather than inventing confident but unsupported detail.
 
 ## Adapter Rules
 
@@ -101,6 +102,8 @@ Do not silently invent:
 ## What To Generate
 
 Generate the project-specific versions of the relevant framework artefacts.
+
+Use target repository paths when listing generated files.
 
 Typical outputs may include:
 
