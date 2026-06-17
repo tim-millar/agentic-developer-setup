@@ -193,6 +193,13 @@ agent_runtimes:
       access_modes:
         - disabled
         - app
+      repository_identity:
+        origin_remote_required: true
+        origin_remote_scheme: https
+        expected_owner_env: EXPECTED_OWNER
+        expected_owner_default: tim-millar
+        expected_repo_env: EXPECTED_REPO
+        expected_repo_default: target repository directory name
       description: >
         Codex-first local agent runtime for deterministic implementation tasks,
         repository-scoped execution, prompt assembly, and optional GitHub App access.

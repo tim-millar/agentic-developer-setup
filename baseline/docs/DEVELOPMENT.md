@@ -129,6 +129,14 @@ The current public baseline includes the Codex launcher at `scripts/run_codex.sh
 
 If another coding agent is supported in this repository, document its separate launcher, access policy, prompt expectations, and runtime-specific constraints here.
 
+### Codex launcher repository identity check
+
+The baseline Codex launcher is repository-scoped. Before launch, `scripts/run_codex.sh` validates that the target repository has an `origin` remote configured as an HTTPS GitHub URL matching `EXPECTED_OWNER/EXPECTED_REPO`.
+
+By default, `EXPECTED_OWNER` is `tim-millar` and `EXPECTED_REPO` is the target repository directory name. Target repositories should override these values where needed.
+
+This check is separate from GitHub API access. `GITHUB_ACCESS_MODE=disabled` prevents the agent session from using GitHub credentials or fetching issue context, but the launcher still verifies repository identity before starting the session.
+
 ## Standard Command Surface
 
 This repository should expose a standard command surface through the top-level `Makefile`.
