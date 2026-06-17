@@ -79,6 +79,12 @@ A target repository may combine several adapters: for example, Ruby + Rails + Do
 
 Adapters are intended to specialise the baseline, not replace it.
 
+### Agent runtime
+
+An agent runtime is the tool-specific launcher and operating policy for a specific coding agent.
+
+The framework is agent-runtime-aware rather than agent-agnostic: shared repository practices live in the baseline, while agent-specific execution behaviour lives in runtime launchers.
+
 ### Checklists
 
 The `checklists/` directory describes how to apply the framework in different scenarios.
@@ -200,9 +206,19 @@ Typical agent workflows include:
 
 The `prompts/` directory exists to support those workflows.
 
+## Agent Runtime Support
+
+This framework is general-purpose at the repository and workflow level, but agent runtimes are intentionally tool-specific.
+
+Different coding agents have different interfaces, strengths, failure modes, and safety characteristics. Rather than hiding those differences behind a single generic wrapper, the framework treats each supported agent as a distinct runtime with its own launcher, prompt assembly, access policy, and operating constraints.
+
+The current public baseline is Codex-first. It includes a Codex launcher for local agent sessions, repository validation, prompt construction, and optional GitHub App access.
+
+The surrounding framework remains reusable across different application repositories through its baseline artefacts, workflow prompts, adoption tiers, metadata, and adapter model. Additional agent runtimes can be added alongside Codex where their behaviour and safety model justify separate support.
+
 ## Machine-Readable Framework Metadata
 
-The file `framework.yml` provides structured metadata about the framework, including baseline artefacts, adoption tiers, and adapter definitions.
+The file `framework.yml` provides structured metadata about the framework, including baseline artefacts, adoption tiers, agent runtime support, and adapter definitions.
 
 For baseline artefacts, `framework.yml` records both the source path in this framework repository and the intended target path in an adopted repository. This makes the baseline usable by humans, agents, and future scaffolding scripts.
 

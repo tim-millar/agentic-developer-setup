@@ -108,7 +108,7 @@ These conventions should be easy to follow where practical, but should not creat
 
 Typical support mechanisms may include:
 
-- `run_codex.sh` exporting session metadata
+- `scripts/run_codex.sh` exporting session metadata
 - a commit message template
 - a commit helper script that appends trailers
 - optional `commit-msg` validation for teams that want stronger local consistency

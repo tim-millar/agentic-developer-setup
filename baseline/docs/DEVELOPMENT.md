@@ -119,6 +119,16 @@ The expected development loop is:
 
 This is the default workflow unless the repository documents a more specific process.
 
+## Agent Runtime Support
+
+This repository may support one or more tool-specific agent runtimes.
+
+The baseline framework is agent-runtime-aware rather than agent-agnostic. Shared repository practices belong in `AGENTS.md`, this development guide, the standard command surface, and project documentation. Agent-specific execution behaviour belongs in runtime launchers.
+
+The current public baseline includes the Codex launcher at `scripts/run_codex.sh`. That launcher is intended for Codex sessions, prompt assembly, repository-scoped execution, validation workflow support, and optional GitHub App access. Do not assume it is a generic wrapper for every coding agent.
+
+If another coding agent is supported in this repository, document its separate launcher, access policy, prompt expectations, and runtime-specific constraints here.
+
 ## Standard Command Surface
 
 This repository should expose a standard command surface through the top-level `Makefile`.

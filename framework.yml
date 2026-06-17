@@ -49,6 +49,10 @@ path_conventions:
   baseline:
     source_path: Path inside this framework source repository.
     target_path: Intended path inside an instantiated target repository.
+  agent_runtimes:
+    launcher:
+      source_path: Launcher path inside this framework source repository.
+      target_path: Intended launcher path inside an instantiated target repository.
   adapters:
     path: Path inside this framework source repository.
   prompts:
@@ -96,7 +100,7 @@ baseline:
       category: claude-agent-entrypoint
       source_path: baseline/CLAUDE.md
       target_path: CLAUDE.md
-      description: Claude-specific entrypoint that points back to the shared agent contract.
+      description: Compatibility entrypoint that points Claude Code users to the shared agent contract; not a runtime launcher.
 
     - name: git_hooks
       category: git-hooks
@@ -169,6 +173,36 @@ baseline:
       source_path: baseline/.github/ISSUE_TEMPLATE/config.yml
       target_path: .github/ISSUE_TEMPLATE/config.yml
       description: GitHub issue template chooser configuration.
+
+agent_runtimes:
+  philosophy: >
+    Agent runtimes are tool-specific integrations. The framework does not assume
+    that all coding agents can be safely or usefully wrapped by the same script.
+    Each runtime may define its own launcher, prompt assembly, access policy,
+    and operational constraints.
+
+  supported:
+    - name: codex
+      status: supported
+      launcher:
+        source_path: baseline/scripts/run_codex.sh
+        target_path: scripts/run_codex.sh
+      prompt:
+        source_path: baseline/docs/AGENT_PROMPT.txt
+        target_path: docs/AGENT_PROMPT.txt
+      access_modes:
+        - disabled
+        - app
+      description: >
+        Codex-first local agent runtime for deterministic implementation tasks,
+        repository-scoped execution, prompt assembly, and optional GitHub App access.
+
+  planned:
+    - name: claude-code
+      status: planned
+      description: >
+        Potential future runtime for exploratory development workflows. Expected
+        to require distinct operating constraints and separate safety guidance.
 
 adoption_tiers:
   - id: tier-1
