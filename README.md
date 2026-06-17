@@ -288,8 +288,8 @@ This is intended to make auditing, instantiation, and automated use easier for b
 
 See also:
 
-- `FRAMEWORK.md`
-- `docs/repo-structure.md`
-- `docs/adoption-tiers.md`
-- `docs/adapter-format.md`
-- `docs/usage-patterns.md`
+- `framework.yml` for machine-readable framework metadata
+- `adapters/README.md` for adapter taxonomy and composition guidance
+- `prompts/greenfield-bootstrap.md` for greenfield framework adoption
+- `prompts/existing-repo-audit.md` for existing repository assessment
+- `prompts/legacy-safe-enablement.md` for legacy safe-enablement planning
