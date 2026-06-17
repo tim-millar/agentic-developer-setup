@@ -67,7 +67,7 @@ Add archive import validation for missing product dates
 
 Agent: codex
 Agent-Mode: assisted
-Launched-By: Tim Millar <tim.millar2@gmail.com>
+Launched-By: Developer Name <developer@example.com>
 Issue: #123
 ```
 
