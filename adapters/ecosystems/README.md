@@ -6,6 +6,12 @@ Ecosystem adapters specialise the framework baseline for a programming language 
 
 They capture the conventions and operational patterns that are common across repositories built in the same ecosystem, even when those repositories use different frameworks or serve different application roles.
 
+Path:
+
+```text
+adapters/ecosystems/<name>
+```
+
 Examples include:
 
 - Node
@@ -56,7 +62,7 @@ An ecosystem adapter is usually combined with:
 Examples:
 
 - Node + Express + Docker + API service
-- Ruby + Sinatra + Docker + Fullstack monolith
+- Ruby + Sinatra + Docker + monolith
 - Elixir + Phoenix + non-containerised + Admin app
 
 ## Design Principle

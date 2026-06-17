@@ -33,7 +33,7 @@ You may be given some or all of the following:
 ### Strongly recommended
 
 - issue list or implementation task list
-- intended stack or ecosystem
+- intended ecosystem
 - intended framework
 - intended local runtime model
 - intended app shape
@@ -67,6 +67,13 @@ When adapter information is available:
 - identify the most relevant app-shape adapter
 - apply only the adapters that are clearly relevant
 
+For example, a Rails monolith running in Docker might use:
+
+- ecosystem: ruby
+- framework: rails
+- runtime: docker
+- app-shape: monolith
+
 When a relevant adapter does not exist:
 
 - continue using the baseline
@@ -87,7 +94,7 @@ Do not silently invent:
 
 - architecture decisions not present in the source materials
 - domain rules not present in the source materials
-- tooling choices not justified by the stack/framework/runtime context
+- tooling choices not justified by the ecosystem/framework/runtime/app-shape context
 - CI or hook behaviour not justified by the intended workflow
 - issue semantics or validation expectations that are not grounded in the framework or project inputs
 

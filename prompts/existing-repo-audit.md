@@ -56,9 +56,10 @@ You may be given some or all of the following:
 
 Assess the repository across areas such as:
 
-- stack and ecosystem
+- ecosystem
 - application framework
 - local runtime model
+- app shape
 - CI platform and CI structure
 - hook tooling
 - command surface and Makefile shape
@@ -105,8 +106,8 @@ Examples may include reusable patterns for:
 - ecosystem adapters
 - framework adapters
 - runtime adapters
+- app-shape adapters
 - CI platform adaptation
-- app-shape guidance
 
 Do not force these abstractions into the target repo immediately. Surface them as reusable framework opportunities.
 
@@ -129,9 +130,10 @@ Summarise the current repository in concrete terms.
 
 Include areas such as:
 
-- stack
+- ecosystem
 - framework
 - runtime model
+- app shape
 - CI platform
 - hook tooling
 - command surface

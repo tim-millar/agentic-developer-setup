@@ -6,11 +6,17 @@ App-shape adapters specialise the framework baseline for the broad kind of syste
 
 They capture the operational, documentation, and testing implications of the application’s role, without trying to define its full architecture.
 
+Path:
+
+```text
+adapters/app-shapes/<name>
+```
+
 Examples include:
 
 - API service
 - Frontend app
-- Fullstack monolith
+- Monolith
 - Admin app
 
 ## What Belongs Here
@@ -58,7 +64,7 @@ Examples:
 
 - Node + Express + Docker + API service
 - Node + Next.js + non-containerised + Frontend app
-- Ruby + Sinatra + Docker + Fullstack monolith
+- Ruby + Sinatra + Docker + monolith
 - Elixir + Phoenix + Docker + Admin app
 
 ## Design Principle

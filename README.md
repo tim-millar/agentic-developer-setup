@@ -5,7 +5,7 @@ A reusable framework for enabling safe, productive agent-assisted development ac
 This repository provides:
 
 - a **baseline set of repo artefacts** for agent-enabled development
-- **stack and environment adapters** for different kinds of projects
+- **ecosystem, framework, runtime, and app-shape adapters** for different kinds of projects
 - **checklists** for greenfield, existing, and legacy repo adoption
 - **prompt packs** for using the framework with LLMs and coding agents
 - **examples** showing how the framework can be instantiated in real repositories
@@ -35,7 +35,7 @@ The framework is not a single application template. It is a reusable operating l
 
 ```text
 baseline/    Shared baseline artefacts used in agent-enabled repos
-adapters/    Stack- or environment-specific overlays
+adapters/    Ecosystem, framework, runtime, and app-shape overlays
 checklists/  Adoption checklists for different repo types
 prompts/     Prompt packs for using the framework with agents/LLMs
 examples/    Example instantiated repo shapes
@@ -66,15 +66,14 @@ These include documents and automation such as:
 
 ### Adapters
 
-The `adapters/` directory contains overlays for specific stacks or runtime models.
+Adapters capture the assumptions needed to apply the framework to a specific repository. They are grouped into four types:
 
-Examples include:
+- ecosystem adapters for language and package-manager assumptions
+- framework adapters for application-framework conventions
+- runtime adapters for execution, container, and local-development assumptions
+- app-shape adapters for architectural patterns such as API services, workers, monoliths, and static sites
 
-- `node/`
-- `ruby/`
-- `elixir/`
-- `docker/`
-- `non-containerised/`
+A target repository may combine several adapters: for example, Ruby + Rails + Docker + monolith.
 
 Adapters are intended to specialise the baseline, not replace it.
 
@@ -168,7 +167,7 @@ Choose the path that matches your goal.
 ### Starting a new project
 
 - begin with `baseline/`
-- select the relevant adapters
+- select the relevant ecosystem, framework, runtime, and app-shape adapters
 - use the greenfield checklist
 - instantiate repo-specific docs from the project plan, architecture, and issue set
 
@@ -194,7 +193,7 @@ Typical agent workflows include:
 - instantiating the framework for a new repo
 - auditing an existing repo against the baseline
 - generating draft project docs from existing context
-- proposing stack-specific Makefile, hook, and CI overlays
+- proposing adapter-specific Makefile, hook, and CI overlays
 - converting vague work into agent-ready implementation issues
 
 The `prompts/` directory exists to support those workflows.

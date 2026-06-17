@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The `adapters/` directory contains overlays that specialise the framework baseline for particular stacks or local runtime models.
+Adapters describe the repository-specific assumptions needed to apply the baseline framework safely.
 
-Adapters exist so that repositories can share a common agent-development framework while still applying the conventions, tooling patterns, and operational details that make sense for their ecosystem.
+Adapters exist so that repositories can share a common agent-development framework while still applying the conventions, tooling patterns, and operational details that make sense for their ecosystem, framework, runtime, and application shape.
 
 Adapters are intended to be:
 
@@ -19,7 +19,7 @@ They are not intended to replace the baseline.
 
 The baseline defines the shared framework shape.
 
-Adapters specialise that shape where a repository’s stack or runtime model requires it.
+Adapters specialise that shape where a repository’s ecosystem, framework, runtime, or application shape requires it.
 
 In general:
 
@@ -31,19 +31,19 @@ Adapters should extend or override the baseline only where there is a clear reas
 
 ## Adapter Types
 
-The framework currently treats adapters as belonging to two broad categories.
+The framework treats adapters as belonging to four canonical types.
 
-### Stack adapters
+### Ecosystem adapters
 
-Stack adapters specialise the baseline for a language or ecosystem.
+Ecosystem adapters specialise the baseline for language and package-manager assumptions.
 
-Examples include:
+Path:
 
-- `node/`
-- `ruby/`
-- `elixir/`
+```text
+adapters/ecosystems/<name>
+```
 
-A stack adapter may provide guidance or overlays for:
+An ecosystem adapter may provide guidance or overlays for:
 
 - Makefile command mappings
 - testing, linting, formatting, and type-check patterns
@@ -51,16 +51,34 @@ A stack adapter may provide guidance or overlays for:
 - hook integrations
 - documentation notes relevant to that ecosystem
 
-### Environment adapters
+### Framework adapters
 
-Environment adapters specialise the baseline for a local runtime model.
+Framework adapters specialise the baseline for application-framework conventions.
 
-Examples include:
+Path:
 
-- `docker/`
-- `non-containerised/`
+```text
+adapters/frameworks/<name>
+```
 
-An environment adapter may provide guidance or overlays for:
+A framework adapter may provide guidance or overlays for:
+
+- framework-specific local commands
+- test, shell, console, and migration conventions
+- framework-specific documentation notes
+- common CI and hook implications
+
+### Runtime adapters
+
+Runtime adapters specialise the baseline for execution, containerisation, deployment, and local-development assumptions.
+
+Path:
+
+```text
+adapters/runtimes/<name>
+```
+
+A runtime adapter may provide guidance or overlays for:
 
 - how the standard command surface maps to local execution
 - how runtime startup is handled
@@ -68,15 +86,33 @@ An environment adapter may provide guidance or overlays for:
 - how local and CI commands differ
 - how infrastructure complexity is hidden behind the Makefile
 
+### App-shape adapters
+
+App-shape adapters specialise the baseline for architectural and delivery-shape assumptions.
+
+Path:
+
+```text
+adapters/app-shapes/<name>
+```
+
+An app-shape adapter may provide guidance or overlays for:
+
+- likely command-surface emphasis
+- likely testing emphasis
+- likely documentation emphasis
+- common CI validation categories
+- common operational concerns for this kind of system
+
 ## Adapters Are Composable
 
 Repositories will often use more than one adapter.
 
 Typical combinations include:
 
-- Node + Docker
-- Ruby + Docker
-- Elixir + non-containerised
+- Node + Express + Docker + API service
+- Ruby + Rails + Docker + monolith
+- Elixir + Phoenix + non-containerised + worker
 
 This is the intended usage model.
 
@@ -89,9 +125,9 @@ Adapters should usually contain small overlays such as:
 - Makefile fragments or examples
 - CI setup snippets
 - hook-related examples
-- testing notes for the relevant stack or runtime model
+- testing notes for the relevant ecosystem, framework, runtime model, or app shape
 - local development notes that refine `docs/DEVELOPMENT.md`
-- stack-specific notes that refine `docs/TESTING.md`
+- adapter-specific notes that refine `docs/TESTING.md`
 
 Adapters should not usually contain:
 
@@ -107,15 +143,17 @@ If an adapter starts to look like an entire standalone framework, it is probably
 When applying the framework to a repository:
 
 1. start from the baseline
-2. choose the stack adapter that best matches the dominant application ecosystem
-3. choose the environment adapter that best matches the local development model
-4. apply only the specialisations that are actually needed
-5. keep the number of overrides as small as practical
+2. choose the ecosystem adapter that best matches the dominant language and package ecosystem
+3. choose the framework adapter that best matches the application framework, if any
+4. choose the runtime adapter that best matches the execution and local development model
+5. choose the app-shape adapter that best matches the architecture or delivery shape, if any
+6. apply only the specialisations that are actually needed
+7. keep the number of overrides as small as practical
 
 A good rule is:
 
 - prefer the baseline by default
-- use adapters to handle real stack or runtime differences
+- use adapters to handle real ecosystem, framework, runtime, or app-shape differences
 - avoid introducing adapter-specific behaviour without a clear need
 
 ## Greenfield vs Existing Repositories
@@ -127,7 +165,7 @@ For greenfield repos, adapters can be applied early and cleanly.
 This usually means:
 
 - start with `baseline/`
-- choose the relevant stack and environment adapters
+- choose the relevant ecosystem, framework, runtime, and app-shape adapters
 - instantiate the repo docs and command surface using those overlays
 
 ### Existing or legacy repositories

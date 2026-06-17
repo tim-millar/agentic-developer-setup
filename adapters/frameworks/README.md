@@ -11,6 +11,12 @@ They capture framework-specific development and operational patterns such as:
 
 Framework adapters should not define project-specific architecture or domain rules.
 
+Path:
+
+```text
+adapters/frameworks/<name>
+```
+
 Framework adapters are usually combined with:
 - one ecosystem adapter
 - one runtime adapter

@@ -119,42 +119,53 @@ adoption_tiers:
       - docs/COMMITS.md
 
 adapters:
-  - id: node
-    type: stack
-    path: adapters/node
-    description: >
-      Overlay for Node-based repositories, including command, CI, and hook
-      patterns relevant to the JavaScript/TypeScript ecosystem.
-  - id: ruby
-    type: stack
-    path: adapters/ruby
-    description: >
-      Overlay for Ruby-based repositories, including command, CI, and testing
-      patterns relevant to Ruby applications.
-  - id: python
-    type: stack
-    path: adapters/python
-    description: >
-      Overlay for Python-based repositories, including command, CI, and testing
-      patterns relevant to Python applications.
-  - id: elixir
-    type: stack
-    path: adapters/elixir
-    description: >
-      Overlay for Elixir-based repositories, including command, CI, and testing
-      patterns relevant to Elixir applications.
-  - id: docker
-    type: environment
-    path: adapters/docker
-    description: >
-      Overlay for repositories that hide container complexity behind the
-      standard command surface.
-  - id: non-containerised
-    type: environment
-    path: adapters/non-containerised
-    description: >
-      Overlay for repositories that use local tooling directly rather than
-      container-based development environments.
+  taxonomy:
+    - type: ecosystem
+      description: Language and package ecosystem assumptions.
+      path_pattern: adapters/ecosystems/<name>
+
+    - type: framework
+      description: Application framework conventions and commands.
+      path_pattern: adapters/frameworks/<name>
+
+    - type: runtime
+      description: Execution, containerisation, deployment, and local-development assumptions.
+      path_pattern: adapters/runtimes/<name>
+
+    - type: app-shape
+      description: Architectural and delivery-shape assumptions.
+      path_pattern: adapters/app-shapes/<name>
+
+  available:
+    - name: node
+      type: ecosystem
+      path: adapters/ecosystems/node
+      status: planned
+
+    - name: ruby
+      type: ecosystem
+      path: adapters/ecosystems/ruby
+      status: planned
+
+    - name: python
+      type: ecosystem
+      path: adapters/ecosystems/python
+      status: planned
+
+    - name: elixir
+      type: ecosystem
+      path: adapters/ecosystems/elixir
+      status: planned
+
+    - name: docker
+      type: runtime
+      path: adapters/runtimes/docker
+      status: planned
+
+    - name: non-containerised
+      type: runtime
+      path: adapters/runtimes/non-containerised
+      status: planned
 
 issue_templates:
   primary:
