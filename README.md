@@ -107,12 +107,6 @@ Examples include:
 - generating repo documentation from the framework
 - turning vague work into agent-ready issues
 
-### Examples
-
-The `examples/` directory shows what instantiated or partially adopted repos may look like.
-
-These examples are intended to illustrate usage patterns, not define mandatory project shapes.
-
 ## Primary Usage Modes
 
 ### 1. Greenfield bootstrap
