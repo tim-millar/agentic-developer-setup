@@ -67,7 +67,7 @@ Add archive import validation for missing product dates
 
 Agent: codex
 Agent-Mode: assisted
-Launched-By: Tim Millar <tim@palaceskateboards.com>
+Launched-By: Developer Name <developer@example.com>
 Issue: #123
 ```
 
@@ -108,7 +108,7 @@ These conventions should be easy to follow where practical, but should not creat
 
 Typical support mechanisms may include:
 
-- `run_agent.sh` exporting session metadata
+- `scripts/run_codex.sh` exporting session metadata
 - a commit message template
 - a commit helper script that appends trailers
 - optional `commit-msg` validation for teams that want stronger local consistency

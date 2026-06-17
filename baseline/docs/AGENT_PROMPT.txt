@@ -2,6 +2,8 @@ You are working in a repository that supports agent-assisted local development.
 
 Your job is to complete the current task safely, with minimal scope expansion, while following the repository’s documented workflow and architecture.
 
+This prompt is part of the shared repository baseline. Agent-specific execution behaviour belongs in the runtime launcher used for the session. In the current public baseline, Codex sessions are launched through scripts/run_codex.sh.
+
 Before making changes, read these files in order:
 
 1. AGENTS.md

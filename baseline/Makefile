@@ -49,9 +49,10 @@ CI_COVERAGE_CMD ?=
 # --------------------------------------------------------------------
 
 define run_or_fail
-	@if [ -n "$($(1))" ]; then \
+	@cmd='$(value $(1))'; \
+	if [ -n "$$cmd" ]; then \
 		echo "==> $(2)"; \
-		$(value $(1)); \
+		eval "$$cmd"; \
 	else \
 		echo "Error: target '$@' is not configured in this repository."; \
 		echo "Set $(1) in the Makefile for this repo."; \
@@ -60,21 +61,21 @@ define run_or_fail
 endef
 
 define run_if_configured
-	@if [ -n "$($(1))" ]; then \
+	@cmd='$(value $(1))'; \
+	if [ -n "$$cmd" ]; then \
 		echo "==> $(2)"; \
-		$(value $(1)); \
+		eval "$$cmd"; \
 	else \
 		echo "Skipping '$@': $(1) is not configured."; \
 	fi
 endef
 
 define run_overlay_or_base
-	@if [ -n "$($(1))" ]; then \
+	@cmd='$(value $(1))'; \
+	if [ -z "$$cmd" ]; then cmd='$(value $(2))'; fi; \
+	if [ -n "$$cmd" ]; then \
 		echo "==> $(3)"; \
-		$(value $(1)); \
-	elif [ -n "$($(2))" ]; then \
-		echo "==> $(3)"; \
-		$(value $(2)); \
+		eval "$$cmd"; \
 	else \
 		echo "Error: target '$@' is not configured in this repository."; \
 		echo "Set either $(1) or $(2) in the Makefile for this repo."; \
@@ -83,12 +84,11 @@ define run_overlay_or_base
 endef
 
 define run_overlay_if_configured
-	@if [ -n "$($(1))" ]; then \
+	@cmd='$(value $(1))'; \
+	if [ -z "$$cmd" ]; then cmd='$(value $(2))'; fi; \
+	if [ -n "$$cmd" ]; then \
 		echo "==> $(3)"; \
-		$(value $(1)); \
-	elif [ -n "$($(2))" ]; then \
-		echo "==> $(3)"; \
-		$(value $(2)); \
+		eval "$$cmd"; \
 	else \
 		echo "Skipping '$@': neither $(1) nor $(2) is configured."; \
 	fi
@@ -234,8 +234,9 @@ ci-coverage:
 .PHONY: hook-pre-commit
 hook-pre-commit:
 	@echo "==> Running pre-commit checks"
-	@if [ -n "$(HOOK_PRE_COMMIT_CMD)" ]; then \
-		$(HOOK_PRE_COMMIT_CMD); \
+	@cmd='$(HOOK_PRE_COMMIT_CMD)'; \
+	if [ -n "$$cmd" ]; then \
+		eval "$$cmd"; \
 	else \
 		$(MAKE) lint; \
 	fi
@@ -243,8 +244,9 @@ hook-pre-commit:
 .PHONY: hook-pre-push
 hook-pre-push:
 	@echo "==> Running pre-push checks"
-	@if [ -n "$(HOOK_PRE_PUSH_CMD)" ]; then \
-		$(HOOK_PRE_PUSH_CMD); \
+	@cmd='$(HOOK_PRE_PUSH_CMD)'; \
+	if [ -n "$$cmd" ]; then \
+		eval "$$cmd"; \
 	else \
 		$(MAKE) test; \
 	fi

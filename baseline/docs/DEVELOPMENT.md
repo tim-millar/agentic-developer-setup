@@ -119,9 +119,29 @@ The expected development loop is:
 
 This is the default workflow unless the repository documents a more specific process.
 
+## Agent Runtime Support
+
+This repository may support one or more tool-specific agent runtimes.
+
+The baseline framework is agent-runtime-aware rather than agent-agnostic. Shared repository practices belong in `AGENTS.md`, this development guide, the standard command surface, and project documentation. Agent-specific execution behaviour belongs in runtime launchers.
+
+The current public baseline includes the Codex launcher at `scripts/run_codex.sh`. That launcher is intended for Codex sessions, prompt assembly, repository-scoped execution, validation workflow support, and optional GitHub App access. Do not assume it is a generic wrapper for every coding agent.
+
+If another coding agent is supported in this repository, document its separate launcher, access policy, prompt expectations, and runtime-specific constraints here.
+
+### Codex launcher repository identity check
+
+The baseline Codex launcher is repository-scoped. Before launch, `scripts/run_codex.sh` validates that the target repository has an `origin` remote configured as an HTTPS GitHub URL matching `EXPECTED_OWNER/EXPECTED_REPO`.
+
+By default, `EXPECTED_OWNER` is `tim-millar` and `EXPECTED_REPO` is the target repository directory name. Target repositories should override these values where needed.
+
+This check is separate from GitHub API access. `GITHUB_ACCESS_MODE=disabled` prevents the agent session from using GitHub credentials or fetching issue context, but the launcher still verifies repository identity before starting the session.
+
 ## Standard Command Surface
 
 This repository should expose a standard command surface through the top-level `Makefile`.
+
+The Makefile is the canonical command interface for agents and humans. Targets and command variables are trusted repository configuration maintained by the project. Do not populate command variables from untrusted issue text, PR descriptions, user prompts, generated files, or other external input. Agents should prefer existing Make targets over inventing ad hoc shell commands.
 
 Common targets may include:
 
@@ -298,6 +318,7 @@ Link related documents here as they are created.
 Typical examples:
 
 - `AGENTS.md`
+- `CLAUDE.md`
 - `README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/DOMAIN.md`

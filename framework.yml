@@ -1,0 +1,346 @@
+schema_version: 1
+framework:
+  name: agent-development-framework
+  framework_version: 0.1.0
+  description: >
+    A reusable framework for enabling safe, productive agent-assisted
+    development across application repositories.
+  intended_for:
+    - greenfield repositories
+    - existing repositories
+    - legacy repositories
+  primary_goals:
+    - standardise agent operating contracts
+    - improve issue execution readiness
+    - provide reusable documentation scaffolding
+    - standardise local command surfaces
+    - support hooks and CI quality gates
+    - make agent involvement more reviewable and traceable
+
+usage_modes:
+  - id: greenfield-bootstrap
+    name: Greenfield bootstrap
+    description: >
+      Instantiate the baseline and relevant adapters for a new repository
+      intended to support agent-led development from the start.
+  - id: existing-repo-audit
+    name: Existing repo audit
+    description: >
+      Compare an existing repository against the framework and adopt the
+      highest-value artefacts incrementally.
+  - id: legacy-safe-enablement
+    name: Legacy safe enablement
+    description: >
+      Use the framework as a safety and clarity overlay for a long-running
+      or high-risk codebase.
+
+prompts:
+  - id: greenfield-bootstrap
+    path: prompts/greenfield-bootstrap.md
+    purpose: Instantiate the framework into a new repository using baseline artefacts, adapters, and project planning materials.
+  - id: existing-repo-audit
+    path: prompts/existing-repo-audit.md
+    purpose: Assess an existing repository against the framework and recommend a minimal, safe adaptation path.
+  - id: legacy-safe-enablement
+    path: prompts/legacy-safe-enablement.md
+    purpose: Identify the smallest, safest framework overlay that improves agent safety and legibility in a legacy production repository.
+
+path_conventions:
+  baseline:
+    source_path: Path inside this framework source repository.
+    target_path: Intended path inside an instantiated target repository.
+  agent_runtimes:
+    launcher:
+      source_path: Launcher path inside this framework source repository.
+      target_path: Intended launcher path inside an instantiated target repository.
+  adapters:
+    path: Path inside this framework source repository.
+  prompts:
+    path: Path inside this framework source repository.
+
+baseline:
+  description: Baseline artefacts that can be copied or adapted into a target repository.
+  path_semantics:
+    source_path: Path inside this framework source repository.
+    target_path: Intended path inside an instantiated target repository.
+
+  required:
+    - name: agent_instructions
+      category: agent-contract
+      source_path: baseline/AGENTS.md
+      target_path: AGENTS.md
+      description: Canonical instructions for agents working in the target repository.
+
+    - name: agent_prompt
+      category: agent-session-brief
+      source_path: baseline/docs/AGENT_PROMPT.txt
+      target_path: docs/AGENT_PROMPT.txt
+      description: Base prompt used to orient an agent session in the target repository.
+
+    - name: command_interface
+      category: command-surface
+      source_path: baseline/Makefile
+      target_path: Makefile
+      description: Standard command interface for development, validation, and agent-executable workflows.
+
+    - name: development_guide
+      category: local-development-guide
+      source_path: baseline/docs/DEVELOPMENT.md
+      target_path: docs/DEVELOPMENT.md
+      description: Local development guide for humans and agents working in the target repository.
+
+    - name: testing_strategy
+      category: testing-strategy
+      source_path: baseline/docs/TESTING.md
+      target_path: docs/TESTING.md
+      description: Testing and validation expectations for the target repository.
+
+  recommended:
+    - name: claude_agent_entrypoint
+      category: claude-agent-entrypoint
+      source_path: baseline/CLAUDE.md
+      target_path: CLAUDE.md
+      description: Compatibility entrypoint that points Claude Code users to the shared agent contract; not a runtime launcher.
+
+    - name: git_hooks
+      category: git-hooks
+      source_path: baseline/lefthook.yml
+      target_path: lefthook.yml
+      description: Standard local hook configuration for pre-commit and pre-push validation.
+
+    - name: architecture_scaffold
+      category: architecture-scaffold
+      source_path: baseline/docs/ARCHITECTURE.md
+      target_path: docs/ARCHITECTURE.md
+      description: Architecture documentation scaffold for target repository structure and decisions.
+
+    - name: commit_metadata
+      category: commit-metadata
+      source_path: baseline/docs/COMMITS.md
+      target_path: docs/COMMITS.md
+      description: Commit authorship and metadata conventions for human and agent-assisted work.
+
+    - name: domain_context
+      category: domain-context
+      source_path: baseline/docs/DOMAIN.md
+      target_path: docs/DOMAIN.md
+      description: Domain documentation scaffold for target repository concepts and rules.
+
+    - name: pull_request_template
+      category: review-handoff
+      source_path: baseline/.github/PULL_REQUEST_TEMPLATE.md
+      target_path: .github/PULL_REQUEST_TEMPLATE.md
+      description: Pull request template for review handoff and validation evidence.
+
+    - name: ci_workflow
+      category: ci-validation
+      source_path: baseline/.github/workflows/ci.yml
+      target_path: .github/workflows/ci.yml
+      description: Baseline CI workflow for framework validation commands.
+
+    - name: agent_launcher
+      category: agent-launcher
+      source_path: baseline/scripts/run_codex.sh
+      target_path: scripts/run_codex.sh
+      description: Helper script for launching a Codex session with repo-local context.
+
+    - name: github_access_helper
+      category: github-access-helper
+      source_path: baseline/scripts/mint_gh_app_token.sh
+      target_path: scripts/mint_gh_app_token.sh
+      description: Helper script for minting GitHub App tokens when a target repo uses that workflow.
+
+    - name: agent_ready_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/agent-ready-implementation.md
+      target_path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+      description: Primary template for deterministic implementation work.
+
+    - name: bug_report_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/bug-report.md
+      target_path: .github/ISSUE_TEMPLATE/bug-report.md
+      description: Template for reporting defects or unintended behaviour.
+
+    - name: discovery_or_shaping_issue_template
+      category: issue-template
+      source_path: baseline/.github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      target_path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      description: Template for work that needs investigation, design, or clarification.
+
+    - name: issue_template_config
+      category: issue-template-config
+      source_path: baseline/.github/ISSUE_TEMPLATE/config.yml
+      target_path: .github/ISSUE_TEMPLATE/config.yml
+      description: GitHub issue template chooser configuration.
+
+agent_runtimes:
+  philosophy: >
+    Agent runtimes are tool-specific integrations. The framework does not assume
+    that all coding agents can be safely or usefully wrapped by the same script.
+    Each runtime may define its own launcher, prompt assembly, access policy,
+    and operational constraints.
+
+  supported:
+    - name: codex
+      status: supported
+      launcher:
+        source_path: baseline/scripts/run_codex.sh
+        target_path: scripts/run_codex.sh
+      prompt:
+        source_path: baseline/docs/AGENT_PROMPT.txt
+        target_path: docs/AGENT_PROMPT.txt
+      access_modes:
+        - disabled
+        - app
+      repository_identity:
+        origin_remote_required: true
+        origin_remote_scheme: https
+        expected_owner_env: EXPECTED_OWNER
+        expected_owner_default: tim-millar
+        expected_repo_env: EXPECTED_REPO
+        expected_repo_default: target repository directory name
+      description: >
+        Codex-first local agent runtime for deterministic implementation tasks,
+        repository-scoped execution, prompt assembly, and optional GitHub App access.
+
+  planned:
+    - name: claude-code
+      status: planned
+      description: >
+        Potential future runtime for exploratory development workflows. Expected
+        to require distinct operating constraints and separate safety guidance.
+
+adoption_tiers:
+  - id: tier-1
+    name: agent-aware
+    description: >
+      Basic documentation and workflow scaffolding that makes a repository
+      more legible and safer for agent-assisted work.
+    includes:
+      - AGENTS.md
+      - CLAUDE.md
+      - docs/DEVELOPMENT.md
+      - .github/PULL_REQUEST_TEMPLATE.md
+      - .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+  - id: tier-2
+    name: agent-operable
+    description: >
+      Standard command surfaces, launcher, hooks, and CI that make agent work
+      practically executable in the repository.
+    includes:
+      - Makefile
+      - scripts/run_codex.sh
+      - lefthook.yml
+      - .github/workflows/ci.yml
+  - id: tier-3
+    name: agent-optimised
+    description: >
+      Fuller architecture, domain, testing, and commit convention support for
+      repositories intended to support robust long-term agent usage.
+    includes:
+      - docs/ARCHITECTURE.md
+      - docs/DOMAIN.md
+      - docs/TESTING.md
+      - docs/COMMITS.md
+
+adapters:
+  taxonomy:
+    - type: ecosystem
+      description: Language and package ecosystem assumptions.
+      path_pattern: adapters/ecosystems/<name>
+
+    - type: framework
+      description: Application framework conventions and commands.
+      path_pattern: adapters/frameworks/<name>
+
+    - type: runtime
+      description: Execution, containerisation, deployment, and local-development assumptions.
+      path_pattern: adapters/runtimes/<name>
+
+    - type: app-shape
+      description: Architectural and delivery-shape assumptions.
+      path_pattern: adapters/app-shapes/<name>
+
+  available:
+    - name: node
+      type: ecosystem
+      path: adapters/ecosystems/node
+      status: planned
+
+    - name: ruby
+      type: ecosystem
+      path: adapters/ecosystems/ruby
+      status: planned
+
+    - name: python
+      type: ecosystem
+      path: adapters/ecosystems/python
+      status: planned
+
+    - name: elixir
+      type: ecosystem
+      path: adapters/ecosystems/elixir
+      status: planned
+
+    - name: docker
+      type: runtime
+      path: adapters/runtimes/docker
+      status: planned
+
+    - name: non-containerised
+      type: runtime
+      path: adapters/runtimes/non-containerised
+      status: planned
+
+issue_templates:
+  primary:
+    id: agent-ready-implementation
+    source_path: baseline/.github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    target_path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    purpose: >
+      Primary template for deterministic implementation work intended to be
+      executable by a developer or agent with minimal ambiguity.
+  additional:
+    - id: bug-report
+      source_path: baseline/.github/ISSUE_TEMPLATE/bug-report.md
+      target_path: .github/ISSUE_TEMPLATE/bug-report.md
+      purpose: >
+        Template for defects or unintended behaviour, including cases that are
+        either implementation-ready or still require investigation.
+    - id: discovery-or-shaping
+      source_path: baseline/.github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      target_path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+      purpose: >
+        Template for work that is not yet ready for deterministic implementation
+        and still requires investigation, design, or clarification.
+
+conventions:
+  issue_workflow:
+    implementation_ready_issues_are_primary: true
+    discovery_work_should_be_explicit: true
+    issue_execution_readiness_is_part_of_scope_control: true
+
+  command_surface:
+    makefile_is_primary_interface: true
+    local_and_ci_commands_share_conceptual_surface: true
+    ci_specific_overlays_supported: true
+
+  hooks:
+    standard_runner: lefthook
+    hook_targets:
+      - make hook-pre-commit
+      - make hook-pre-push
+
+  ci:
+    semantically_grouped_jobs_preferred: true
+    typical_targets:
+      - make ci-lint
+      - make ci-test
+      - make ci-typecheck
+      - make ci-build
+
+  commit_metadata:
+    documented_in: docs/COMMITS.md
+    default_authorship_model: developer-author
+    agent_metadata_recorded_in_trailers: true
