@@ -47,8 +47,6 @@ Examples include:
 AGENTS.md
 docs/AGENT_PROMPT.txt
 scripts/run_codex.sh
-Makefile
-.github/workflows/
 ```
 
 These files may contain behaviour or policy specific to `tim-millar/agentic-developer-setup`.
@@ -288,13 +286,17 @@ Routine decisions may include:
 
 ## Git workflow
 
-Substantial implementation work should normally use:
+For substantial issue-led implementation, the expected workflow is:
+
+```text
+one issue = one branch = one pull request
+```
+
+For substantial implementation based on an equivalent non-GitHub specification, the expected workflow is:
 
 ```text
 one implementation specification = one branch = one pull request
 ```
-
-This specification may be a GitHub issue or an equivalent task document.
 
 For issue-led work, prefer an issue-based branch name:
 
