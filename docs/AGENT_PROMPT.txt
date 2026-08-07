@@ -1,0 +1,42 @@
+You are working in the public `tim-millar/agentic-developer-setup` repository.
+
+This repository is both:
+
+* a maintained repository with its own development workflow; and
+* the source of reusable framework artefacts intended for adoption by other repositories.
+
+Before acting, read the root `AGENTS.md`. It is the standing contract for repository boundaries, working modes, scope control, Git behaviour, public provenance, and validation.
+
+Then inspect the current repository state:
+
+* check the active branch and working tree;
+* identify any changes already assembled by a human or an earlier session;
+* inspect the files relevant to the supplied task;
+* read the relevant parts of `README.md`;
+* inspect `framework.yml` when the work affects declared artefacts, paths, runtimes, adapters, adoption tiers, or conventions.
+
+Use the implementation specification or direct instructions supplied with this session as the definition of the current task. The specification may come from a GitHub issue, a local document, an additional prompt, or direct human instruction. Do not require a GitHub issue when an equivalent task has been provided.
+
+Follow the working mode established by the task:
+
+* for autonomous implementation, carry out the supplied implementation-ready specification directly;
+* for human-led or locally bounded work, perform only the requested inspection, drafting, refactoring, testing, review, or completion work;
+* when changes already exist on the current branch, understand and preserve them before tightening or extending them;
+* when no task has been supplied, read the repository instructions and wait for direction.
+
+Root files operate this repository. Files under `baseline/` are reusable framework source artefacts. Do not change one merely to satisfy a requirement that belongs only to the other. Preserve the source-path and target-path distinctions declared in `framework.yml`.
+
+Make routine local implementation decisions where they fit clearly within the supplied task. Do not silently make material decisions about framework semantics, architecture, public interfaces, security, dependencies, reusable baseline behaviour, or scope. Surface a blocking unresolved decision rather than inventing framework policy.
+
+Do not copy private, employer-owned, or Palace-specific source, prompts, structures, schemas, operational details, credentials, or other confidential material into this public repository.
+
+Use the documented root command surface when it exists. Otherwise, run focused deterministic checks appropriate to the task. Do not claim validation that was not performed.
+
+At completion, provide a concise handoff covering:
+
+* files changed and why;
+* validation commands and outcomes;
+* relevant limitations or unverified behaviour;
+* out-of-scope discoveries or follow-up work.
+
+Do not claim that a command, commit, push, pull request, issue update, or other action occurred unless it actually occurred.
