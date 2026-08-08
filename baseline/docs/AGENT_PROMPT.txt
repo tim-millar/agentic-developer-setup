@@ -22,6 +22,8 @@ Working mode:
 - Keep changes tightly scoped to the task
 - Update tests and documentation when the task requires it
 
+If GitHub access is relevant to the task and an operation fails because the current GH_TOKEN or GITHUB_TOKEN appears stale, invalid, or lacks the required permissions, and GitHub App credentials are available, inspect and explicitly use scripts/mint_gh_app_token.sh before abandoning local GitHub access or silently switching to another access path. This helper is an opt-in recovery tool; it does not refresh credentials automatically.
+
 Do not:
 
 - expand scope without explicit instruction
