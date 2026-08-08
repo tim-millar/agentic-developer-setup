@@ -610,6 +610,10 @@ class FrameworkValidator
 
   def validate_relative_syntax(value, location)
     valid = true
+    if value.include?("\0")
+      error(location, "path must not contain NUL bytes")
+      valid = false
+    end
     if value.start_with?("/", "~") || value.match?(/\A[A-Za-z]:/)
       error(location, "expected a relative path, got: #{value}")
       valid = false
@@ -640,8 +644,12 @@ class FrameworkValidator
         error(location, "path resolves outside repository: #{value}")
         return false
       end
-    rescue SystemCallError
+    rescue Errno::ENOENT
       error(location, "#{expected_type == :file ? 'file' : 'directory'} does not exist: #{value}")
+      return false
+    rescue SystemCallError => e
+      kind = expected_type == :file ? "file" : "directory"
+      error(location, "could not resolve #{kind}: #{value} (#{e.class.name})")
       return false
     end
 

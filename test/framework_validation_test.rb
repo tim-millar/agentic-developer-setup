@@ -333,6 +333,43 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("path resolves outside repository: prompts/escape.md")
   end
 
+  def test_source_symlink_loop_reports_resolution_error_instead_of_nonexistence
+    File.symlink("loop-b.md", File.join(@fixture_root, "prompts/loop-a.md"))
+    File.symlink("loop-a.md", File.join(@fixture_root, "prompts/loop-b.md"))
+    mutate { |metadata| metadata["prompts"].first["path"] = "prompts/loop-a.md" }
+
+    stdout, stderr, status = run_validator
+    refute status.success?, failure_message("source symlink loop", stdout, stderr, status)
+    assert_empty stdout
+    assert_includes stderr, "could not resolve file: prompts/loop-a.md (Errno::ELOOP)"
+    refute_includes stderr, "file does not exist: prompts/loop-a.md"
+    refute_includes stderr, "validate_framework.rb:"
+  end
+
+  def test_source_path_with_nul_byte_fails_without_filesystem_exception
+    mutate { |metadata| metadata["prompts"].first["path"] = "prompts/\0bootstrap.md" }
+
+    stdout, stderr, status = run_validator
+    refute status.success?, failure_message("NUL-containing source path", stdout, stderr, status)
+    assert_empty stdout
+    assert_includes stderr, "prompts[bootstrap].path: path must not contain NUL bytes"
+    refute_includes stderr, "\0"
+    refute_includes stderr, "validate_framework.rb:"
+  end
+
+  def test_target_path_with_nul_byte_fails_without_filesystem_exception
+    mutate do |metadata|
+      metadata["conventions"]["commit_metadata"]["documented_in"] = "docs/\0COMMITS.md"
+    end
+
+    stdout, stderr, status = run_validator
+    refute status.success?, failure_message("NUL-containing target path", stdout, stderr, status)
+    assert_empty stdout
+    assert_includes stderr, "conventions.commit_metadata.documented_in: path must not contain NUL bytes"
+    refute_includes stderr, "\0"
+    refute_includes stderr, "validate_framework.rb:"
+  end
+
   def test_file_where_supported_adapter_directory_expected_fails
     write_file("adapters/ecosystems/node")
     mutate { |metadata| metadata["adapters"]["available"].first["status"] = "supported" }
