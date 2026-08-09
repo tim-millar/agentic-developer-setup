@@ -292,11 +292,20 @@ For baseline artefacts, `framework.yml` records both the source path in this fra
 
 This is intended to make auditing, instantiation, and automated use easier for both humans and agents.
 
+Validate the root repository tests, live metadata, and required source structure with:
+
+```sh
+make check
+```
+
+See `docs/validation.md` for the validation contract, path semantics, and extension guidance.
+
 ## Further Documentation
 
 See also:
 
 - `framework.yml` for machine-readable framework metadata
+- `docs/validation.md` for framework self-validation
 - `adapters/README.md` for adapter taxonomy and composition guidance
 - `prompts/greenfield-bootstrap.md` for greenfield framework adoption
 - `prompts/existing-repo-audit.md` for existing repository assessment
