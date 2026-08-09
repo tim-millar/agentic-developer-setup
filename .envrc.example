@@ -1,0 +1,9 @@
+# Copy or adapt this file as the untracked root .envrc.
+export GITHUB_APP_ID=""
+export GITHUB_APP_INSTALLATION_ID=""
+
+# Store the private-key file outside this repository and set its path here.
+export GITHUB_APP_PRIVATE_KEY_PATH=""
+
+# GH_TOKEN and GITHUB_TOKEN are intentionally not persisted here. The existing
+# GitHub App workflow mints short-lived installation tokens when needed.
