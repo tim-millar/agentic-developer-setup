@@ -299,6 +299,8 @@ make check
 ```
 
 See `docs/validation.md` for the validation contract, path semantics, and extension guidance.
+Run the focused offline Codex launcher suite with `make test-launcher`; see
+`docs/launcher-testing.md` for its black-box fixture and fake-command architecture.
 
 ## Further Documentation
 
@@ -306,6 +308,7 @@ See also:
 
 - `framework.yml` for machine-readable framework metadata
 - `docs/validation.md` for framework self-validation
+- `docs/launcher-testing.md` for the offline baseline launcher test architecture
 - `adapters/README.md` for adapter taxonomy and composition guidance
 - `prompts/greenfield-bootstrap.md` for greenfield framework adoption
 - `prompts/existing-repo-audit.md` for existing repository assessment

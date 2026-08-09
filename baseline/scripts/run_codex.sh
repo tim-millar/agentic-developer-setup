@@ -40,6 +40,7 @@ CODEX_ARGS=()
 TMP_GH_CONFIG_DIR=""
 TMP_ASKPASS=""
 DEBUG_PROMPT_PATH=""
+CODEX_PID=""
 
 APP_SLUG="disabled"
 EXPIRES_AT="n/a"
@@ -58,8 +59,22 @@ cleanup() {
 }
 
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+
+handle_signal() {
+  local signal="$1"
+  local status="$2"
+
+  if [[ -n "$CODEX_PID" ]]; then
+    kill -s "$signal" "$CODEX_PID" 2>/dev/null || true
+    wait "$CODEX_PID" 2>/dev/null || true
+    CODEX_PID=""
+  fi
+
+  exit "$status"
+}
+
+trap 'handle_signal INT 130' INT
+trap 'handle_signal TERM 143' TERM
 
 usage() {
   cat <<EOF
@@ -127,11 +142,22 @@ require_numeric_env() {
 }
 
 run_codex() {
+  local status
+
   if [[ -n "$CODEX_PROFILE" ]]; then
-    exec env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" "$@"
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" "$@" <&0 &
   else
-    exec env "${CODEX_ENV[@]}" "$CODEX_BIN" "$@"
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" "$@" <&0 &
   fi
+
+  CODEX_PID=$!
+  set +e
+  wait "$CODEX_PID"
+  status=$?
+  set -e
+  CODEX_PID=""
+
+  return "$status"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -655,8 +681,14 @@ else
   )
 fi
 
+unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
+
 if [[ -n "$RESUME_SESSION" ]]; then
-  run_codex resume "$RESUME_SESSION" "${CODEX_ARGS[@]}"
+  CODEX_STATUS=0
+  run_codex resume "$RESUME_SESSION" "${CODEX_ARGS[@]}" || CODEX_STATUS=$?
+  exit "$CODEX_STATUS"
 fi
 
-run_codex "${CODEX_ARGS[@]}" "$PROMPT_CONTENT"
+CODEX_STATUS=0
+run_codex "${CODEX_ARGS[@]}" "$PROMPT_CONTENT" || CODEX_STATUS=$?
+exit "$CODEX_STATUS"
