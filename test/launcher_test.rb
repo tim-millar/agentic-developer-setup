@@ -1,0 +1,616 @@
+# frozen_string_literal: true
+
+require "minitest/autorun"
+require "timeout"
+require_relative "support/launcher_harness"
+
+class LauncherTest < Minitest::Test
+  def setup
+    @harness = LauncherHarness.new
+  end
+
+  def teardown
+    @harness&.close
+  end
+
+  def test_help_flags_succeed_and_describe_the_supported_interface
+    ["--help", "-h"].each do |flag|
+      result = @harness.run(flag)
+
+      assert_success(result, flag)
+      %w[
+        --issue --resume --prompt-file --extra-prompt-file --profile --allow-dirty
+        --skip-issue-fetch --help
+      ].each { |option| assert_includes result.stdout, option }
+    end
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_missing_option_values_and_non_numeric_issue_are_usage_errors
+    [
+      ["--issue"], ["--resume"], ["--prompt-file"], ["--extra-prompt-file"], ["--profile"],
+      ["--profile", "--issue", "7"], ["--issue", "not-a-number"]
+    ].each do |arguments|
+      result = @harness.run(*arguments)
+
+      assert_equal 2, result.status.exitstatus, failure_message(arguments.join(" "), result)
+      assert_includes result.stderr, "Error:"
+    end
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_unsupported_access_and_git_modes_fail_clearly
+    access = @harness.run(env: {"GITHUB_ACCESS_MODE" => "ambient"})
+    assert_equal 2, access.status.exitstatus, failure_message("access mode", access)
+    assert_includes access.stderr, "unsupported GITHUB_ACCESS_MODE"
+
+    git_mode = @harness.run(env: {"AGENT_GIT_MODE" => "unknown"})
+    assert_equal 2, git_mode.status.exitstatus, failure_message("git mode", git_mode)
+    assert_includes git_mode.stderr, "unsupported AGENT_GIT_MODE"
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_unknown_and_double_dash_arguments_preserve_exact_boundaries
+    arguments = ["--model", "model with spaces", "--", "$(touch NEVER_CREATED)", "semi;colon", "pipe|data", ""]
+    result = @harness.run(*arguments)
+
+    assert_success(result, "argument forwarding")
+    assert_equal ["--model", "model with spaces", "$(touch NEVER_CREATED)", "semi;colon", "pipe|data", "", @harness.expected_prompt],
+                 @harness.invocation.fetch("args")
+    refute File.exist?(File.join(@harness.repository, "NEVER_CREATED"))
+    assert_equal @harness.repository, @harness.invocation.fetch("cwd")
+    assert_equal 1, @harness.codex_invocations.length
+  end
+
+  def test_codex_bin_and_profile_placement_are_exact
+    result = @harness.run(
+      "--profile", "cli-profile", "--sandbox", "workspace-write",
+      env: {"CODEX_BIN" => File.join(@harness.root, "fake-bin", "alternate-codex")}
+    )
+    assert_success(result, "CLI profile")
+    assert_equal "alternate-codex", @harness.invocation.fetch("executable")
+    assert_equal ["--profile", "cli-profile", "--sandbox", "workspace-write", @harness.expected_prompt],
+                 @harness.invocation.fetch("args")
+
+    @harness.close
+    @harness = LauncherHarness.new
+    result = @harness.run("--quiet", env: {"CODEX_PROFILE" => "environment-profile"})
+    assert_success(result, "environment profile")
+    assert_equal ["--profile", "environment-profile", "--quiet", @harness.expected_prompt],
+                 @harness.invocation.fetch("args")
+  end
+
+  def test_child_inherits_launcher_standard_input
+    result = @harness.run(
+      "--interactive-check",
+      env: {"FAKE_CODEX_READ_STDIN" => "1"},
+      stdin_data: "synthetic terminal input\n"
+    )
+
+    assert_success(result, "child stdin")
+    assert_equal "synthetic terminal input\n", @harness.invocation.fetch("stdin")
+  end
+
+  def test_launcher_outside_a_git_repository_is_rejected
+    outside = File.join(@harness.root, "outside", "scripts")
+    FileUtils.mkdir_p(outside)
+    launcher = File.join(outside, "run_codex.sh")
+    FileUtils.cp(LauncherHarness::BASELINE_LAUNCHER, launcher, preserve: true)
+
+    stdout, stderr, status = Open3.capture3(
+      @harness.base_env,
+      launcher,
+      chdir: @harness.root,
+      unsetenv_others: true
+    )
+    result = LauncherHarness::Result.new(stdout: stdout, stderr: stderr, status: status)
+    refute status.success?, failure_message("outside repository", result)
+    assert_includes stderr, "must be run from within a Git repository"
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_missing_origin_and_disallowed_origin_forms_are_rejected_before_codex
+    @harness.remove_origin
+    result = @harness.run
+    refute result.status.success?
+    assert_includes result.stderr, "origin remote is not configured"
+
+    disallowed = [
+      "git@github.com:#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}.git",
+      "https://gitlab.com/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}.git",
+      "https://github.com/other-owner/#{LauncherHarness::REPOSITORY}.git",
+      "https://github.com/#{LauncherHarness::OWNER}/other-repository.git"
+    ]
+    @harness = replace_harness
+    disallowed.each do |origin|
+      @harness.set_origin(origin)
+      result = @harness.run
+      refute result.status.success?, failure_message(origin, result)
+      assert_includes result.stderr, "origin remote must be HTTPS and match"
+    end
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_expected_https_origin_with_or_without_git_suffix_is_accepted
+    [
+      "https://github.com/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}.git",
+      "https://github.com/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}"
+    ].each do |origin|
+      @harness.set_origin(origin)
+      assert_success(@harness.run, origin)
+    end
+    assert_equal 2, @harness.codex_invocations.length
+  end
+
+  def test_dirty_tree_is_rejected_and_allow_dirty_bypasses_only_that_guard
+    @harness.write_repository_file("dirty.txt", "uncommitted\n")
+    rejected = @harness.run
+    refute rejected.status.success?
+    assert_includes rejected.stderr, "working tree has uncommitted changes"
+    assert_empty @harness.codex_invocations
+
+    assert_success(@harness.run("--allow-dirty"), "allow dirty")
+    assert_equal 1, @harness.codex_invocations.length
+
+    @harness.set_origin("https://github.com/other/#{LauncherHarness::REPOSITORY}.git")
+    mismatched = @harness.run("--allow-dirty")
+    refute mismatched.status.success?
+    assert_includes mismatched.stderr, "origin remote must be HTTPS and match"
+  end
+
+  def test_prompt_files_are_validated_before_external_security_operations
+    @harness.remove_repository_file("docs/AGENT_PROMPT.txt")
+    result = @harness.run(env: @harness.app_env)
+    refute result.status.success?
+    assert_includes result.stderr, "prompt file not found: docs/AGENT_PROMPT.txt"
+    assert_empty @harness.events
+
+    @harness = replace_harness
+    missing = @harness.run("--prompt-file", "docs/missing.txt", env: @harness.app_env)
+    refute missing.status.success?
+    assert_includes missing.stderr, "prompt file not found: docs/missing.txt"
+    assert_empty @harness.events
+
+    extra = @harness.run("--extra-prompt-file", "docs/missing-extra.txt", env: @harness.app_env)
+    refute extra.status.success?
+    assert_includes extra.stderr, "extra prompt file not found"
+    assert_empty @harness.events
+  end
+
+  def test_prompt_override_and_extra_prompt_have_exact_composition
+    @harness.write_repository_file("docs/ALTERNATE.txt", "Alternate base with spaces.\n")
+    @harness.write_repository_file("docs/EXTRA_PROMPT.txt", "Extra line one.\nExtra `data`; $(inert).\n")
+    @harness.commit_all("Add prompt fixtures")
+
+    result = @harness.run(
+      "--prompt-file", "docs/ALTERNATE.txt",
+      "--extra-prompt-file", "docs/EXTRA_PROMPT.txt"
+    )
+    assert_success(result, "prompt sources")
+    expected = @harness.expected_prompt(
+      base: "Alternate base with spaces.",
+      prompt_path: "docs/ALTERNATE.txt",
+      extra_path: "docs/EXTRA_PROMPT.txt",
+      extra: "Extra line one.\nExtra `data`; $(inert)."
+    )
+    assert_equal [expected], @harness.invocation.fetch("args")
+    assert_equal 1, expected.scan("Alternate base with spaces.").length
+    assert_equal 1, expected.scan("Additional instructions:").length
+  end
+
+  def test_issue_skip_fetch_works_offline_and_composes_exact_prompt
+    result = @harness.run("--issue", "7", "--skip-issue-fetch")
+    assert_success(result, "skipped issue")
+    assert_equal [@harness.expected_prompt(issue: 7, skipped: true)], @harness.invocation.fetch("args")
+    assert_empty @harness.events.grep(/^curl:/)
+
+    rejected = replace_harness.run("--issue", "7")
+    refute rejected.status.success?
+    assert_includes rejected.stderr, "--issue requires GITHUB_ACCESS_MODE=app"
+  end
+
+  def test_resume_contract_without_prompt_and_with_profile_is_exact
+    @harness.remove_repository_file("docs/AGENT_PROMPT.txt")
+    @harness.commit_all("Remove prompt for resume")
+    result = @harness.run("--resume", "session 123", "--", "arg with spaces", "semi;colon")
+    assert_success(result, "resume")
+    assert_equal ["resume", "session 123", "arg with spaces", "semi;colon"], @harness.invocation.fetch("args")
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal "unset", env_fact("AGENT_PROMPT_FILE", "state")
+    assert_empty @harness.debug_prompt_paths
+    assert_empty @harness.launcher_temporary_paths
+
+    @harness = replace_harness
+    profiled = @harness.run("--resume", "abc", "--profile", "focused", "--", "--last")
+    assert_success(profiled, "profiled resume")
+    assert_equal ["--profile", "focused", "resume", "abc", "--last"], @harness.invocation.fetch("args")
+    assert_equal 1, @harness.codex_invocations.length
+  end
+
+  def test_resume_incompatibilities_fail_before_external_operations
+    combinations = [
+      ["--resume", "abc", "--issue", "7"],
+      ["--resume", "abc", "--extra-prompt-file", "docs/EXTRA_PROMPT.txt"],
+      ["--resume", "abc", "--prompt-file", "docs/missing.txt"],
+      ["--resume", "abc", "--skip-issue-fetch"]
+    ]
+    combinations.each do |arguments|
+      result = @harness.run(*arguments, env: @harness.app_env)
+      assert_equal 2, result.status.exitstatus, failure_message(arguments.join(" "), result)
+      assert_includes result.stderr, "--resume cannot be used"
+    end
+    assert_empty @harness.events
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_resume_enforces_dirty_tree_and_repository_identity
+    @harness.write_repository_file("dirty.txt", "dirty\n")
+    dirty = @harness.run("--resume", "abc")
+    refute dirty.status.success?
+    assert_includes dirty.stderr, "working tree has uncommitted changes"
+
+    assert_success(@harness.run("--resume", "abc", "--allow-dirty"), "dirty resume override")
+    @harness.set_origin("https://github.com/other/#{LauncherHarness::REPOSITORY}")
+    mismatch = @harness.run("--resume", "abc", "--allow-dirty")
+    refute mismatch.status.success?
+    assert_includes mismatch.stderr, "origin remote must be HTTPS and match"
+  end
+
+  def test_disabled_mode_neutralises_credentials_and_unsets_app_sources
+    ambient = {
+      "GITHUB_APP_ID" => LauncherHarness::APP_ID,
+      "GITHUB_APP_INSTALLATION_ID" => LauncherHarness::INSTALLATION_ID,
+      "GITHUB_APP_PRIVATE_KEY_PATH" => @harness.key_file,
+      "GH_TOKEN" => "ambient-gh",
+      "GITHUB_TOKEN" => "ambient-github",
+      "GITHUB_PAT" => "ambient-pat",
+      "INSTALL_TOKEN" => "ambient-install",
+      "GIT_ASKPASS" => "/ambient/askpass",
+      "SSH_AUTH_SOCK" => "/ambient/agent.sock",
+      "GIT_SSH" => "/ambient/ssh",
+      "GIT_SSH_COMMAND" => "ambient ssh command",
+      "SSH_ASKPASS" => "/ambient/ssh-askpass"
+    }
+    result = @harness.run(env: ambient)
+    assert_success(result, "disabled credential boundary")
+    assert_empty @harness.events.grep(/^curl:/)
+
+    %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].each do |name|
+      assert_equal "unset", source_fact(name, "state")
+    end
+    %w[GH_TOKEN GITHUB_TOKEN GITHUB_PAT INSTALL_TOKEN].each do |name|
+      assert_equal "empty", secret_fact(name, "state")
+      refute secret_fact(name, "matches_installation_token")
+    end
+    expected = {
+      "GIT_ASKPASS" => "", "GIT_TERMINAL_PROMPT" => "0", "GCM_INTERACTIVE" => "never",
+      "SSH_AUTH_SOCK" => "", "GIT_SSH" => "", "GIT_SSH_COMMAND" => "", "SSH_ASKPASS" => ""
+    }
+    expected.each { |name, value| assert_equal value, env_fact(name, "value") }
+    assert_equal "set", env_fact("GH_CONFIG_DIR", "state")
+    assert_match(%r{\A#{Regexp.escape(@harness.tmpdir)}/codex\.gh\.}, env_fact("GH_CONFIG_DIR", "value"))
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_app_configuration_is_required_and_validated_before_api_access
+    {
+      "GITHUB_APP_ID" => "Set GITHUB_APP_ID",
+      "GITHUB_APP_INSTALLATION_ID" => "Set GITHUB_APP_INSTALLATION_ID",
+      "GITHUB_APP_PRIVATE_KEY_PATH" => "Set GITHUB_APP_PRIVATE_KEY_PATH"
+    }.each do |name, message|
+      env = @harness.app_env.reject { |key, _| key == name }
+      result = @harness.run(env: env)
+      refute result.status.success?
+      assert_includes result.stderr, message
+    end
+
+    @harness = replace_harness
+    invalid_app = @harness.run(env: @harness.app_env.merge("GITHUB_APP_ID" => "abc"))
+    refute invalid_app.status.success?
+    assert_includes invalid_app.stderr, "GITHUB_APP_ID must be numeric"
+    invalid_installation = @harness.run(env: @harness.app_env.merge("GITHUB_APP_INSTALLATION_ID" => "abc"))
+    refute invalid_installation.status.success?
+    assert_includes invalid_installation.stderr, "GITHUB_APP_INSTALLATION_ID must be numeric"
+    missing_key = @harness.run(env: @harness.app_env.merge("GITHUB_APP_PRIVATE_KEY_PATH" => File.join(@harness.root, "missing.pem")))
+    refute missing_key.status.success?
+    assert_includes missing_key.stderr, "private key file not found"
+    assert_empty @harness.events
+  end
+
+  def test_invalid_private_key_fails_before_api_and_codex
+    result = @harness.run(env: @harness.app_env.merge("FAKE_KEY_VALID" => "0"))
+    refute result.status.success?
+    assert_includes result.stderr, "invalid private key file"
+    assert_equal ["openssl:key-check"], @harness.events
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_app_mode_resolves_identity_token_repository_and_issue_in_order
+    result = @harness.run_app("--issue", "7")
+    assert_success(result, "app issue launch")
+    assert_equal [
+      "openssl:key-check",
+      "openssl:sign",
+      "curl:app method=GET url=https://api.github.com/app auth_matches_expected=true",
+      "curl:token method=POST url=https://api.github.com/app/installations/#{LauncherHarness::INSTALLATION_ID}/access_tokens auth_matches_expected=true",
+      "curl:repository method=GET url=https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY} auth_matches_expected=true",
+      "curl:issue method=GET url=https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}/issues/7 auth_matches_expected=true",
+      "codex:start"
+    ], @harness.events
+    expected = @harness.expected_prompt(mode: "app", issue: 7)
+    assert_equal [expected], @harness.invocation.fetch("args")
+    refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
+  end
+
+  def test_issue_response_validation_rejects_pull_requests_missing_numbers_and_malformed_json
+    @harness.write_json(@harness.issue_json, {"number" => 7, "pull_request" => {"url" => "synthetic"}})
+    pull_request = @harness.run_app("--issue", "7")
+    refute pull_request.status.success?
+    assert_includes pull_request.stderr, "is a pull request, not an issue"
+    assert_empty @harness.codex_invocations
+
+    @harness = replace_harness
+    @harness.write_json(@harness.issue_json, {"number" => nil, "title" => "missing"})
+    missing_number = @harness.run_app("--issue", "7")
+    refute missing_number.status.success?
+    assert_includes missing_number.stderr, "failed to fetch issue #7"
+
+    @harness = replace_harness
+    File.write(@harness.issue_json, "{not-json")
+    malformed = @harness.run_app("--issue", "7")
+    refute malformed.status.success?
+    assert_includes malformed.stderr, "invalid synthetic JSON"
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_app_identity_token_and_repository_failures_are_clear
+    @harness.write_json(@harness.app_json, {"slug" => nil})
+    app = @harness.run_app
+    refute app.status.success?
+    assert_includes app.stderr, "JWT validation failed"
+
+    @harness = replace_harness
+    @harness.write_json(@harness.token_json, {"token" => nil, "expires_at" => nil})
+    token = @harness.run_app
+    refute token.status.success?
+    assert_includes token.stderr, "failed to mint installation token"
+
+    @harness = replace_harness
+    @harness.write_json(@harness.repository_json, {"id" => nil, "full_name" => nil})
+    repository = @harness.run_app
+    refute repository.status.success?
+    assert_includes repository.stderr, "failed to resolve repository metadata"
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_repository_metadata_mismatch_stops_before_issue_and_codex
+    @harness.write_json(@harness.repository_json, {
+      "id" => 4242, "full_name" => "other/repository", "default_branch" => "main"
+    })
+    result = @harness.run_app("--issue", "7")
+    refute result.status.success?
+    assert_includes result.stderr, "resolved repository mismatch"
+    assert_equal 3, @harness.events.grep(/^curl:/).length
+    assert_empty @harness.events.grep(/^curl:issue/)
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_app_child_receives_short_lived_credentials_but_not_source_credentials
+    result = @harness.run_app
+    assert_success(result, "app credential boundary")
+
+    %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].each do |name|
+      assert_equal "unset", source_fact(name, "state")
+    end
+    %w[GH_TOKEN GITHUB_TOKEN INSTALL_TOKEN].each do |name|
+      assert_equal "set", secret_fact(name, "state")
+      assert secret_fact(name, "matches_installation_token")
+    end
+    assert_equal "set", env_fact("GIT_ASKPASS", "state")
+    assert_equal "0", env_fact("GIT_TERMINAL_PROMPT", "value")
+    assert_equal "never", env_fact("GCM_INTERACTIVE", "value")
+    assert_empty @harness.launcher_temporary_paths
+
+    diagnostic_material = [result.stdout, result.stderr, @harness.events.join("\n"), File.read(@harness.codex_log)].join("\n")
+    refute_includes diagnostic_material, LauncherHarness::INSTALLATION_TOKEN
+    refute_includes diagnostic_material, LauncherHarness::PRIVATE_KEY_CONTENT.strip
+    refute_includes result.stdout + result.stderr, @harness.key_file
+  end
+
+  def test_local_validation_failures_precede_app_security_operations
+    @harness.write_repository_file("dirty.txt", "dirty\n")
+    dirty = @harness.run(env: @harness.app_env)
+    refute dirty.status.success?
+    assert_empty @harness.events
+
+    @harness = replace_harness
+    @harness.set_origin("https://github.com/other/#{LauncherHarness::REPOSITORY}")
+    origin = @harness.run(env: @harness.app_env)
+    refute origin.status.success?
+    assert_empty @harness.events
+
+    @harness = replace_harness
+    invalid = @harness.run("--resume", "abc", "--issue", "7", env: @harness.app_env)
+    refute invalid.status.success?
+    assert_empty @harness.events
+  end
+
+  def test_git_metadata_and_provenance_for_developer_author
+    result = @harness.run("--issue", "7", "--skip-issue-fetch", "--extra-prompt-file", prepare_extra)
+    assert_success(result, "developer metadata")
+    expected = {
+      "GIT_AUTHOR_NAME" => "Test Developer",
+      "GIT_COMMITTER_NAME" => "Test Developer",
+      "GIT_AUTHOR_EMAIL" => "developer@example.test",
+      "GIT_COMMITTER_EMAIL" => "developer@example.test",
+      "AGENT_NAME" => "test-agent",
+      "AGENT_GIT_MODE" => "developer-author",
+      "AGENT_LAUNCHED_BY_NAME" => "Test Developer",
+      "AGENT_LAUNCHED_BY_EMAIL" => "developer@example.test",
+      "AGENT_REPO_ROOT" => @harness.repository,
+      "AGENT_GITHUB_ACCESS_MODE" => "disabled",
+      "AGENT_PROMPT_FILE" => "docs/AGENT_PROMPT.txt",
+      "AGENT_ISSUE_NUMBER" => "7",
+      "AGENT_EXTRA_PROMPT_FILE" => "docs/EXTRA_PROMPT.txt"
+    }
+    expected.each { |name, value| assert_equal value, env_fact(name, "value"), name }
+  end
+
+  def test_agent_author_uses_deterministic_local_identity
+    result = @harness.run(env: {"AGENT_GIT_MODE" => "agent-author", "AGENT_NAME" => "review-agent"})
+    assert_success(result, "agent author")
+    assert_equal "review-agent", env_fact("GIT_AUTHOR_NAME", "value")
+    assert_equal "review-agent@noreply.local", env_fact("GIT_AUTHOR_EMAIL", "value")
+    assert_equal "review-agent", env_fact("GIT_COMMITTER_NAME", "value")
+    assert_equal "review-agent@noreply.local", env_fact("GIT_COMMITTER_EMAIL", "value")
+  end
+
+  def test_absent_developer_identity_does_not_fail_or_modify_global_git_config
+    synthetic_global = File.join(@harness.home, ".gitconfig")
+    File.write(synthetic_global, "[alias]\n  synthetic = status\n")
+    before = File.binread(synthetic_global)
+    Open3.capture3(
+      {"HOME" => @harness.home, "GIT_CONFIG_NOSYSTEM" => "1", "PATH" => "/usr/bin:/bin"},
+      "git", "config", "--local", "--unset-all", "user.name",
+      chdir: @harness.repository,
+      unsetenv_others: true
+    )
+    Open3.capture3(
+      {"HOME" => @harness.home, "GIT_CONFIG_NOSYSTEM" => "1", "PATH" => "/usr/bin:/bin"},
+      "git", "config", "--local", "--unset-all", "user.email",
+      chdir: @harness.repository,
+      unsetenv_others: true
+    )
+
+    result = @harness.run(env: {"DEVELOPER_NAME" => "", "DEVELOPER_EMAIL" => ""})
+    assert_success(result, "absent identity")
+    assert_equal "unset", env_fact("GIT_AUTHOR_NAME", "state")
+    assert_equal "unset", env_fact("GIT_AUTHOR_EMAIL", "state")
+    assert_equal before, File.binread(synthetic_global)
+  end
+
+  def test_codex_exit_status_is_preserved_and_cleanup_runs_for_normal_and_resume
+    failed = @harness.run(env: {"FAKE_CODEX_EXIT" => "17"})
+    assert_equal 17, failed.status.exitstatus, failure_message("normal failure", failed)
+    assert_equal 1, @harness.codex_invocations.length
+    assert_empty @harness.launcher_temporary_paths
+
+    @harness = replace_harness
+    resumed = @harness.run("--resume", "abc", env: {"FAKE_CODEX_EXIT" => "23"})
+    assert_equal 23, resumed.status.exitstatus, failure_message("resume failure", resumed)
+    assert_equal 1, @harness.codex_invocations.length
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_app_temporary_config_and_askpass_are_cleaned_after_success_and_failure
+    success = @harness.run_app
+    assert_success(success, "app success cleanup")
+    assert_equal "set", env_fact("GH_CONFIG_DIR", "state")
+    assert_equal "set", env_fact("GIT_ASKPASS", "state")
+    assert_empty @harness.launcher_temporary_paths
+
+    @harness = replace_harness
+    failure = @harness.run_app(env: {"FAKE_CODEX_EXIT" => "19"})
+    assert_equal 19, failure.status.exitstatus, failure_message("app failure cleanup", failure)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_sigint_is_forwarded_cleanup_runs_and_launcher_exits_130
+    assert_signal_contract("INT", 130)
+  end
+
+  def test_sigterm_is_forwarded_cleanup_runs_and_launcher_exits_143
+    assert_signal_contract("TERM", 143)
+  end
+
+  def test_debug_prompt_is_retained_private_exact_and_does_not_change_arguments
+    result = @harness.run_app(env: {"DEBUG_CODEX_PROMPT" => "1"})
+    assert_success(result, "debug prompt")
+    paths = @harness.debug_prompt_paths
+    assert_equal 1, paths.length
+    path = paths.fetch(0)
+    assert_includes result.stdout, "Debug prompt saved to: #{path}"
+    assert_equal 0o600, File.stat(path).mode & 0o777
+    assert_equal @harness.expected_prompt(mode: "app"), File.binread(path)
+    assert_equal [File.binread(path)], @harness.invocation.fetch("args")
+    refute_includes File.binread(path), LauncherHarness::INSTALLATION_TOKEN
+    refute_includes File.binread(path), LauncherHarness::PRIVATE_KEY_CONTENT.strip
+    refute_includes File.binread(path), @harness.key_file
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_resume_debug_mode_creates_no_prompt_artifact
+    result = @harness.run("--resume", "abc", env: {"DEBUG_CODEX_PROMPT" => "1"})
+    assert_success(result, "resume debug")
+    assert_empty @harness.debug_prompt_paths
+    assert_equal ["resume", "abc"], @harness.invocation.fetch("args")
+  end
+
+  private
+
+  def replace_harness
+    @harness.close
+    LauncherHarness.new
+  end
+
+  def prepare_extra
+    @harness.write_repository_file("docs/EXTRA_PROMPT.txt", "Extra provenance context.\n")
+    @harness.commit_all("Add extra prompt")
+    "docs/EXTRA_PROMPT.txt"
+  end
+
+  def env_fact(name, key)
+    @harness.invocation.fetch("env").fetch(name).fetch(key)
+  end
+
+  def secret_fact(name, key)
+    @harness.invocation.fetch("secret_env").fetch(name).fetch(key)
+  end
+
+  def source_fact(name, key)
+    @harness.invocation.fetch("source_env").fetch(name).fetch(key)
+  end
+
+  def assert_success(result, scenario)
+    assert result.status.success?, failure_message(scenario, result)
+  end
+
+  def failure_message(scenario, result)
+    <<~MESSAGE
+      launcher scenario failed: #{scenario}
+      exit: #{result.status.exitstatus.inspect}
+      stdout:
+      #{result.stdout}
+      stderr:
+      #{result.stderr}
+      events: #{@harness.events.inspect}
+      invocations: #{@harness.codex_invocations.inspect}
+    MESSAGE
+  end
+
+  def assert_signal_contract(signal, expected_status)
+    stdin, stdout, stderr, wait_thread = @harness.spawn(env: @harness.app_env.merge("FAKE_CODEX_WAIT" => "1"))
+    stdin.close
+    Timeout.timeout(5) do
+      sleep 0.01 until File.exist?(@harness.started_marker)
+    end
+    Process.kill(signal, wait_thread.pid)
+    status = Timeout.timeout(5) { wait_thread.value }
+    captured_stdout = stdout.read
+    captured_stderr = stderr.read
+    stdout.close
+    stderr.close
+
+    result = LauncherHarness::Result.new(stdout: captured_stdout, stderr: captured_stderr, status: status)
+    assert_equal expected_status, status.exitstatus, failure_message("signal #{signal}", result)
+    assert_equal [signal], @harness.signals
+    assert_includes @harness.events, "codex:signal:#{signal}"
+    assert_equal 1, @harness.codex_invocations.length
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    if wait_thread&.alive?
+      Process.kill("KILL", wait_thread.pid)
+      wait_thread.value
+    end
+  end
+end

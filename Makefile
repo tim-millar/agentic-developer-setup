@@ -8,6 +8,10 @@ validate:
 test:
 	ruby -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
 
+.PHONY: test-launcher
+test-launcher:
+	ruby -Itest test/launcher_test.rb
+
 .PHONY: check
 check:
 	$(MAKE) test
