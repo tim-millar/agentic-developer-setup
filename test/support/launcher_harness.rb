@@ -14,6 +14,7 @@ class LauncherHarness
   APP_ID = "12345"
   INSTALLATION_ID = "67890"
   INSTALLATION_TOKEN = "synthetic-installation-token-canary"
+  RENEWED_INSTALLATION_TOKEN = "synthetic-renewed-installation-token-canary"
   PRIVATE_KEY_CONTENT = "SYNTHETIC PRIVATE KEY CANARY - NOT A REAL KEY\n"
   APP_SLUG = "synthetic-launcher-app"
   TOKEN_EXPIRY = "2030-01-02T03:04:05Z"
@@ -26,7 +27,8 @@ class LauncherHarness
   attr_reader :root, :repository, :home, :tmpdir, :launcher, :prompt_file,
               :extra_prompt_file, :event_log, :codex_log, :started_marker,
               :signal_log, :key_file, :app_json, :token_json, :repository_json,
-              :issue_json
+              :issue_json, :renewal_control_dir, :token_sequence_json,
+              :token_attempt_file
 
   def initialize
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
@@ -43,8 +45,11 @@ class LauncherHarness
     @repository_json = File.join(root, "repository.json")
     @issue_json = File.join(root, "issue.json")
     @key_file = File.join(root, "synthetic-key.pem")
+    @renewal_control_dir = File.join(root, "renewal-control")
+    @token_sequence_json = File.join(root, "token-sequence.json")
+    @token_attempt_file = File.join(root, "token-attempts")
 
-    [repository, home, tmpdir, @fake_bin].each { |path| FileUtils.mkdir_p(path) }
+    [repository, home, tmpdir, @fake_bin, renewal_control_dir].each { |path| FileUtils.mkdir_p(path) }
     build_fakes
     build_api_fixtures
     build_repository
@@ -73,6 +78,7 @@ class LauncherHarness
       "FAKE_EVENT_LOG" => event_log,
       "FAKE_CODEX_LOG" => codex_log,
       "FAKE_CODEX_STARTED" => started_marker,
+      "FAKE_CODEX_RELEASE" => codex_release_marker,
       "FAKE_SIGNAL_LOG" => signal_log,
       "FAKE_APP_JSON" => app_json,
       "FAKE_TOKEN_JSON" => token_json,
@@ -93,6 +99,15 @@ class LauncherHarness
       "GITHUB_APP_INSTALLATION_ID" => INSTALLATION_ID,
       "GITHUB_APP_PRIVATE_KEY_PATH" => key_file,
       "FAKE_CURL_MODE" => "app"
+    )
+  end
+
+  def renewable_app_env
+    app_env.merge(
+      "AGENT_LAUNCHER_TEST_MODE" => "1",
+      "FAKE_RENEWAL_CONTROL_DIR" => renewal_control_dir,
+      "FAKE_TOKEN_SEQUENCE_JSON" => token_sequence_json,
+      "FAKE_TOKEN_ATTEMPT_FILE" => token_attempt_file
     )
   end
 
@@ -169,7 +184,7 @@ class LauncherHarness
   end
 
   def launcher_temporary_paths
-    Dir[File.join(tmpdir, "codex.{gh,askpass}.*")]
+    Dir[File.join(tmpdir, "codex.{credentials,gh,askpass}.*")]
   end
 
   def debug_prompt_paths
@@ -178,6 +193,53 @@ class LauncherHarness
 
   def write_json(path, value)
     File.write(path, JSON.generate(value))
+  end
+
+  def configure_token_sequence(*entries)
+    write_json(token_sequence_json, entries)
+  end
+
+  def token_response(token, expires_at: TOKEN_EXPIRY)
+    {"token" => token, "expires_at" => expires_at}
+  end
+
+  def renewal_failure
+    {"failure" => true}
+  end
+
+  def release_renewal_wait(ordinal)
+    File.write(File.join(renewal_control_dir, "release-#{ordinal}"), "release\n")
+  end
+
+  def renewal_wait_started?(ordinal)
+    File.exist?(File.join(renewal_control_dir, "wait-#{ordinal}.started"))
+  end
+
+  def renewal_wait_pid(ordinal)
+    path = File.join(renewal_control_dir, "wait-#{ordinal}.pid")
+    File.exist?(path) ? Integer(File.read(path), 10) : nil
+  end
+
+  def token_attempts
+    File.exist?(token_attempt_file) ? Integer(File.read(token_attempt_file), 10) : 0
+  end
+
+  def release_codex
+    File.write(File.join(root, "codex.release"), "release\n")
+  end
+
+  def codex_release_marker
+    File.join(root, "codex.release")
+  end
+
+  def run_generated_helper(path, *arguments)
+    stdout, stderr, status = Open3.capture3(
+      {"PATH" => [BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR)},
+      path,
+      *arguments,
+      unsetenv_others: true
+    )
+    Result.new(stdout: stdout, stderr: stderr, status: status)
   end
 
   def default_prompt
@@ -211,6 +273,9 @@ class LauncherHarness
       lines.concat([
         "- Use shell tools for GitHub operations.",
         "- Prefer git, gh, and curl with the provided environment credentials.",
+        "- Git authentication reads launcher-managed renewable credentials automatically.",
+        '- The launch-time gh and API token is static. If a gh or direct GitHub API operation fails with a possible authentication failure, obtain the current token from "$AGENT_GITHUB_TOKEN_HELPER" and retry the exact same operation once with that token.',
+        "- If that one retry fails, do not retry again, seek GitHub App source credentials, or use ambient developer credentials; report the failure clearly.",
         "- Do not use internal GitHub tools, connectors, or built-in GitHub actions for pull requests, issues, branches, labels, comments, or repository mutations.",
         "- Do not fall back to any non-shell GitHub integration if a shell-based GitHub command fails.",
         "- If a GitHub operation cannot be completed through shell tools with the provided credentials, stop and report the failure clearly."
@@ -317,7 +382,7 @@ class LauncherHarness
       safe_values = %w[
         AGENT_NAME AGENT_GIT_MODE AGENT_LAUNCHED_BY_NAME AGENT_LAUNCHED_BY_EMAIL
         AGENT_REPO_ROOT AGENT_GITHUB_ACCESS_MODE AGENT_PROMPT_FILE AGENT_ISSUE_NUMBER
-        AGENT_EXTRA_PROMPT_FILE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME
+        AGENT_EXTRA_PROMPT_FILE AGENT_GITHUB_TOKEN_HELPER GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME
         GIT_COMMITTER_EMAIL GH_CONFIG_DIR GIT_ASKPASS GIT_TERMINAL_PROMPT
         GCM_INTERACTIVE SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND SSH_ASKPASS
         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
@@ -349,7 +414,7 @@ class LauncherHarness
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:TERM") }
           exit 143
         end
-        sleep 0.05 while true
+        sleep 0.01 until File.exist?(ENV.fetch("FAKE_CODEX_RELEASE"))
       end
 
       exit Integer(ENV.fetch("FAKE_CODEX_EXIT", "0"), 10)
@@ -402,11 +467,34 @@ class LauncherHarness
         abort "unexpected curl URL"
       end
       abort "unexpected curl method for \#{endpoint}" unless method == expected_method
+
+      response = nil
+      sequence_attempt = nil
+      if endpoint == "token" && ENV["FAKE_TOKEN_SEQUENCE_JSON"]
+        sequence = JSON.parse(File.read(ENV.fetch("FAKE_TOKEN_SEQUENCE_JSON")))
+        sequence_attempt = if File.exist?(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE"))
+          Integer(File.read(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE")), 10)
+        else
+          0
+        end
+        File.write(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE"), (sequence_attempt + 1).to_s)
+        response = sequence.fetch(sequence_attempt, sequence.last)
+      end
+
       File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) do |file|
-        file.puts("curl:\#{endpoint} method=\#{method} url=\#{url} auth_matches_expected=\#{auth_matches}")
+        attempt = sequence_attempt.nil? ? "" : " attempt=\#{sequence_attempt + 1}"
+        outcome = if sequence_attempt.nil?
+          ""
+        elsif response&.fetch("failure", false)
+          " outcome=failure"
+        else
+          " outcome=success"
+        end
+        file.puts("curl:\#{endpoint}\#{attempt}\#{outcome} method=\#{method} url=\#{url} auth_matches_expected=\#{auth_matches}")
       end
       abort "unexpected authorization category for \#{endpoint}" unless auth_matches
-      STDOUT.write(File.read(fixture))
+      abort "synthetic GitHub request failure" if response&.fetch("failure", false)
+      STDOUT.write(response ? JSON.generate(response) : File.read(fixture))
     RUBY
 
     executable("jq", <<~RUBY)
@@ -460,13 +548,32 @@ class LauncherHarness
       when "base64"
         STDOUT.write(Base64.strict_encode64(STDIN.read))
       when "dgst"
-        File.open(events, "a", 0o600) { |file| file.puts("openssl:sign") }
+        sources_present = %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].all? do |name|
+          ENV.key?(name) && !ENV[name].empty?
+        end
+        File.open(events, "a", 0o600) { |file| file.puts("openssl:sign source_credentials_present=\#{sources_present}") }
         STDIN.read
         STDOUT.write("synthetic-signature")
       else
         warn "unexpected synthetic openssl invocation"
         exit 2
       end
+    RUBY
+
+    executable("launcher-test-sleep", <<~RUBY)
+      #!#{RbConfig.ruby}
+
+      control_dir = ENV.fetch("FAKE_RENEWAL_CONTROL_DIR")
+      ordinal_path = File.join(control_dir, "wait-count")
+      ordinal = File.exist?(ordinal_path) ? Integer(File.read(ordinal_path), 10) + 1 : 1
+      File.write(ordinal_path, ordinal.to_s)
+      File.write(File.join(control_dir, "wait-\#{ordinal}.pid"), Process.pid.to_s)
+      File.write(File.join(control_dir, "wait-\#{ordinal}.started"), ARGV.fetch(0))
+      File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) do |file|
+        file.puts("renewal:wait seconds=\#{ARGV.fetch(0)} ordinal=\#{ordinal}")
+      end
+      release = File.join(control_dir, "release-\#{ordinal}")
+      sleep 0.01 until File.exist?(release)
     RUBY
   end
 
@@ -475,6 +582,10 @@ class LauncherHarness
     File.chmod(0o600, key_file)
     write_json(app_json, {"slug" => APP_SLUG})
     write_json(token_json, {"token" => INSTALLATION_TOKEN, "expires_at" => TOKEN_EXPIRY})
+    configure_token_sequence(
+      token_response(INSTALLATION_TOKEN),
+      token_response(RENEWED_INSTALLATION_TOKEN)
+    )
     write_json(repository_json, {
       "id" => 4242,
       "full_name" => "#{OWNER}/#{REPOSITORY}",
