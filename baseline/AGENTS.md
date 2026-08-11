@@ -22,7 +22,7 @@ When work begins from a GitHub issue, treat the issue as a primary source of tru
 
 ## Core Working Principles
 
-- One issue = one branch = one PR
+- For issue-led implementation, one issue = one branch = one PR
 - Do not introduce unrelated refactors
 - Prefer small, explicit, testable changes
 - Follow existing repo conventions unless the issue explicitly requires changing them
@@ -31,19 +31,33 @@ When work begins from a GitHub issue, treat the issue as a primary source of tru
 
 ## Required Workflow
 
-Agents must follow this workflow unless explicitly instructed otherwise:
+Agents performing implementation must follow this workflow unless explicitly instructed otherwise:
 
 1. Read the issue or task brief carefully
 2. Restate the implementation plan briefly before coding
 3. Create and switch to a branch for the task
 4. Implement the smallest complete change that satisfies the task
 5. Run the relevant validation commands
-6. Summarise what changed, how it was validated, and any follow-ups
-7. Open or prepare a PR using the repository PR template
+6. Complete any publication steps required by the conditional contract below
+7. Summarise what changed, how it was validated and delivered, and any follow-ups
 
 Do not commit directly to `main` or `master`.
 
 GitHub issues are a primary execution surface in this repository. When working from an issue, agents should prefer issues that are ready for deterministic implementation, meaning the intended behaviour, scope boundaries, acceptance criteria, constraints, and validation expectations are clear enough that another competent implementer would make materially the same decisions. If those elements are still unresolved, treat the work as discovery or shaping rather than silently making foundational decisions during implementation.
+
+## Conditional Publication Contract
+
+When an agent is performing autonomous issue-led implementation, repository write access is available, repository changes are required or have been made, and the human has not explicitly requested a narrower delivery state, commit, push, pull-request publication, and verification are required completion steps. A validated local working tree is not a complete delivery in that mode.
+
+Issue context or write access alone does not activate this contract. It does not apply automatically to read-only inspection, explanation, review, investigation, issue shaping, debugging without requested implementation, validation-only work, human-led local work, non-issue work, sessions without repository write access, or sessions in which no repository change is required. Do not create empty commits or pull requests for no-change results. Direct human instructions for local-only, no commit, no push, no pull request, or another bounded delivery state take precedence.
+
+For qualifying work, the task authorises and requires task-only commits, normal task-branch pushes, creation of a draft pull request when no relevant open pull request exists, reuse of a single relevant existing open pull request, bounded pull-request body updates that preserve human-authored content, and remote verification. Repository- and runtime-specific instructions determine how write capability and credential recovery are established.
+
+Resolve the intended base before pull-request lookup or creation. Reuse an existing open pull request only when it is the single same-head pull request targeting that base, and preserve its current draft or ready-for-review state. Newly created pull requests must be drafts. Conflicting, multiple, closed, or merged same-head pull requests require human direction rather than silent replacement or mutation.
+
+Publication is complete only after verifying that the active task branch is correct, all task changes are committed, the local task HEAD exactly equals the remote task-branch HEAD and the pull-request head commit, exactly one relevant pull request is open against the intended base, and its review state is correct. Report this publication evidence with validation results. Do not force-push, rewrite history, change a pull-request base or readiness state, request reviewers, enable auto-merge, merge, or close the issue unless separately authorised.
+
+An understood validation failure may be published when the task-only state remains coherent, safe, and reviewable, but publication completion and implementation acceptance must be reported separately. Do not publish unsafe, secret-bearing, destructive, unrelated, or ambiguous state. If publication fails, report the last verified local, remote, and pull-request state without claiming complete delivery.
 
 ## Branch Naming
 

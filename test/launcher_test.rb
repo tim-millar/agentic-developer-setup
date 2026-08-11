@@ -292,6 +292,10 @@ class LauncherTest < Minitest::Test
     assert_equal "set", env_fact("GH_CONFIG_DIR", "state")
     assert_match(%r{\A#{Regexp.escape(@harness.tmpdir)}/codex\.gh\.}, env_fact("GH_CONFIG_DIR", "value"))
     assert_empty @harness.launcher_temporary_paths
+    prompt = @harness.invocation.fetch("args").last
+    assert_includes prompt, "GitHub access is disabled for this session."
+    refute_includes prompt, "App mode provides repository write capability"
+    refute_includes prompt, "commit, push, pull-request publication, and verification"
   end
 
   def test_app_configuration_is_required_and_validated_before_api_access
@@ -354,6 +358,24 @@ class LauncherTest < Minitest::Test
     expected = @harness.expected_prompt(mode: "app", issue: 7)
     assert_equal [expected], @harness.invocation.fetch("args")
     refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
+  end
+
+  def test_app_mode_policy_describes_conditional_publication_capability_without_credentials
+    result = @harness.run_app("--issue", "7")
+    assert_success(result, "App publication capability policy")
+
+    prompt = @harness.invocation.fetch("args").last
+    assert_includes prompt, "App mode provides repository write capability for this session."
+    assert_includes prompt, "Autonomous implementation of a supplied issue may activate the repository publication contract in AGENTS.md"
+    assert_includes prompt, "commit, push, pull-request publication, and verification when required"
+    assert_includes prompt, "Issue context alone does not require publication"
+    assert_includes prompt, "App mode alone does not require publication"
+    assert_includes prompt, 'obtain the current token from "$AGENT_GITHUB_TOKEN_HELPER" and retry the exact same operation once'
+    refute_includes prompt, LauncherHarness::INSTALLATION_TOKEN
+    refute_includes prompt, LauncherHarness::PRIVATE_KEY_CONTENT.strip
+    refute_includes prompt, @harness.key_file
+    refute_includes prompt, LauncherHarness::APP_ID
+    refute_includes prompt, LauncherHarness::INSTALLATION_ID
   end
 
   def test_issue_response_validation_rejects_pull_requests_missing_numbers_and_malformed_json

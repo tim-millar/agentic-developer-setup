@@ -24,6 +24,8 @@ Follow the working mode established by the task:
 * when changes already exist on the current branch, understand and preserve them before tightening or extending them;
 * when no task has been supplied, read the repository instructions and wait for direction.
 
+When the root `AGENTS.md` publication contract applies, a local implementation handoff is not complete. Follow that contract and the launcher-generated GitHub capability and credential-recovery policy through verified publication.
+
 Root files operate this repository. Files under `baseline/` are reusable framework source artefacts. Do not change one merely to satisfy a requirement that belongs only to the other. Preserve the source-path and target-path distinctions declared in `framework.yml`.
 
 Make routine local implementation decisions where they fit clearly within the supplied task. Do not silently make material decisions about framework semantics, architecture, public interfaces, security, dependencies, reusable baseline behaviour, or scope. Surface a blocking unresolved decision rather than inventing framework policy.

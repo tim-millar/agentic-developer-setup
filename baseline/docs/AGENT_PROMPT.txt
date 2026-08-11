@@ -24,6 +24,8 @@ Working mode:
 
 Follow the launcher-supplied session policy for GitHub access and credential recovery. Do not assume that GitHub App source credentials are available inside the agent session, and do not seek them or switch to an unapproved credential source when session credentials fail.
 
+Use AGENTS.md to determine whether the current working mode requires publication. When its conditional publication contract applies, local implementation alone is not a complete handoff; follow the launcher-supplied capability and credential policy through verified delivery.
+
 Do not:
 
 - expand scope without explicit instruction
