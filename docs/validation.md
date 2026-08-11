@@ -2,7 +2,7 @@
 
 This repository validates its own schema-v1 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository.
 
-The validation surface depends on the minimal root self-hosted harness introduced by issue #21. In particular, root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, and `scripts/run_codex.sh` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
@@ -50,7 +50,7 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, and `scripts/run_codex.sh` operate this repository;
+- root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
 - `baseline/AGENTS.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
 

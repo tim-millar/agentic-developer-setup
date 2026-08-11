@@ -94,6 +94,10 @@ Examples:
 - linting / type checks / coverage checks
 - specific CI expectations
 
+## Delivery
+
+Unless this issue explicitly says otherwise, agent-led implementation sessions with repository write access follow the repository's standard branch, commit, push, pull-request, and verification contract. Individual issues may explicitly narrow that delivery state.
+
 ## Open Questions
 
 List any remaining questions.

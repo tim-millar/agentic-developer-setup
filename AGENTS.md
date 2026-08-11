@@ -342,6 +342,45 @@ These are required workflow rules even when the current launcher does not techni
 
 Small read-only tasks, explanations, reviews, and draft generation do not require a branch when no repository changes are being made.
 
+### Publication for autonomous issue implementation
+
+For this repository, verified pull-request publication is the required terminal state when all of the following are true:
+
+* the agent is autonomously implementing a supplied GitHub issue;
+* repository changes are required or have been made;
+* the session has repository write capability through the supported GitHub App workflow;
+* the human has not explicitly requested a narrower delivery state.
+
+Issue context or App-mode capability alone does not activate this rule. It does not apply automatically to read-only inspection, explanation, review, investigation, issue shaping, debugging without requested implementation, validation-only work, human-led local work, non-issue work, GitHub-disabled sessions, or sessions in which no repository change is required. Do not create an empty commit, branch, or pull request for a no-change result. Direct human instructions such as local-only, no commit, no push, no pull request, commit only, or another clearly bounded delivery state override the default.
+
+When the rule applies, the implementation task itself authorises and requires the agent to:
+
+1. create or select the correct task branch;
+2. stage only task-related files and create task-related commits;
+3. push the task branch normally to `origin`;
+4. create a draft pull request when no relevant open pull request exists, or reuse the single relevant existing open pull request;
+5. make a bounded update to an existing pull-request body when needed to record accurate task scope, issue linkage, validation, agent context, risks, limitations, or follow-up work while preserving human-authored content;
+6. read back local Git, remote Git, and GitHub state to verify publication.
+
+No additional human instruction is required for those task-related mutations, although platform-enforced permission or approval prompts still apply. This authority does not include force-push, amend, rebase, history rewriting, squashing, changing a pull-request base, reopening or closing a pull request, changing draft or ready-for-review state, requesting reviewers, requesting Copilot review, approving reviews, enabling auto-merge, merging, or directly closing the issue.
+
+Resolve the intended pull-request base before lookup or creation. Use the repository default branch unless the human, issue, repository documentation, or a documented stacked-branch relationship establishes another base. A relevant existing pull request must be open, sourced from the active task branch, and targeted at that base. Reuse exactly one matching open pull request and preserve its draft or ready-for-review state. If there are multiple open same-head pull requests, a same-head pull request with the wrong base, or a historical closed or merged pull request for the task branch, stop and report the conflict rather than selecting, retargeting, reopening, closing, or replacing a pull request. A new agent-created pull request must be a draft and use the repository template when present. Populate its body accurately with the summary, `Closes #<issue>`, validation, agent-execution disclosure, applicable impact, risks or limitations, follow-up work, and useful reviewer notes.
+
+Successful local implementation is not complete delivery when this rule applies. Before reporting publication complete, verify all of the following:
+
+* the active branch is the intended task branch;
+* the task-related commit identity and local HEAD are known;
+* no task-related changes remain outside local HEAD;
+* the remote task-branch HEAD exactly equals local HEAD;
+* exactly one relevant open pull request exists;
+* its head branch and base branch are correct;
+* its head commit exactly equals the verified local and remote HEAD;
+* a newly created pull request is still draft, or an existing pull request retains its prior draft or ready-for-review state.
+
+An ancestry check is insufficient. If the remote branch advances concurrently, fetch and inspect it; do not force-push or claim completion while the local, remote, and pull-request heads differ.
+
+Validation and publication are separate completion dimensions. An understood validation failure may still be published when the task-only state is coherent, safe, and reviewable; document the failed validation and do not claim implementation acceptance. Do not publish an unknown, unsafe, secret-bearing, destructive, unrelated, or ambiguously attributable state. If commit, push, pull-request creation, or verification fails, preserve the last safe state, follow the launcher-generated credential-recovery policy, report the exact failed stage and verified local, remote, and pull-request state, and do not describe publication as complete.
+
 ## Scope control
 
 Agents may:
@@ -476,6 +515,8 @@ State any relevant limitations, unverified behaviour, unavailable tooling, or as
 ### Follow-up work
 
 List out-of-scope discoveries that should be considered separately.
+
+When the autonomous issue-publication rule applies, also report the branch, local HEAD SHA and commit identity, pushed remote ref, verified remote HEAD SHA, pull-request number or URL, pull-request head and base branches, open and draft or ready-for-review state, whether the pull request was created or reused, and exact validation outcomes. Disclose unrelated pre-existing working-tree changes that were preserved and any publication recovery attempt.
 
 Do not state that a command, test, commit, push, pull request, issue update, or other action occurred unless it actually occurred.
 

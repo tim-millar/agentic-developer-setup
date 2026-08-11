@@ -670,6 +670,9 @@ build_github_policy_block() {
   if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
     cat <<EOF
 GitHub tool-use policy for this session:
+- App mode provides repository write capability for this session.
+- Autonomous implementation of a supplied issue may activate the repository publication contract in AGENTS.md, including commit, push, pull-request publication, and verification when required.
+- Issue context alone does not require publication, and App mode alone does not require publication; determine the working mode from the task, human instructions, and repository state.
 - Use shell tools for GitHub operations.
 - Prefer git, gh, and curl with the provided environment credentials.
 - Git authentication reads launcher-managed renewable credentials automatically.
