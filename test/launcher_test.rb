@@ -327,6 +327,18 @@ class LauncherTest < Minitest::Test
     assert_empty @harness.codex_invocations
   end
 
+  def test_app_test_mode_requires_controlled_wait_executable_before_api_or_session_state
+    @harness.remove_renewal_wait_executable
+    result = @harness.run(env: @harness.renewable_app_env)
+
+    refute result.status.success?
+    assert_includes result.stderr, "AGENT_LAUNCHER_TEST_MODE=1 requires launcher-test-sleep on PATH"
+    assert_empty @harness.events
+    assert_empty @harness.codex_invocations
+    refute @harness.renewal_wait_started?(1)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
   def test_app_mode_resolves_identity_token_repository_and_issue_in_order
     result = @harness.run_app("--issue", "7")
     assert_success(result, "app issue launch")
@@ -423,6 +435,43 @@ class LauncherTest < Minitest::Test
     assert_includes result.stdout, "GitHub credential refresh interval: 45 minutes"
   end
 
+  def test_exported_ambient_jwt_and_token_json_never_enter_the_codex_child_or_diagnostics
+    ambient_jwt = "ambient-exported-jwt-canary"
+    ambient_token_json = "ambient-exported-token-json-canary"
+    generated_jwt_header = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
+    result = @harness.run_app(env: {
+      "JWT" => ambient_jwt,
+      "TOKEN_JSON" => ambient_token_json,
+      "DEBUG_CODEX_PROMPT" => "1"
+    })
+    assert_success(result, "exported launcher credential containment")
+
+    %w[JWT TOKEN_JSON].each do |name|
+      assert_equal "unset", source_fact(name, "state")
+    end
+
+    debug_prompt = File.binread(@harness.debug_prompt_paths.fetch(0))
+    diagnostic_material = [
+      result.stdout,
+      result.stderr,
+      @harness.events.join("\n"),
+      File.read(@harness.codex_log),
+      @harness.invocation.fetch("args").join("\n"),
+      debug_prompt
+    ].join("\n")
+    [
+      ambient_jwt,
+      ambient_token_json,
+      generated_jwt_header,
+      LauncherHarness::INSTALLATION_TOKEN,
+      LauncherHarness::PRIVATE_KEY_CONTENT.strip,
+      @harness.key_file
+    ].each do |canary|
+      assert !diagnostic_material.include?(canary), "launcher-only credential material entered child-visible diagnostics"
+    end
+    assert_empty @harness.launcher_temporary_paths
+  end
+
   def test_initial_app_session_creates_private_dynamic_credential_state
     session = start_renewable_session("--issue", "7")
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
@@ -471,6 +520,12 @@ class LauncherTest < Minitest::Test
     credential_dir = File.dirname(helper)
     codex_pid = File.read(@harness.started_marker)
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::INSTALLATION_TOKEN)
+    %w[
+      AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
+      FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+    ].each do |name|
+      assert_equal "unset", source_fact(name, "state"), name
+    end
 
     readings = []
     keep_reading = true
@@ -521,23 +576,35 @@ class LauncherTest < Minitest::Test
   def test_failed_renewal_retains_token_retries_after_five_minutes_and_recovers
     sequence = [
       @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
-      @harness.renewal_failure,
+      @harness.renewal_timeout,
       @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
     ]
     session = start_renewable_session(sequence: sequence)
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    initial_mint = @harness.events.find { |event| event.start_with?("curl:token attempt=1 ") }
+    refute_includes initial_mint, "connect_timeout="
+    refute_includes initial_mint, "max_time="
 
     @harness.release_renewal_wait(1)
     wait_until { @harness.token_attempts >= 2 && @harness.renewal_wait_started?(2) }
     assert_equal "300", File.read(File.join(@harness.renewal_control_dir, "wait-2.started"))
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::INSTALLATION_TOKEN)
+    timed_out_renewal = @harness.events.find { |event| event.start_with?("curl:token attempt=2 ") }
+    assert_includes timed_out_renewal, "outcome=timeout"
+    assert_includes timed_out_renewal, "connect_timeout=10"
+    assert_includes timed_out_renewal, "max_time=30"
+    assert_equal 1, @harness.codex_invocations.length
 
     @harness.release_renewal_wait(2)
     wait_until { @harness.token_attempts >= 3 && @harness.renewal_wait_started?(3) }
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
     assert_equal "2700", File.read(File.join(@harness.renewal_control_dir, "wait-3.started"))
     assert_equal 1, @harness.codex_invocations.length
+    recovered_renewal = @harness.events.find { |event| event.start_with?("curl:token attempt=3 ") }
+    assert_includes recovered_renewal, "connect_timeout=10"
+    assert_includes recovered_renewal, "max_time=30"
 
+    wait_pid = @harness.renewal_wait_pid(3)
     result = finish_renewable_session(session)
     assert_success(result, "renewal failure and recovery")
     assert_equal 1, result.stderr.scan("GitHub credential renewal failed").length
@@ -546,6 +613,7 @@ class LauncherTest < Minitest::Test
     refute_includes warning_material, LauncherHarness::RENEWED_INSTALLATION_TOKEN
     refute_includes warning_material, LauncherHarness::PRIVATE_KEY_CONTENT.strip
     refute_includes warning_material, @harness.key_file
+    refute process_alive?(wait_pid), "renewal wait process survived timeout recovery cleanup"
     assert_empty @harness.launcher_temporary_paths
   ensure
     stop_renewable_session(session)
@@ -604,6 +672,12 @@ class LauncherTest < Minitest::Test
 
     assert_success(result, "disabled renewal hooks")
     assert_equal "unset", env_fact("AGENT_GITHUB_TOKEN_HELPER", "state")
+    %w[
+      AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
+      FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+    ].each do |name|
+      assert_equal "unset", source_fact(name, "state"), name
+    end
     assert_equal 0, @harness.token_attempts
     refute @harness.renewal_wait_started?(1)
     assert_empty @harness.events.grep(/^curl:/)

@@ -31,12 +31,19 @@ cryptography, or Codex:
 - `codex` records the exact argument array, working directory, selected safe
   environment values, and sanitized credential facts;
 - `curl` accepts only the explicitly modelled GitHub endpoints and methods,
-  returns synthetic fixture responses, and fails every unexpected call;
+  returns synthetic fixture responses, records sanitised renewal timeout facts,
+  and fails every unexpected call;
 - `jq` supports only the query forms used by the public launcher;
 - `openssl` models key validation, base64 operations, and signing without a real
   private key.
 - a test-only wait executable exposes explicit renewal boundaries without
   changing the launcher's production 45-minute and 5-minute constants.
+
+App-mode test runs that enable the controlled-wait path must provide that wait
+executable. The launcher rejects an incomplete test setup before App API access
+or session-state creation, preventing an accidental 45-minute real wait or a
+silently exited renewal worker. Test-control environment variables remain on the
+launcher side and are not inherited by the fake Codex child.
 
 All fake-command events share an ordered log such as:
 
@@ -84,6 +91,13 @@ to a private `0700` session directory, with the authoritative token file at
 leaves the previous token intact, emits a sanitised warning, and retries after 5
 minutes until renewal succeeds.
 
+Only the background installation-token POST uses fixed curl network bounds: a
+10-second connection timeout and a 30-second total HTTP timeout. Initial App
+validation, token minting, repository resolution, and issue fetching keep their
+existing request behaviour. A renewal timeout follows the ordinary failure path,
+so Codex keeps running with the last successful token while the worker schedules
+the 5-minute retry.
+
 The Codex child retains its initial `GH_TOKEN`, `GITHUB_TOKEN`, and
 `INSTALL_TOKEN` values for compatibility; a parent cannot update that static
 environment. `AGENT_GITHUB_TOKEN_HELPER` instead names a launcher-generated
@@ -96,8 +110,11 @@ Renewed tokens are published by writing a private sibling file and atomically
 renaming it over the authoritative token. Behavioural tests read concurrently
 across that replacement and accept only the complete old or new token. Other
 tests remove the token state to verify safe helper failure, retain token A across
-a failed refresh, verify the 5-minute retry and return to the 45-minute cadence,
-and exercise the same lifecycle for resumed sessions.
+a timed-out refresh, verify the 5-minute retry and return to the 45-minute
+cadence, and exercise the same lifecycle for resumed sessions. Credential
+containment cases also seed exported ambient `JWT` and `TOKEN_JSON` canaries and
+verify that neither their replacement launcher values nor their export
+attributes reach Codex.
 
 ## Processes, signals, and cleanup
 

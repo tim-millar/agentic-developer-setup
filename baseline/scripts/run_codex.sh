@@ -48,6 +48,8 @@ CODEX_PID=""
 
 GITHUB_REFRESH_INTERVAL_SECONDS=2700
 GITHUB_RETRY_INTERVAL_SECONDS=300
+GITHUB_RENEWAL_CONNECT_TIMEOUT_SECONDS=10
+GITHUB_RENEWAL_HTTP_TIMEOUT_SECONDS=30
 
 APP_SLUG="disabled"
 EXPIRES_AT="n/a"
@@ -300,6 +302,12 @@ if [[ "$GITHUB_ACCESS_MODE" == "disabled" && -n "$ISSUE_NUMBER" && "$SKIP_GITHUB
   die_usage "--issue requires GITHUB_ACCESS_MODE=app unless --skip-issue-fetch is set"
 fi
 
+if [[ "$GITHUB_ACCESS_MODE" == "app" && "${AGENT_LAUNCHER_TEST_MODE:-0}" == "1" ]] &&
+   ! command -v launcher-test-sleep >/dev/null 2>&1; then
+  echo "Error: AGENT_LAUNCHER_TEST_MODE=1 requires launcher-test-sleep on PATH." >&2
+  exit 1
+fi
+
 b64url() {
   openssl base64 -A | tr '+/' '-_' | tr -d '='
 }
@@ -330,16 +338,23 @@ github_api() {
   local method="$2"
   local url="$3"
   local body="${4:-}"
+  local connect_timeout="${5:-}"
+  local max_time="${6:-}"
+  local timeout_args=()
+
+  if [[ -n "$connect_timeout" && -n "$max_time" ]]; then
+    timeout_args=(--connect-timeout "$connect_timeout" --max-time "$max_time")
+  fi
 
   if [[ -n "$body" ]]; then
-    curl -sS -X "$method" \
+    curl -sS "${timeout_args[@]}" -X "$method" \
       -H "$auth_header" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       -d "$body" \
       "$url"
   else
-    curl -sS -X "$method" \
+    curl -sS "${timeout_args[@]}" -X "$method" \
       -H "$auth_header" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -349,6 +364,8 @@ github_api() {
 
 mint_installation_token_json() {
   local jwt="${1:-}"
+  local connect_timeout="${2:-}"
+  local max_time="${3:-}"
 
   if [[ -z "$jwt" ]]; then
     jwt="$(jwt_mint "$GITHUB_APP_ID" "$GITHUB_APP_PRIVATE_KEY_PATH")" || return 1
@@ -356,7 +373,10 @@ mint_installation_token_json() {
   github_api \
     "Authorization: Bearer ${jwt}" \
     POST \
-    "https://api.github.com/app/installations/${GITHUB_APP_INSTALLATION_ID}/access_tokens"
+    "https://api.github.com/app/installations/${GITHUB_APP_INSTALLATION_ID}/access_tokens" \
+    "" \
+    "$connect_timeout" \
+    "$max_time"
 }
 
 publish_current_token() {
@@ -439,7 +459,13 @@ EOF
 renew_current_token() {
   local token_json renewed_token
 
-  token_json="$(mint_installation_token_json 2>/dev/null)" || return 1
+  token_json="$(
+    mint_installation_token_json \
+      "" \
+      "$GITHUB_RENEWAL_CONNECT_TIMEOUT_SECONDS" \
+      "$GITHUB_RENEWAL_HTTP_TIMEOUT_SECONDS" \
+      2>/dev/null
+  )" || return 1
   renewed_token="$(printf '%s' "$token_json" | jq -r '.token // empty' 2>/dev/null)" || return 1
   [[ -n "$renewed_token" ]] || return 1
   publish_current_token "$renewed_token"
@@ -491,6 +517,8 @@ stop_renewal_worker() {
     RENEWAL_PID=""
   fi
 }
+
+unset JWT TOKEN_JSON
 
 if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
   : "${GITHUB_APP_ID:?Set GITHUB_APP_ID (numeric App ID)}"
@@ -562,6 +590,8 @@ if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
     exit 1
   fi
 fi
+
+unset JWT TOKEN_JSON
 
 ISSUE_TITLE=""
 ISSUE_URL=""
@@ -821,6 +851,9 @@ if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
 fi
 
 unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
+unset JWT TOKEN_JSON
+unset AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
+unset FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
 
 if [[ -n "$RESUME_SESSION" ]]; then
   CODEX_STATUS=0

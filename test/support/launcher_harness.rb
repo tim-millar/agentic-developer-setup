@@ -207,6 +207,14 @@ class LauncherHarness
     {"failure" => true}
   end
 
+  def renewal_timeout
+    {"failure" => "timeout"}
+  end
+
+  def remove_renewal_wait_executable
+    FileUtils.rm_f(File.join(@fake_bin, "launcher-test-sleep"))
+  end
+
   def release_renewal_wait(ordinal)
     File.write(File.join(renewal_control_dir, "release-#{ordinal}"), "release\n")
   end
@@ -389,7 +397,11 @@ class LauncherHarness
         GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2
       ]
       secrets = %w[GH_TOKEN GITHUB_TOKEN GITHUB_PAT INSTALL_TOKEN]
-      sources = %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH]
+      sources = %w[
+        GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
+        JWT TOKEN_JSON AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
+        FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+      ]
       record = {
         "executable" => File.basename($PROGRAM_NAME),
         "args" => ARGV,
@@ -428,6 +440,8 @@ class LauncherHarness
       abort "unexpected fake curl invocation" unless ENV["FAKE_CURL_MODE"] == "app"
       method = "GET"
       headers = []
+      connect_timeout = nil
+      max_time = nil
       url = nil
       index = 0
       while index < ARGV.length
@@ -439,6 +453,12 @@ class LauncherHarness
           headers << ARGV.fetch(index + 1)
           index += 2
         when "-d"
+          index += 2
+        when "--connect-timeout"
+          connect_timeout = ARGV.fetch(index + 1)
+          index += 2
+        when "--max-time"
+          max_time = ARGV.fetch(index + 1)
           index += 2
         else
           value = ARGV[index]
@@ -483,14 +503,20 @@ class LauncherHarness
 
       File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) do |file|
         attempt = sequence_attempt.nil? ? "" : " attempt=\#{sequence_attempt + 1}"
+        failure = response&.fetch("failure", false)
         outcome = if sequence_attempt.nil?
           ""
-        elsif response&.fetch("failure", false)
-          " outcome=failure"
+        elsif failure
+          " outcome=\#{failure == true ? 'failure' : failure}"
         else
           " outcome=success"
         end
-        file.puts("curl:\#{endpoint}\#{attempt}\#{outcome} method=\#{method} url=\#{url} auth_matches_expected=\#{auth_matches}")
+        timeouts = if connect_timeout || max_time
+          " connect_timeout=\#{connect_timeout || 'unset'} max_time=\#{max_time || 'unset'}"
+        else
+          ""
+        end
+        file.puts("curl:\#{endpoint}\#{attempt}\#{outcome} method=\#{method} url=\#{url} auth_matches_expected=\#{auth_matches}\#{timeouts}")
       end
       abort "unexpected authorization category for \#{endpoint}" unless auth_matches
       abort "synthetic GitHub request failure" if response&.fetch("failure", false)
