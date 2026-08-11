@@ -495,12 +495,15 @@ class LauncherHarness
       sequence_attempt = nil
       if endpoint == "token" && ENV["FAKE_TOKEN_SEQUENCE_JSON"]
         sequence = JSON.parse(File.read(ENV.fetch("FAKE_TOKEN_SEQUENCE_JSON")))
-        sequence_attempt = if File.exist?(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE"))
-          Integer(File.read(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE")), 10)
+        attempt_file = ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE")
+        sequence_attempt = if File.exist?(attempt_file)
+          Integer(File.read(attempt_file), 10)
         else
           0
         end
-        File.write(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE"), (sequence_attempt + 1).to_s)
+        attempt_temp = "\#{attempt_file}.tmp.\#{Process.pid}"
+        File.write(attempt_temp, (sequence_attempt + 1).to_s)
+        File.rename(attempt_temp, attempt_file)
         response = sequence.fetch(sequence_attempt, sequence.last)
       end
 
