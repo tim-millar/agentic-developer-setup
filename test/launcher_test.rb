@@ -360,7 +360,7 @@ class LauncherTest < Minitest::Test
     refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
   end
 
-  def test_app_mode_policy_describes_conditional_publication_capability_without_credentials
+  def test_app_mode_policy_describes_conditional_publication_capability_without_exposing_credentials
     result = @harness.run_app("--issue", "7")
     assert_success(result, "App publication capability policy")
 
