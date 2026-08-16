@@ -36,6 +36,7 @@ You may be given some or all of the following:
 - intended ecosystem
 - intended framework
 - intended local runtime model
+- intended host tooling for agent-executed commands
 - intended app shape
 
 ### Optional
@@ -82,6 +83,19 @@ When a relevant adapter does not exist:
 - explicitly note that a useful adapter appears to be missing
 - do not invent a full unofficial adapter implicitly inside the instantiated project files
 
+## Agent Host Toolchain Decision
+
+Treat the application ecosystem, application execution environment, and agent host toolchain as separate decisions. Use supplied project evidence to determine:
+
+- whether ordinary development and validation commands run on the host, in containers, remotely, or through a mixed workflow;
+- whether hooks, package commands, code generation, or validation require a language runtime or other tool directly on the host;
+- whether the project already defines a particular host-tool activation mechanism;
+- whether host-tool selection is still unresolved.
+
+The baseline launcher preserves its inherited `PATH` without repository-specific setup. Generate `scripts/agent_host_env.sh` only when the evidence establishes both that particular host preparation is required and that its activation mechanism is part of the project contract. Keep any generated hook non-secret, deterministic, idempotent, and limited to selecting or verifying already-installed host tools.
+
+Do not generate the hook when host preparation is clearly unnecessary. When evidence is insufficient, do not invent a runtime manager, host/container split, activation command, or host language-runtime requirement; record the uncertainty in assumptions, open questions, or activation work instead. Never infer activation from version files, Docker files, `.envrc`, or ecosystem selection alone.
+
 ## Missing-Information Rules
 
 When required project information is incomplete:
@@ -118,6 +132,7 @@ Typical outputs may include:
 - `Makefile`
 - `lefthook.yml`
 - `scripts/run_codex.sh`
+- optional `scripts/agent_host_env.sh` only when justified by the host-toolchain decision
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `.github/workflows/ci.yml`
 - `.github/ISSUE_TEMPLATE/...`

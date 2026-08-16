@@ -55,7 +55,7 @@ class LauncherTest < Minitest::Test
     result = @harness.run(*arguments)
 
     assert_success(result, "argument forwarding")
-    assert_equal ["--model", "model with spaces", "$(touch NEVER_CREATED)", "semi;colon", "pipe|data", "", @harness.expected_prompt],
+    assert_equal @harness.expected_codex_args("--model", "model with spaces", "$(touch NEVER_CREATED)", "semi;colon", "pipe|data", "", @harness.expected_prompt),
                  @harness.invocation.fetch("args")
     refute File.exist?(File.join(@harness.repository, "NEVER_CREATED"))
     assert_equal @harness.repository, @harness.invocation.fetch("cwd")
@@ -69,14 +69,14 @@ class LauncherTest < Minitest::Test
     )
     assert_success(result, "CLI profile")
     assert_equal "alternate-codex", @harness.invocation.fetch("executable")
-    assert_equal ["--profile", "cli-profile", "--sandbox", "workspace-write", @harness.expected_prompt],
+    assert_equal ["--profile", "cli-profile", *@harness.expected_codex_args("--sandbox", "workspace-write", @harness.expected_prompt)],
                  @harness.invocation.fetch("args")
 
     @harness.close
     @harness = LauncherHarness.new
     result = @harness.run("--quiet", env: {"CODEX_PROFILE" => "environment-profile"})
     assert_success(result, "environment profile")
-    assert_equal ["--profile", "environment-profile", "--quiet", @harness.expected_prompt],
+    assert_equal ["--profile", "environment-profile", *@harness.expected_codex_args("--quiet", @harness.expected_prompt)],
                  @harness.invocation.fetch("args")
   end
 
@@ -158,6 +158,196 @@ class LauncherTest < Minitest::Test
     assert_includes mismatched.stderr, "origin remote must be HTTPS and match"
   end
 
+  def test_no_hook_preserves_inherited_path_with_one_structured_override
+    inherited_path = @harness.inherited_path
+    result = @harness.run("--sandbox", "read-only")
+
+    assert_success(result, "inherited host PATH")
+    assert_path_contract(inherited_path)
+    assert_equal @harness.expected_codex_args("--sandbox", "read-only", @harness.expected_prompt),
+                 @harness.invocation.fetch("args")
+    assert_includes result.stdout, "Agent host environment: inherited"
+    assert_includes result.stdout, "Agent host PATH: preserved for Codex shell commands"
+    refute File.exist?(File.join(@harness.repository, "scripts", "agent_host_env.sh"))
+  end
+
+  def test_hook_runs_strictly_from_repository_root_and_imports_only_path
+    hook_cwd = File.join(@harness.root, "hook.cwd")
+    hook_input_path = File.join(@harness.root, "hook.input-path")
+    hook_options = File.join(@harness.root, "hook.options")
+    envrc_marker = File.join(@harness.root, "envrc.executed")
+    selected_prefix = File.join(@harness.root, "selected tools with spaces")
+    @harness.write_repository_file(".envrc", "printf executed > \"$FAKE_ENVRC_MARKER\"\n")
+    @harness.write_host_env_hook(<<~'BASH')
+      printf 'Preparing synthetic host tools...\n'
+      printf 'Synthetic host tools selected.\n' >&2
+      printf '%s' "$PWD" > "$FAKE_HOOK_CWD"
+      printf '%s' "$PATH" > "$FAKE_HOOK_INPUT_PATH"
+      printf 'flags=%s pipefail=%s' "$-" "$(set -o | awk '$1 == "pipefail" { print $2 }')" > "$FAKE_HOOK_OPTIONS"
+      PATH="$FAKE_SELECTED_PREFIX:$PATH"
+      export PATH
+      export SYNTHETIC_UNRELATED_VARIABLE=hook-value
+    BASH
+    @harness.commit_all("Add synthetic host environment fixtures")
+
+    expected_path = "#{selected_prefix}:#{@harness.inherited_path}"
+    result = @harness.run(
+      "--sandbox", "read-only",
+      env: {
+        "FAKE_HOOK_CWD" => hook_cwd,
+        "FAKE_HOOK_INPUT_PATH" => hook_input_path,
+        "FAKE_HOOK_OPTIONS" => hook_options,
+        "FAKE_ENVRC_MARKER" => envrc_marker,
+        "FAKE_SELECTED_PREFIX" => selected_prefix,
+        "SYNTHETIC_UNRELATED_VARIABLE" => "parent-value"
+      }
+    )
+
+    assert_success(result, "repository host hook")
+    assert_equal @harness.repository, File.binread(hook_cwd)
+    assert_equal @harness.inherited_path, File.binread(hook_input_path)
+    assert_match(/flags=.*e.*u/, File.binread(hook_options))
+    assert_includes File.binread(hook_options), "pipefail=on"
+    assert_path_contract(expected_path)
+    assert_equal "parent-value", env_fact("SYNTHETIC_UNRELATED_VARIABLE", "value")
+    refute File.exist?(envrc_marker)
+    assert_includes result.stdout, "Preparing synthetic host tools..."
+    assert_includes result.stderr, "Synthetic host tools selected."
+    assert_includes result.stdout, "Agent host environment: scripts/agent_host_env.sh"
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_failed_hook_is_credential_sanitised_precedes_app_work_and_cleans_up
+    presence_log = File.join(@harness.root, "hook.presence")
+    @harness.write_host_env_hook(<<~'BASH')
+      for name in \
+        GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH \
+        GH_TOKEN GITHUB_TOKEN GITHUB_PAT INSTALL_TOKEN \
+        AGENT_GITHUB_TOKEN_HELPER SSH_AUTH_SOCK
+      do
+        if printenv "$name" >/dev/null; then
+          printf '%s=set\n' "$name" >> "$FAKE_HOOK_PRESENCE_LOG"
+        else
+          printf '%s=unset\n' "$name" >> "$FAKE_HOOK_PRESENCE_LOG"
+        fi
+      done
+      return 23
+    BASH
+    @harness.commit_all("Add failing synthetic host hook")
+    canaries = {
+      "GH_TOKEN" => "synthetic-ambient-gh-canary",
+      "GITHUB_TOKEN" => "synthetic-ambient-github-canary",
+      "GITHUB_PAT" => "synthetic-ambient-pat-canary",
+      "INSTALL_TOKEN" => "synthetic-ambient-install-canary",
+      "AGENT_GITHUB_TOKEN_HELPER" => "/synthetic/token-helper-canary",
+      "SSH_AUTH_SOCK" => "/synthetic/ssh-agent-canary"
+    }
+
+    result = @harness.run(env: @harness.app_env.merge(canaries).merge("FAKE_HOOK_PRESENCE_LOG" => presence_log))
+
+    refute result.status.success?
+    assert_includes result.stderr, "agent host environment preparation failed"
+    expected_names = %w[
+      GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
+      GH_TOKEN GITHUB_TOKEN GITHUB_PAT INSTALL_TOKEN AGENT_GITHUB_TOKEN_HELPER SSH_AUTH_SOCK
+    ]
+    assert_equal expected_names.map { |name| "#{name}=unset" }, File.readlines(presence_log, chomp: true)
+    assert_empty @harness.events
+    assert_empty @harness.codex_invocations
+    assert_empty @harness.launcher_temporary_paths
+    diagnostic_material = result.stdout + result.stderr
+    canaries.each_value { |canary| refute_includes diagnostic_material, canary }
+    refute_includes diagnostic_material, LauncherHarness::PRIVATE_KEY_CONTENT.strip
+    refute_includes diagnostic_material, @harness.key_file
+  end
+
+  def test_present_hook_malformed_result_never_falls_back
+    scenarios = {
+      "missing result" => "exit 0\n",
+      "missing terminator" => "trap 'builtin printf malformed > \"$2\"' EXIT\n",
+      "empty path" => "PATH=''\nexport PATH\n",
+      "extra result data" => "trap 'builtin printf \"selected\\0extra\" > \"$2\"' EXIT\n"
+    }
+
+    scenarios.each do |name, hook|
+      @harness.write_host_env_hook(hook)
+      @harness.commit_all("Add #{name} host hook")
+      result = @harness.run("--sandbox", "read-only")
+
+      refute result.status.success?, failure_message(name, result)
+      assert_includes result.stderr, "agent host environment preparation"
+      assert_empty @harness.codex_invocations
+      assert_empty @harness.launcher_temporary_paths
+      @harness = replace_harness unless name == scenarios.keys.last
+    end
+  end
+
+  def test_path_toml_encoding_preserves_spaces_quotes_backslashes_and_controls
+    special_component = "synthetic path \\\"\x01\b\t\n\v\f\r\x1f\x7fdata"
+    selected_path = "#{special_component}:#{@harness.inherited_path}"
+    result = @harness.run("--sandbox", "read-only", env: {"PATH" => selected_path})
+
+    assert_success(result, "PATH TOML encoding")
+    assert_path_contract(selected_path)
+    config = @harness.invocation.fetch("args").fetch(1)
+    assert_includes config, '\\\\'
+    assert_includes config, '\\"'
+    %w[\\b \\t \\n \\f \\r].each { |escape| assert_includes config, escape }
+    %w[\\u0001 \\u000b \\u001f \\u007f].each { |escape| assert_includes config, escape }
+    ["\x01", "\b", "\t", "\n", "\v", "\f", "\r", "\x1f", "\x7f"].each do |control|
+      refute_includes config, control
+    end
+  end
+
+  def test_repository_and_dirty_validation_precede_hook_execution
+    marker = File.join(@harness.root, "hook.executed")
+    @harness.write_host_env_hook("printf executed > \"$FAKE_HOOK_MARKER\"\n")
+    @harness.commit_all("Add marker host hook")
+
+    @harness.set_origin("https://github.com/other/#{LauncherHarness::REPOSITORY}.git")
+    identity = @harness.run(env: {"FAKE_HOOK_MARKER" => marker})
+    refute identity.status.success?
+    refute File.exist?(marker)
+
+    @harness = replace_harness
+    marker = File.join(@harness.root, "hook.executed")
+    @harness.write_host_env_hook("printf executed > \"$FAKE_HOOK_MARKER\"\n")
+    @harness.commit_all("Add marker host hook")
+    @harness.write_repository_file("dirty.txt", "dirty\n")
+    dirty = @harness.run(env: {"FAKE_HOOK_MARKER" => marker})
+    refute dirty.status.success?
+    refute File.exist?(marker)
+
+    allowed = @harness.run("--allow-dirty", "--sandbox", "read-only", env: {"FAKE_HOOK_MARKER" => marker})
+    assert_success(allowed, "dirty override host hook")
+    assert File.exist?(marker)
+  end
+
+  def test_bootstrap_path_cannot_replace_codex_or_launcher_security_tools
+    rogue_bin = File.join(@harness.root, "repository-selected-bin")
+    rogue_marker = File.join(@harness.root, "rogue-command-ran")
+    FileUtils.mkdir_p(rogue_bin)
+    %w[codex curl].each do |name|
+      path = File.join(rogue_bin, name)
+      File.write(path, "#!/usr/bin/env bash\nprintf '%s' \"$0\" >> \"$FAKE_ROGUE_MARKER\"\nexit 91\n")
+      File.chmod(0o755, path)
+    end
+    @harness.write_host_env_hook("PATH=\"$FAKE_ROGUE_BIN:$PATH\"\nexport PATH\n")
+    @harness.commit_all("Add toolchain integrity hook")
+
+    result = @harness.run_app(
+      "--sandbox", "read-only",
+      env: {"FAKE_ROGUE_BIN" => rogue_bin, "FAKE_ROGUE_MARKER" => rogue_marker}
+    )
+
+    assert_success(result, "launcher toolchain integrity")
+    refute File.exist?(rogue_marker)
+    assert_equal "codex", @harness.invocation.fetch("executable")
+    assert_path_contract("#{rogue_bin}:#{@harness.inherited_path}")
+    assert_includes @harness.events, "codex:start"
+    assert @harness.events.any? { |event| event.start_with?("curl:app ") }
+  end
+
   def test_prompt_files_are_validated_before_external_security_operations
     @harness.remove_repository_file("docs/AGENT_PROMPT.txt")
     result = @harness.run(env: @harness.app_env)
@@ -193,7 +383,7 @@ class LauncherTest < Minitest::Test
       extra_path: "docs/EXTRA_PROMPT.txt",
       extra: "Extra line one.\nExtra `data`; $(inert)."
     )
-    assert_equal [expected], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args(expected), @harness.invocation.fetch("args")
     assert_equal 1, expected.scan("Alternate base with spaces.").length
     assert_equal 1, expected.scan("Additional instructions:").length
   end
@@ -201,7 +391,7 @@ class LauncherTest < Minitest::Test
   def test_issue_skip_fetch_works_offline_and_composes_exact_prompt
     result = @harness.run("--issue", "7", "--skip-issue-fetch")
     assert_success(result, "skipped issue")
-    assert_equal [@harness.expected_prompt(issue: 7, skipped: true)], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args(@harness.expected_prompt(issue: 7, skipped: true)), @harness.invocation.fetch("args")
     assert_empty @harness.events.grep(/^curl:/)
 
     rejected = replace_harness.run("--issue", "7")
@@ -214,7 +404,7 @@ class LauncherTest < Minitest::Test
     @harness.commit_all("Remove prompt for resume")
     result = @harness.run("--resume", "session 123", "--", "arg with spaces", "semi;colon")
     assert_success(result, "resume")
-    assert_equal ["resume", "session 123", "arg with spaces", "semi;colon"], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args("resume", "session 123", "arg with spaces", "semi;colon"), @harness.invocation.fetch("args")
     assert_equal 1, @harness.codex_invocations.length
     assert_equal "unset", env_fact("AGENT_PROMPT_FILE", "state")
     assert_empty @harness.debug_prompt_paths
@@ -223,7 +413,7 @@ class LauncherTest < Minitest::Test
     @harness = replace_harness
     profiled = @harness.run("--resume", "abc", "--profile", "focused", "--", "--last")
     assert_success(profiled, "profiled resume")
-    assert_equal ["--profile", "focused", "resume", "abc", "--last"], @harness.invocation.fetch("args")
+    assert_equal ["--profile", "focused", *@harness.expected_codex_args("resume", "abc", "--last")], @harness.invocation.fetch("args")
     assert_equal 1, @harness.codex_invocations.length
   end
 
@@ -356,7 +546,7 @@ class LauncherTest < Minitest::Test
       "codex:start"
     ], @harness.events
     expected = @harness.expected_prompt(mode: "app", issue: 7)
-    assert_equal [expected], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args(expected), @harness.invocation.fetch("args")
     refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
   end
 
@@ -674,7 +864,7 @@ class LauncherTest < Minitest::Test
     wait_until { @harness.token_attempts >= 2 && @harness.renewal_wait_started?(2) }
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
     assert_equal codex_pid, File.read(@harness.started_marker)
-    assert_equal ["resume", "renewable-session"], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args("resume", "renewable-session"), @harness.invocation.fetch("args")
     assert_equal "unset", env_fact("AGENT_PROMPT_FILE", "state")
 
     result = finish_renewable_session(session)
@@ -779,6 +969,8 @@ class LauncherTest < Minitest::Test
   end
 
   def test_codex_exit_status_is_preserved_and_cleanup_runs_for_normal_and_resume
+    @harness.write_host_env_hook("PATH=\"$PATH\"\nexport PATH\n")
+    @harness.commit_all("Add cleanup host hook")
     failed = @harness.run(env: {"FAKE_CODEX_EXIT" => "17"})
     assert_equal 17, failed.status.exitstatus, failure_message("normal failure", failed)
     assert_equal 1, @harness.codex_invocations.length
@@ -826,7 +1018,7 @@ class LauncherTest < Minitest::Test
     assert_includes result.stdout, "Debug prompt saved to: #{path}"
     assert_equal 0o600, File.stat(path).mode & 0o777
     assert_equal @harness.expected_prompt(mode: "app"), File.binread(path)
-    assert_equal [File.binread(path)], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args(File.binread(path)), @harness.invocation.fetch("args")
     refute_includes File.binread(path), LauncherHarness::INSTALLATION_TOKEN
     refute_includes File.binread(path), LauncherHarness::PRIVATE_KEY_CONTENT.strip
     refute_includes File.binread(path), @harness.key_file
@@ -837,7 +1029,7 @@ class LauncherTest < Minitest::Test
     result = @harness.run("--resume", "abc", env: {"DEBUG_CODEX_PROMPT" => "1"})
     assert_success(result, "resume debug")
     assert_empty @harness.debug_prompt_paths
-    assert_equal ["resume", "abc"], @harness.invocation.fetch("args")
+    assert_equal @harness.expected_codex_args("resume", "abc"), @harness.invocation.fetch("args")
   end
 
   private
@@ -863,6 +1055,19 @@ class LauncherTest < Minitest::Test
 
   def source_fact(name, key)
     @harness.invocation.fetch("source_env").fetch(name).fetch(key)
+  end
+
+  def assert_path_contract(expected_path)
+    invocation = @harness.invocation
+    assert_equal expected_path, invocation.fetch("env").fetch("PATH").fetch("value")
+    args = invocation.fetch("args")
+    config_indexes = args.each_index.select do |index|
+      args[index] == "-c" && args[index + 1]&.start_with?("shell_environment_policy.set.PATH=")
+    end
+    assert_equal [args.index("-c")], config_indexes
+    assert_equal 1, config_indexes.length
+    index = config_indexes.fetch(0)
+    assert_equal @harness.path_config(expected_path), args.fetch(index + 1)
   end
 
   def assert_success(result, scenario)

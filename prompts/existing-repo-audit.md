@@ -59,6 +59,8 @@ Assess the repository across areas such as:
 - ecosystem
 - application framework
 - local runtime model
+- host, container, remote, or mixed execution of development commands
+- current selection of tools required directly on the agent host
 - app shape
 - CI platform and CI structure
 - hook tooling
@@ -67,6 +69,8 @@ Assess the repository across areas such as:
 - architecture and development documentation
 - issue and PR workflow support
 - degree of agent-readiness already present
+
+Where relevant, inspect how developers select required host tools today, whether Git hooks need a host runtime, and whether the current Codex launch path can lose the intended `PATH`. Assess whether an explicit `scripts/agent_host_env.sh` would materially improve determinism, but preserve a healthy equivalent mechanism and do not recommend the hook merely because the framework supports it. Do not treat `.envrc`, a version file, or an ecosystem choice as automatic authority to execute host preparation.
 
 ## Framework Comparison Rules
 
@@ -133,6 +137,7 @@ Include areas such as:
 - ecosystem
 - framework
 - runtime model
+- agent host toolchain and its current activation mechanism, if any
 - app shape
 - CI platform
 - hook tooling

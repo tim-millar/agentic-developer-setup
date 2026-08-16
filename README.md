@@ -282,6 +282,8 @@ Different coding agents have different interfaces, strengths, failure modes, and
 
 The current public baseline is Codex-first. It includes a Codex launcher for local agent sessions, repository validation, prompt construction, and optional GitHub App access.
 
+The launcher also preserves the host command `PATH` used by Codex. An adopting repository may provide an optional `scripts/agent_host_env.sh` to select already-installed host tools; without it, the inherited `PATH` is preserved explicitly. The hook runs in an isolated credential-sanitised Bash subprocess, returns only `PATH`, and does not alter the parent launcher's command resolution. This mechanism is independent of application ecosystem and execution model.
+
 The surrounding framework remains reusable across different application repositories through its baseline artefacts, workflow prompts, adoption tiers, metadata, and adapter model. Additional agent runtimes can be added alongside Codex where their behaviour and safety model justify separate support.
 
 ## Machine-Readable Framework Metadata

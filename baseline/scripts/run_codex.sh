@@ -20,6 +20,10 @@ EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPO_ROOT")}"
 PROMPT_FILE_DEFAULT="docs/AGENT_PROMPT.txt"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CODEX_PROFILE="${CODEX_PROFILE:-}"
+AGENT_HOST_ENV_HOOK="scripts/agent_host_env.sh"
+AGENT_HOST_ENV_SOURCE="inherited"
+AGENT_HOST_PATH=""
+CODEX_PATH_CONFIG=""
 
 AGENT_NAME="${AGENT_NAME:-codex}"
 AGENT_GIT_MODE="${AGENT_GIT_MODE:-developer-author}"
@@ -45,6 +49,7 @@ TOKEN_HELPER=""
 RENEWAL_PID=""
 DEBUG_PROMPT_PATH=""
 CODEX_PID=""
+HOST_ENV_DIR=""
 
 GITHUB_REFRESH_INTERVAL_SECONDS=2700
 GITHUB_RETRY_INTERVAL_SECONDS=300
@@ -67,6 +72,7 @@ cleanup() {
   [[ -n "$TMP_ASKPASS" && -f "$TMP_ASKPASS" ]] && rm -f "$TMP_ASKPASS"
   [[ -n "$TMP_GH_CONFIG_DIR" && -d "$TMP_GH_CONFIG_DIR" ]] && rm -rf "$TMP_GH_CONFIG_DIR"
   [[ -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]] && rm -rf "$SESSION_CREDENTIAL_DIR"
+  [[ -n "$HOST_ENV_DIR" && -d "$HOST_ENV_DIR" ]] && rm -rf "$HOST_ENV_DIR"
 
   return "$status"
 }
@@ -158,9 +164,9 @@ run_codex() {
   local status
 
   if [[ -n "$CODEX_PROFILE" ]]; then
-    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" "$@" <&0 &
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" -c "$CODEX_PATH_CONFIG" "$@" <&0 &
   else
-    env "${CODEX_ENV[@]}" "$CODEX_BIN" "$@" <&0 &
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" -c "$CODEX_PATH_CONFIG" "$@" <&0 &
   fi
 
   CODEX_PID=$!
@@ -262,6 +268,16 @@ require_cmd openssl
 require_cmd git
 require_cmd mktemp
 require_cmd "$CODEX_BIN"
+require_cmd bash
+require_cmd env
+require_cmd chmod
+
+# Fix launcher-owned executable selection before repository bootstrap can
+# choose a different PATH for Codex shell commands.
+BASH_BIN="$(command -v bash)"
+ENV_BIN="$(command -v env)"
+CHMOD_BIN="$(command -v chmod)"
+CODEX_BIN="$(command -v "$CODEX_BIN")"
 
 PROMPT_FILE="${PROMPT_FILE_OVERRIDE:-$PROMPT_FILE_DEFAULT}"
 
@@ -297,6 +313,125 @@ case "$ORIGIN_URL" in
     exit 1
     ;;
 esac
+
+prepare_agent_host_path() {
+  local result_file trailing_byte
+
+  AGENT_HOST_PATH="$PATH"
+  if [[ ! -e "$AGENT_HOST_ENV_HOOK" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$AGENT_HOST_ENV_HOOK" ]]; then
+    echo "Error: agent host environment hook is not a regular file: $AGENT_HOST_ENV_HOOK" >&2
+    return 1
+  fi
+
+  AGENT_HOST_ENV_SOURCE="$AGENT_HOST_ENV_HOOK"
+  HOST_ENV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex.host-env.XXXXXX")"
+  chmod 700 "$HOST_ENV_DIR"
+  result_file="${HOST_ENV_DIR}/path"
+
+  if ! "$ENV_BIN" \
+    -u GITHUB_APP_ID \
+    -u GITHUB_APP_INSTALLATION_ID \
+    -u GITHUB_APP_PRIVATE_KEY_PATH \
+    -u GH_TOKEN \
+    -u GITHUB_TOKEN \
+    -u GITHUB_PAT \
+    -u INSTALL_TOKEN \
+    -u AGENT_GITHUB_TOKEN_HELPER \
+    -u SSH_AUTH_SOCK \
+    "$BASH_BIN" -c '
+      set -euo pipefail
+      hook=$1
+      result=$2
+      chmod_bin=$3
+      source "$hook"
+      builtin printf "%s\0" "$PATH" > "$result"
+      "$chmod_bin" 600 "$result"
+    ' agent-host-env "$REPO_ROOT/$AGENT_HOST_ENV_HOOK" "$result_file" "$CHMOD_BIN"; then
+    echo "Error: agent host environment preparation failed: $AGENT_HOST_ENV_HOOK" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$result_file" ]]; then
+    echo "Error: agent host environment preparation returned no PATH result." >&2
+    return 1
+  fi
+
+  exec 3< "$result_file"
+  if ! IFS= read -r -d '' AGENT_HOST_PATH <&3; then
+    exec 3<&-
+    echo "Error: agent host environment preparation returned a malformed PATH result." >&2
+    return 1
+  fi
+  if IFS= read -r -n 1 trailing_byte <&3; then
+    exec 3<&-
+    echo "Error: agent host environment preparation returned extra PATH result data." >&2
+    return 1
+  fi
+  exec 3<&-
+
+  if [[ -z "$AGENT_HOST_PATH" ]]; then
+    echo "Error: agent host environment preparation returned an empty PATH." >&2
+    return 1
+  fi
+
+  rm -rf "$HOST_ENV_DIR"
+  HOST_ENV_DIR=""
+}
+
+toml_basic_string() {
+  local value="$1"
+
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\x01'/\\u0001}"
+  value="${value//$'\x02'/\\u0002}"
+  value="${value//$'\x03'/\\u0003}"
+  value="${value//$'\x04'/\\u0004}"
+  value="${value//$'\x05'/\\u0005}"
+  value="${value//$'\x06'/\\u0006}"
+  value="${value//$'\x07'/\\u0007}"
+  value="${value//$'\b'/\\b}"
+  value="${value//$'\t'/\\t}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\x0b'/\\u000b}"
+  value="${value//$'\f'/\\f}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\x0e'/\\u000e}"
+  value="${value//$'\x0f'/\\u000f}"
+  value="${value//$'\x10'/\\u0010}"
+  value="${value//$'\x11'/\\u0011}"
+  value="${value//$'\x12'/\\u0012}"
+  value="${value//$'\x13'/\\u0013}"
+  value="${value//$'\x14'/\\u0014}"
+  value="${value//$'\x15'/\\u0015}"
+  value="${value//$'\x16'/\\u0016}"
+  value="${value//$'\x17'/\\u0017}"
+  value="${value//$'\x18'/\\u0018}"
+  value="${value//$'\x19'/\\u0019}"
+  value="${value//$'\x1a'/\\u001a}"
+  value="${value//$'\x1b'/\\u001b}"
+  value="${value//$'\x1c'/\\u001c}"
+  value="${value//$'\x1d'/\\u001d}"
+  value="${value//$'\x1e'/\\u001e}"
+  value="${value//$'\x1f'/\\u001f}"
+  value="${value//$'\x7f'/\\u007f}"
+
+  printf '"%s"' "$value"
+}
+
+if prepare_agent_host_path; then
+  :
+else
+  exit 1
+fi
+if [[ -z "$AGENT_HOST_PATH" ]]; then
+  echo "Error: selected agent host PATH is empty." >&2
+  exit 1
+fi
+CODEX_PATH_CONFIG="shell_environment_policy.set.PATH=$(toml_basic_string "$AGENT_HOST_PATH")"
 
 if [[ "$GITHUB_ACCESS_MODE" == "disabled" && -n "$ISSUE_NUMBER" && "$SKIP_GITHUB_ISSUE_FETCH" != "1" ]]; then
   die_usage "--issue requires GITHUB_ACCESS_MODE=app unless --skip-issue-fetch is set"
@@ -787,6 +922,8 @@ if [[ -n "$EXTRA_PROMPT_FILE" ]]; then
   echo "Extra prompt file: ${EXTRA_PROMPT_FILE}"
 fi
 echo "Allow dirty worktree: ${ALLOW_DIRTY_WORKTREE}"
+echo "Agent host environment: ${AGENT_HOST_ENV_SOURCE}"
+echo "Agent host PATH: preserved for Codex shell commands"
 if [[ "$DEBUG_CODEX_PROMPT" == "1" && -z "$RESUME_SESSION" ]]; then
   echo "Debug prompt saved to: ${DEBUG_PROMPT_PATH}"
 fi
@@ -801,6 +938,7 @@ if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
   create_app_session_credentials
 
   CODEX_ENV=(
+    "PATH=$AGENT_HOST_PATH"
     "GITHUB_TOKEN=$INSTALL_TOKEN"
     "GH_TOKEN=$INSTALL_TOKEN"
     "GITHUB_PAT="
@@ -827,6 +965,7 @@ else
   chmod 700 "$TMP_GH_CONFIG_DIR"
 
   CODEX_ENV=(
+    "PATH=$AGENT_HOST_PATH"
     "GH_CONFIG_DIR=$TMP_GH_CONFIG_DIR"
     "GH_TOKEN="
     "GITHUB_TOKEN="
