@@ -18,6 +18,8 @@ class LauncherHarness
   PRIVATE_KEY_CONTENT = "SYNTHETIC PRIVATE KEY CANARY - NOT A REAL KEY\n"
   APP_SLUG = "synthetic-launcher-app"
   TOKEN_EXPIRY = "2030-01-02T03:04:05Z"
+  ALLOW_LOGIN_SHELL_CONFIG = "allow_login_shell=false"
+  USE_SHELL_PROFILE_CONFIG = "shell_environment_policy.experimental_use_profile=false"
   BASH_DIRECTORY = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).find do |directory|
     File.executable?(File.join(directory, "bash"))
   end || "/bin"
@@ -207,7 +209,15 @@ class LauncherHarness
   end
 
   def expected_codex_args(*arguments, path: inherited_path)
-    ["-c", path_config(path), *arguments]
+    [*launcher_policy_args(path), *arguments]
+  end
+
+  def launcher_policy_args(path = inherited_path)
+    [
+      "-c", ALLOW_LOGIN_SHELL_CONFIG,
+      "-c", USE_SHELL_PROFILE_CONFIG,
+      "-c", path_config(path)
+    ]
   end
 
   def write_host_env_hook(contents)

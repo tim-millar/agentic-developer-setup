@@ -86,27 +86,52 @@ behaviour.
 
 The launcher distinguishes its own command-resolution environment from the host
 toolchain selected for Codex. With no `scripts/agent_host_env.sh`, it captures
-the inherited non-empty `PATH`. When the optional repository hook exists, the
-launcher sources it from the adopted repository root in a separate Bash
-subprocess running with `errexit`, `nounset`, and `pipefail`. The subprocess
+the inherited non-empty `PATH`. The optional repository hook must be an ordinary
+non-symlink regular file; symlinks, including dangling symlinks, and other file
+types are rejected. When a valid hook exists, the launcher sources it from the
+adopted repository root in a separate Bash subprocess running with `errexit`,
+`nounset`, and `pipefail`. The subprocess
 starts with the inherited PATH but without GitHub App source credentials,
 runtime GitHub tokens, the current-token helper, or `SSH_AUTH_SOCK`.
 
 The hook's stdout and stderr remain diagnostics. Its only result is the exact
 resulting `PATH`, written to launcher-private state beneath `${TMPDIR:-/tmp}` as
-`<raw PATH bytes><NUL>`. The launcher rejects hook failure, an absent or empty
-result, a missing terminator, and detectable trailing data; it never falls back
-after a present hook fails. The private result is removed immediately after
-decoding or by the common cleanup trap on failure. Other hook exports are not
-imported.
+`<raw PATH bytes><NUL>`. Protocol paths and post-hook executables are held in
+readonly launcher-private subprocess variables, so ordinary hook variables
+cannot redirect the result write or chmod operation. The launcher rejects hook
+failure, an absent or empty result, a missing terminator, and detectable trailing
+data; it never falls back after a present hook fails. The private result is
+removed immediately after decoding or by the common cleanup trap on failure.
+Other hook exports are not imported.
 
 The parent launcher never exports the selected PATH into itself. Launcher-owned
 operations therefore continue to use the pre-bootstrap toolchain, and the Codex
 executable is selected before bootstrap. Codex receives the raw PATH in its
-environment and a single structured `-c` override for
-`shell_environment_policy.set.PATH`. The TOML basic-string encoder escapes
-backslash, quote, backspace, tab, newline, form feed, and carriage return without
-changing the raw environment value or flattening argument boundaries.
+environment and exactly one launcher-owned structured override for each of
+`allow_login_shell=false`,
+`shell_environment_policy.experimental_use_profile=false`, and
+`shell_environment_policy.set.PATH`. This prevents login-shell startup and
+shell-profile reconstruction from reinterpreting the selected PATH. The TOML
+basic-string encoder escapes backslash, quote, backspace, tab, newline, form
+feed, and carriage return without changing the raw environment value or
+flattening argument boundaries.
+
+Forwarded `-c` and `--config` arguments remain supported, including supported
+inline spellings, but the launcher rejects assignments to `allow_login_shell`,
+`shell_environment_policy`, or any nested `shell_environment_policy.*` key
+before repository bootstrap or GitHub App setup. Other forwarded configuration
+and ordinary Codex arguments retain their original order and boundaries.
+
+The launcher owns the PATH value it requests, not every Codex configuration
+layer. It does not clear or weaken user, project, managed, or organisation
+environment filters; broaden environment inheritance; disable secret filtering;
+rewrite persistent configuration; or bypass higher-authority policy. Codex
+include filtering can remove values supplied through
+`shell_environment_policy.set`, so an effective external policy that excludes
+`PATH` is incompatible with launcher PATH preservation. If Codex rejects the
+effective configuration, the launcher preserves that failure instead of
+weakening the external policy. The launcher deliberately does not implement a
+general persistent-configuration parser.
 
 This is environment selection, not provisioning. The generic launcher does not
 infer runtimes or version managers, source `.envrc`, invoke direnv, install
@@ -118,10 +143,12 @@ repository code and should be deterministic, non-secret, and narrowly scoped.
 
 Black-box cases use synthetic hooks and JSON argv capture to cover inherited and
 modified PATH values, repository-root execution, strict mode, PATH-only import,
-diagnostic separation, credential absence, malformed NUL framing, spaces,
-quotes, backslashes and control characters, normal/resume/profile argument
-paths, validation ordering, parent-toolchain integrity, and cleanup. No real
-runtime manager, Codex process, GitHub credential, or network request is needed.
+readonly protocol routing, regular-file and symlink validation, forwarded-config
+ownership, diagnostic separation, credential absence, malformed NUL framing,
+spaces, quotes, backslashes and control characters, normal/resume/profile
+argument paths, validation ordering, parent-toolchain integrity, and cleanup. No
+real runtime manager, Codex process, GitHub credential, or network request is
+needed.
 
 ## Renewable App credentials
 

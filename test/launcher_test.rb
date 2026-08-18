@@ -158,7 +158,7 @@ class LauncherTest < Minitest::Test
     assert_includes mismatched.stderr, "origin remote must be HTTPS and match"
   end
 
-  def test_no_hook_preserves_inherited_path_with_one_structured_override
+  def test_no_hook_preserves_inherited_path_with_launcher_owned_policy
     inherited_path = @harness.inherited_path
     result = @harness.run("--sandbox", "read-only")
 
@@ -215,6 +215,78 @@ class LauncherTest < Minitest::Test
     assert_includes result.stderr, "Synthetic host tools selected."
     assert_includes result.stdout, "Agent host environment: scripts/agent_host_env.sh"
     assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_hook_cannot_clobber_launcher_result_routing_with_ordinary_variables
+    unexpected_result = File.join(@harness.root, "unexpected-result")
+    selected_prefix = File.join(@harness.root, "selected-tools")
+    @harness.write_host_env_hook(<<~'BASH')
+      result="$FAKE_UNEXPECTED_RESULT"
+      chmod_bin=/usr/bin/false
+      PATH="$FAKE_SELECTED_PREFIX:$PATH"
+      export PATH
+    BASH
+    @harness.commit_all("Add host hook variable collision fixture")
+
+    result = @harness.run(
+      "--sandbox", "read-only",
+      env: {"FAKE_UNEXPECTED_RESULT" => unexpected_result, "FAKE_SELECTED_PREFIX" => selected_prefix}
+    )
+
+    assert_success(result, "launcher-private bootstrap namespace")
+    assert_path_contract("#{selected_prefix}:#{@harness.inherited_path}")
+    refute File.exist?(unexpected_result)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_hook_cannot_mutate_readonly_launcher_result_routing
+    unexpected_result = File.join(@harness.root, "redirected-result")
+    @harness.write_host_env_hook(<<~'BASH')
+      __launcher_host_result="$FAKE_UNEXPECTED_RESULT"
+      PATH="$PATH"
+      export PATH
+    BASH
+    @harness.commit_all("Add readonly protocol mutation fixture")
+
+    result = @harness.run("--sandbox", "read-only", env: {"FAKE_UNEXPECTED_RESULT" => unexpected_result})
+
+    refute result.status.success?
+    assert_includes result.stderr, "agent host environment preparation failed"
+    refute File.exist?(unexpected_result)
+    assert_empty @harness.codex_invocations
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_symlink_and_dangling_symlink_host_hooks_are_rejected
+    target = @harness.write_repository_file("scripts/synthetic-host-env-target.sh", "PATH=\"$PATH\"\nexport PATH\n")
+    hook = File.join(@harness.repository, "scripts", "agent_host_env.sh")
+    File.symlink(File.basename(target), hook)
+    @harness.commit_all("Add symlink host hook fixture")
+
+    symlink = @harness.run("--sandbox", "read-only")
+    refute symlink.status.success?
+    assert_includes symlink.stderr, "must be a non-symlink regular file"
+    assert_empty @harness.codex_invocations
+
+    @harness = replace_harness
+    hook = File.join(@harness.repository, "scripts", "agent_host_env.sh")
+    File.symlink("missing-host-env-target.sh", hook)
+    @harness.commit_all("Add dangling symlink host hook fixture")
+
+    dangling = @harness.run("--sandbox", "read-only")
+    refute dangling.status.success?
+    assert_includes dangling.stderr, "must be a non-symlink regular file"
+    assert_empty @harness.codex_invocations
+  end
+
+  def test_non_regular_host_hook_is_rejected
+    FileUtils.mkdir_p(File.join(@harness.repository, "scripts", "agent_host_env.sh"))
+
+    result = @harness.run("--sandbox", "read-only")
+
+    refute result.status.success?
+    assert_includes result.stderr, "must be a non-symlink regular file"
+    assert_empty @harness.codex_invocations
   end
 
   def test_failed_hook_is_credential_sanitised_precedes_app_work_and_cleans_up
@@ -289,7 +361,10 @@ class LauncherTest < Minitest::Test
 
     assert_success(result, "PATH TOML encoding")
     assert_path_contract(selected_path)
-    config = @harness.invocation.fetch("args").fetch(1)
+    config = @harness.invocation.fetch("args").find do |argument|
+      argument.start_with?("shell_environment_policy.set.PATH=")
+    end
+    refute_nil config
     assert_includes config, '\\\\'
     assert_includes config, '\\"'
     %w[\\b \\t \\n \\f \\r].each { |escape| assert_includes config, escape }
@@ -321,6 +396,55 @@ class LauncherTest < Minitest::Test
     allowed = @harness.run("--allow-dirty", "--sandbox", "read-only", env: {"FAKE_HOOK_MARKER" => marker})
     assert_success(allowed, "dirty override host hook")
     assert File.exist?(marker)
+  end
+
+  def test_conflicting_forwarded_codex_config_is_rejected_before_hook_app_or_codex
+    cases = [
+      ["-c", "allow_login_shell=true"],
+      ["-c", 'shell_environment_policy.set.PATH="/unexpected"'],
+      ["-c", "shell_environment_policy.experimental_use_profile=true"],
+      ["-c", 'shell_environment_policy={inherit="all"}'],
+      ["--config", "allow_login_shell=true"],
+      ["--config=shell_environment_policy.inherit=all"],
+      ["-c=allow_login_shell=true"],
+      ["-cshell_environment_policy.inherit=all"]
+    ]
+
+    cases.each_with_index do |arguments, index|
+      marker = File.join(@harness.root, "hook.executed")
+      @harness.write_host_env_hook("printf executed > \"$FAKE_HOOK_MARKER\"\n")
+      @harness.commit_all("Add forwarded config rejection hook")
+      secret = "synthetic-forwarded-config-secret-canary"
+
+      result = @harness.run_app(*arguments, env: {"FAKE_HOOK_MARKER" => marker, "SYNTHETIC_SECRET" => secret})
+
+      assert_equal 2, result.status.exitstatus, failure_message(arguments.join(" "), result)
+      assert_includes result.stderr, "cannot override launcher-owned shell-environment policy"
+      refute_includes result.stdout + result.stderr, secret
+      refute File.exist?(marker)
+      assert_empty @harness.events
+      assert_empty @harness.codex_invocations
+      assert_empty @harness.launcher_temporary_paths
+      @harness = replace_harness unless index == cases.length - 1
+    end
+  end
+
+  def test_unrelated_forwarded_codex_config_preserves_order_and_boundaries
+    arguments = [
+      "--model", "model with spaces",
+      "--config", 'model_reasoning_effort="high"',
+      "-c", "features.synthetic=true",
+      "--config=sandbox_workspace_write.network_access=false",
+      '-cmodel="synthetic"',
+      "--no-alt-screen"
+    ]
+
+    result = @harness.run(*arguments)
+
+    assert_success(result, "unrelated forwarded Codex config")
+    assert_equal @harness.expected_codex_args(*arguments, @harness.expected_prompt),
+                 @harness.invocation.fetch("args")
+    assert_path_contract(@harness.inherited_path)
   end
 
   def test_bootstrap_path_cannot_replace_codex_or_launcher_security_tools
@@ -464,6 +588,7 @@ class LauncherTest < Minitest::Test
     }
     result = @harness.run(env: ambient)
     assert_success(result, "disabled credential boundary")
+    assert_path_contract(@harness.inherited_path)
     assert_empty @harness.events.grep(/^curl:/)
 
     %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].each do |name|
@@ -547,6 +672,7 @@ class LauncherTest < Minitest::Test
     ], @harness.events
     expected = @harness.expected_prompt(mode: "app", issue: 7)
     assert_equal @harness.expected_codex_args(expected), @harness.invocation.fetch("args")
+    assert_path_contract(@harness.inherited_path)
     refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
   end
 
@@ -1061,13 +1187,21 @@ class LauncherTest < Minitest::Test
     invocation = @harness.invocation
     assert_equal expected_path, invocation.fetch("env").fetch("PATH").fetch("value")
     args = invocation.fetch("args")
-    config_indexes = args.each_index.select do |index|
-      args[index] == "-c" && args[index + 1]&.start_with?("shell_environment_policy.set.PATH=")
+    expected_configs = [
+      LauncherHarness::ALLOW_LOGIN_SHELL_CONFIG,
+      LauncherHarness::USE_SHELL_PROFILE_CONFIG,
+      @harness.path_config(expected_path)
+    ]
+    expected_configs.each do |config|
+      config_indexes = args.each_index.select do |index|
+        args[index] == "-c" && args[index + 1] == config
+      end
+      assert_equal 1, config_indexes.length, "expected one launcher-owned config override for #{config}"
     end
-    assert_equal [args.index("-c")], config_indexes
-    assert_equal 1, config_indexes.length
-    index = config_indexes.fetch(0)
-    assert_equal @harness.path_config(expected_path), args.fetch(index + 1)
+    policy_start = args.each_index.find do |index|
+      args[index, @harness.launcher_policy_args(expected_path).length] == @harness.launcher_policy_args(expected_path)
+    end
+    refute_nil policy_start, "launcher-owned config overrides were not contiguous and ordered"
   end
 
   def assert_success(result, scenario)

@@ -23,6 +23,8 @@ CODEX_PROFILE="${CODEX_PROFILE:-}"
 AGENT_HOST_ENV_HOOK="scripts/agent_host_env.sh"
 AGENT_HOST_ENV_SOURCE="inherited"
 AGENT_HOST_PATH=""
+CODEX_ALLOW_LOGIN_SHELL_CONFIG="allow_login_shell=false"
+CODEX_USE_SHELL_PROFILE_CONFIG="shell_environment_policy.experimental_use_profile=false"
 CODEX_PATH_CONFIG=""
 
 AGENT_NAME="${AGENT_NAME:-codex}"
@@ -164,9 +166,17 @@ run_codex() {
   local status
 
   if [[ -n "$CODEX_PROFILE" ]]; then
-    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" -c "$CODEX_PATH_CONFIG" "$@" <&0 &
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
+      -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
+      -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
+      -c "$CODEX_PATH_CONFIG" \
+      "$@" <&0 &
   else
-    env "${CODEX_ENV[@]}" "$CODEX_BIN" -c "$CODEX_PATH_CONFIG" "$@" <&0 &
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" \
+      -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
+      -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
+      -c "$CODEX_PATH_CONFIG" \
+      "$@" <&0 &
   fi
 
   CODEX_PID=$!
@@ -262,6 +272,54 @@ case "$GITHUB_ACCESS_MODE" in
     ;;
 esac
 
+validate_forwarded_codex_config() {
+  local index=0 argument assignment key
+
+  while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
+    argument="${CODEX_ARGS[$index]}"
+    assignment=""
+
+    case "$argument" in
+      -c|--config)
+        index=$((index + 1))
+        if [[ "$index" -ge "${#CODEX_ARGS[@]}" ]]; then
+          die_usage "forwarded Codex $argument requires a key=value assignment"
+        fi
+        assignment="${CODEX_ARGS[$index]}"
+        ;;
+      --config=*)
+        assignment="${argument#--config=}"
+        ;;
+      -c=*)
+        assignment="${argument#-c=}"
+        ;;
+      -c?*)
+        assignment="${argument#-c}"
+        ;;
+    esac
+
+    if [[ -n "$assignment" ]]; then
+      if [[ "$assignment" != *=* ]]; then
+        die_usage "forwarded Codex config requires a key=value assignment"
+      fi
+      key="${assignment%%=*}"
+      key="${key#"${key%%[![:space:]]*}"}"
+      key="${key%"${key##*[![:space:]]}"}"
+      case "$key" in
+        allow_login_shell|shell_environment_policy|shell_environment_policy.*)
+          die_usage "forwarded Codex config cannot override launcher-owned shell-environment policy"
+          ;;
+      esac
+    elif [[ "$argument" == -c || "$argument" == --config || "$argument" == -c=* || "$argument" == --config=* ]]; then
+      die_usage "forwarded Codex config requires a key=value assignment"
+    fi
+
+    index=$((index + 1))
+  done
+}
+
+validate_forwarded_codex_config
+
 require_cmd curl
 require_cmd jq
 require_cmd openssl
@@ -318,11 +376,15 @@ prepare_agent_host_path() {
   local result_file trailing_byte
 
   AGENT_HOST_PATH="$PATH"
+  if [[ -L "$AGENT_HOST_ENV_HOOK" ]]; then
+    echo "Error: agent host environment hook must be a non-symlink regular file: $AGENT_HOST_ENV_HOOK" >&2
+    return 1
+  fi
   if [[ ! -e "$AGENT_HOST_ENV_HOOK" ]]; then
     return 0
   fi
   if [[ ! -f "$AGENT_HOST_ENV_HOOK" ]]; then
-    echo "Error: agent host environment hook is not a regular file: $AGENT_HOST_ENV_HOOK" >&2
+    echo "Error: agent host environment hook must be a non-symlink regular file: $AGENT_HOST_ENV_HOOK" >&2
     return 1
   fi
 
@@ -343,12 +405,12 @@ prepare_agent_host_path() {
     -u SSH_AUTH_SOCK \
     "$BASH_BIN" -c '
       set -euo pipefail
-      hook=$1
-      result=$2
-      chmod_bin=$3
-      source "$hook"
-      builtin printf "%s\0" "$PATH" > "$result"
-      "$chmod_bin" 600 "$result"
+      readonly __launcher_host_hook="$1"
+      readonly __launcher_host_result="$2"
+      readonly __launcher_host_chmod="$3"
+      source "$__launcher_host_hook"
+      builtin printf "%s\0" "$PATH" > "$__launcher_host_result"
+      "$__launcher_host_chmod" 600 "$__launcher_host_result"
     ' agent-host-env "$REPO_ROOT/$AGENT_HOST_ENV_HOOK" "$result_file" "$CHMOD_BIN"; then
     echo "Error: agent host environment preparation failed: $AGENT_HOST_ENV_HOOK" >&2
     return 1
