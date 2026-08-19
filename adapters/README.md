@@ -29,6 +29,18 @@ In general:
 
 Adapters should extend or override the baseline only where there is a clear reason to do so.
 
+## Ecosystem, Execution Environment, and Host Toolchain
+
+Adapter selection must keep three related decisions separate:
+
+- the **application ecosystem** identifies language and package conventions;
+- the **application execution environment** identifies where development and validation commands run, such as directly on the host, in containers, remotely, or in a mixed workflow;
+- the **agent host toolchain** identifies the commands Codex itself must resolve from its host shell.
+
+Selecting an ecosystem does not by itself prove that its language runtime must exist on the host. Host-tool requirements depend on how the repository actually executes development and validation commands. A non-containerised application may need its language runtime on the host, while a containerised application in the same ecosystem may need only Git, Make, and container tooling. Mixed workflows require repository-specific evidence, including the needs of hooks, code generators, and validation commands.
+
+The baseline Codex launcher preserves the inherited host `PATH`. A repository may optionally provide `scripts/agent_host_env.sh` when its established contract requires deterministic host-tool selection. That hook is repository policy, not a new adapter type, and should not be generated merely because an ecosystem adapter was selected.
+
 ## Adapter Types
 
 The framework treats adapters as belonging to four canonical types.
@@ -146,9 +158,10 @@ When applying the framework to a repository:
 2. choose the ecosystem adapter that best matches the dominant language and package ecosystem
 3. choose the framework adapter that best matches the application framework, if any
 4. choose the runtime adapter that best matches the execution and local development model
-5. choose the app-shape adapter that best matches the architecture or delivery shape, if any
-6. apply only the specialisations that are actually needed
-7. keep the number of overrides as small as practical
+5. establish from repository evidence which tools agents need directly on the host
+6. choose the app-shape adapter that best matches the architecture or delivery shape, if any
+7. apply only the specialisations that are actually needed
+8. keep the number of overrides as small as practical
 
 A good rule is:
 

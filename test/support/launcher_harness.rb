@@ -18,6 +18,8 @@ class LauncherHarness
   PRIVATE_KEY_CONTENT = "SYNTHETIC PRIVATE KEY CANARY - NOT A REAL KEY\n"
   APP_SLUG = "synthetic-launcher-app"
   TOKEN_EXPIRY = "2030-01-02T03:04:05Z"
+  ALLOW_LOGIN_SHELL_CONFIG = "allow_login_shell=false"
+  USE_SHELL_PROFILE_CONFIG = "shell_environment_policy.experimental_use_profile=false"
   BASH_DIRECTORY = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).find do |directory|
     File.executable?(File.join(directory, "bash"))
   end || "/bin"
@@ -60,8 +62,9 @@ class LauncherHarness
   end
 
   def base_env
+    launcher_path = [@fake_bin, BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR)
     {
-      "PATH" => [@fake_bin, BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR),
+      "PATH" => launcher_path,
       "HOME" => home,
       "XDG_CONFIG_HOME" => File.join(home, ".config"),
       "TMPDIR" => tmpdir,
@@ -87,6 +90,7 @@ class LauncherHarness
       "FAKE_EXPECTED_OWNER" => OWNER,
       "FAKE_EXPECTED_REPO" => REPOSITORY,
       "FAKE_EXPECTED_INSTALLATION_ID" => INSTALLATION_ID,
+      "FAKE_EXPECTED_LAUNCHER_PATH" => launcher_path,
       "FAKE_KEY_VALID" => "1",
       "LANG" => "C.UTF-8"
     }
@@ -184,7 +188,40 @@ class LauncherHarness
   end
 
   def launcher_temporary_paths
-    Dir[File.join(tmpdir, "codex.{credentials,gh,askpass}.*")]
+    Dir[File.join(tmpdir, "codex.{credentials,gh,askpass,host-env}.*")]
+  end
+
+  def inherited_path
+    base_env.fetch("PATH")
+  end
+
+  def path_config(path = inherited_path)
+    escaped = path
+      .gsub("\\") { "\\\\" }
+      .gsub('"') { '\\"' }
+      .gsub(/[\x01-\x07\x0b\x0e-\x1f\x7f]/) { |character| format("\\u%04x", character.ord) }
+      .gsub("\b") { "\\b" }
+      .gsub("\t") { "\\t" }
+      .gsub("\n") { "\\n" }
+      .gsub("\f") { "\\f" }
+      .gsub("\r") { "\\r" }
+    %(shell_environment_policy.set.PATH="#{escaped}")
+  end
+
+  def expected_codex_args(*arguments, path: inherited_path)
+    [*launcher_policy_args(path), *arguments]
+  end
+
+  def launcher_policy_args(path = inherited_path)
+    [
+      "-c", ALLOW_LOGIN_SHELL_CONFIG,
+      "-c", USE_SHELL_PROFILE_CONFIG,
+      "-c", path_config(path)
+    ]
+  end
+
+  def write_host_env_hook(contents)
+    write_repository_file("scripts/agent_host_env.sh", contents)
   end
 
   def debug_prompt_paths
@@ -397,7 +434,8 @@ class LauncherHarness
         GIT_COMMITTER_EMAIL GH_CONFIG_DIR GIT_ASKPASS GIT_TERMINAL_PROMPT
         GCM_INTERACTIVE SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND SSH_ASKPASS
         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
-        GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2
+        GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2 PATH
+        SYNTHETIC_UNRELATED_VARIABLE
       ]
       secrets = %w[GH_TOKEN GITHUB_TOKEN GITHUB_PAT INSTALL_TOKEN]
       sources = %w[
@@ -441,6 +479,7 @@ class LauncherHarness
       require "json"
 
       abort "unexpected fake curl invocation" unless ENV["FAKE_CURL_MODE"] == "app"
+      abort "launcher PATH changed before a security-sensitive command" unless ENV["PATH"] == ENV.fetch("FAKE_EXPECTED_LAUNCHER_PATH")
       method = "GET"
       headers = []
       connect_timeout = nil
