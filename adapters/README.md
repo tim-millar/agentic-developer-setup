@@ -15,6 +15,8 @@ Adapters are intended to be:
 
 They are not intended to replace the baseline.
 
+`framework.yml` is authoritative for adapter taxonomy, declared paths, and status. All named adapter implementations are currently planned; the directories in this area document the four adapter types and composition model rather than providing supported overlays.
+
 ## Core Principle
 
 The baseline defines the shared framework shape.
@@ -208,16 +210,11 @@ Not every adapter needs all of these.
 
 The exact structure should reflect the minimal set of overlays needed for that adapter.
 
-For more formal guidance on adapter layout and conventions, see:
-
-- `docs/adapter-format.md`
-
 ## Relationship to Other Framework Parts
 
 See also:
 
 - `baseline/` for the shared framework layer
 - `framework.yml` for machine-readable adapter metadata
-- `checklists/` for practical adoption flows
-- `docs/adapter-format.md` for adapter authoring guidance
+- `prompts/` for current adoption flows
 - `README.md` for the high-level framework overview
