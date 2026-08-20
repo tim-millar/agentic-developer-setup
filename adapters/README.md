@@ -15,13 +15,15 @@ Adapters are intended to be:
 
 They are not intended to replace the baseline.
 
+`framework.yml` is authoritative for adapter taxonomy, declared paths, and status. All named adapter implementations are currently planned; the directories in this area document the four adapter types and composition model rather than providing supported overlays.
+
 ## Core Principle
 
 The baseline defines the shared framework shape.
 
 Adapters specialise that shape where a repository’s ecosystem, framework, runtime, or application shape requires it.
 
-In general:
+In general, when implemented adapters are available:
 
 - start from `baseline/`
 - apply only the adapters that materially affect the repository
@@ -152,7 +154,7 @@ If an adapter starts to look like an entire standalone framework, it is probably
 
 ## Choosing Adapters
 
-When applying the framework to a repository:
+When implemented adapters are available, select them as follows:
 
 1. start from the baseline
 2. choose the ecosystem adapter that best matches the dominant language and package ecosystem
@@ -166,30 +168,30 @@ When applying the framework to a repository:
 A good rule is:
 
 - prefer the baseline by default
-- use adapters to handle real ecosystem, framework, runtime, or app-shape differences
+- use available adapters to handle real ecosystem, framework, runtime, or app-shape differences
 - avoid introducing adapter-specific behaviour without a clear need
 
 ## Greenfield vs Existing Repositories
 
 ### Greenfield repositories
 
-For greenfield repos, adapters can be applied early and cleanly.
+For greenfield repos, available adapter implementations can be applied early and cleanly.
 
 This usually means:
 
 - start with `baseline/`
-- choose the relevant ecosystem, framework, runtime, and app-shape adapters
+- choose the relevant available ecosystem, framework, runtime, and app-shape adapters
 - instantiate the repo docs and command surface using those overlays
 
 ### Existing or legacy repositories
 
-For existing repos, adapters should be applied more selectively.
+For existing repos, available adapter implementations should be applied more selectively.
 
 This usually means:
 
 - compare the repo against the baseline first
 - identify where the current repo already matches the framework goals
-- use adapters only where they clarify or standardise existing behaviour
+- use available adapters only where they clarify or standardise existing behaviour
 - avoid rewriting healthy repo-specific patterns just to match an adapter mechanically
 
 ## Adapter Structure
@@ -208,16 +210,11 @@ Not every adapter needs all of these.
 
 The exact structure should reflect the minimal set of overlays needed for that adapter.
 
-For more formal guidance on adapter layout and conventions, see:
-
-- `docs/adapter-format.md`
-
 ## Relationship to Other Framework Parts
 
 See also:
 
 - `baseline/` for the shared framework layer
 - `framework.yml` for machine-readable adapter metadata
-- `checklists/` for practical adoption flows
-- `docs/adapter-format.md` for adapter authoring guidance
+- `prompts/` for current adoption flows
 - `README.md` for the high-level framework overview

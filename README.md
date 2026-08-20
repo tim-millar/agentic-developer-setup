@@ -2,13 +2,13 @@
 
 A reusable framework for enabling safe, productive agent-assisted development across application repositories.
 
-This repository provides:
+This public framework source repository provides:
 
 - a **baseline set of repo artefacts** for agent-enabled development
-- **ecosystem, framework, runtime, and app-shape adapters** for different kinds of projects
-- **checklists** for greenfield, existing, and legacy repo adoption
+- an **ecosystem, framework, runtime, and app-shape adapter taxonomy**, with implementations currently planned
+- **adoption prompts** for greenfield, existing, and legacy repositories
 - **prompt packs** for using the framework with LLMs and coding agents
-- **examples** showing how the framework can be instantiated in real repositories
+- public technical documentation for the framework architecture, evolution, and evidence boundaries
 
 The framework is intended to support both:
 
@@ -35,10 +35,8 @@ The framework is not a single application template. It is a reusable operating l
 
 ```text
 baseline/    Shared baseline artefacts used in agent-enabled repos
-adapters/    Ecosystem, framework, runtime, and app-shape overlays
-checklists/  Adoption checklists for different repo types
+adapters/    Adapter taxonomy and planned implementation locations
 prompts/     Prompt packs for using the framework with agents/LLMs
-examples/    Example instantiated repo shapes
 docs/        Documentation about the framework itself
 framework.yml  Machine-readable framework metadata
 ```
@@ -75,7 +73,7 @@ Adapters capture the assumptions needed to apply the framework to a specific rep
 - runtime adapters for execution, container, and local-development assumptions
 - app-shape adapters for architectural patterns such as API services, workers, monoliths, and static sites
 
-A target repository may combine several adapters: for example, Ruby + Rails + Docker + monolith.
+A target repository may eventually combine several adapters. All named adapter implementations in `framework.yml` are currently planned; the repository currently provides their taxonomy and composition guidance.
 
 Adapters are intended to specialise the baseline, not replace it.
 
@@ -84,17 +82,6 @@ Adapters are intended to specialise the baseline, not replace it.
 An agent runtime is the tool-specific launcher and operating policy for a specific coding agent.
 
 The framework is agent-runtime-aware rather than agent-agnostic: shared repository practices live in the baseline, while agent-specific execution behaviour lives in runtime launchers.
-
-### Checklists
-
-The `checklists/` directory describes how to apply the framework in different scenarios.
-
-Typical checklist categories include:
-
-- greenfield application setup
-- existing repo adoption
-- legacy repo safe enablement
-- issue readiness
 
 ### Prompts
 
@@ -116,7 +103,7 @@ Use the framework to initialise a new repository that is intended to support age
 Typical flow:
 
 1. copy or instantiate artefacts from `baseline/` into their target paths
-2. apply relevant adapters
+2. apply relevant adapters when implementations are available
 3. specialise the docs for the project domain, architecture, and workflow
 4. wire up hooks, Make targets, and CI
 5. begin work using issue-driven, agent-compatible processes
@@ -153,7 +140,7 @@ The framework is intended to be adopted incrementally. A typical existing-reposi
 Target repository:
   Existing web application with an established development workflow
 
-Selected adapters:
+Potential adapter specialisations (when implementations are available):
   ecosystem: node
   framework: nextjs
   runtime: non-containerised
@@ -199,9 +186,9 @@ Selected adapters:
 
    Start with local-only agent sessions and GitHub access disabled. Enable GitHub App access only when the repository contract, permissions, and intended workflow are understood.
 
-6. **Feed failures back into the framework**
+6. **Feed failures back into the appropriate control**
 
-   When an agent fails, update the relevant prompt, checklist, adapter, command, or repository document so the same class of failure is less likely to recur.
+   Diagnose whether a failure is repository-specific or reusable, then update the relevant prompt, command, repository document, runtime policy, or framework control.
 
 The goal is not just to complete one agent task, but to make the repository progressively more legible, testable, and safe for repeated agent-assisted development.
 
@@ -229,20 +216,20 @@ Choose the path that matches your goal.
 ### Starting a new project
 
 - begin with the artefacts under `baseline/` and the target paths in `framework.yml`
-- select the relevant ecosystem, framework, runtime, and app-shape adapters
-- use the greenfield checklist
+- select relevant adapters when implementations are available
+- use `prompts/greenfield-bootstrap.md`
 - instantiate repo-specific docs from the project plan, architecture, and issue set
 
 ### Adopting the framework in an existing repo
 
-- start with the existing-repo checklist
+- use `prompts/existing-repo-audit.md`
 - compare the repo against `baseline/`
 - adopt the highest-value artefacts first
 - preserve useful existing workflow where it is not in conflict with the framework goals
 
 ### Enabling a legacy repo safely
 
-- start with the legacy-repo checklist
+- use `prompts/legacy-safe-enablement.md`
 - treat the framework as an overlay first, not a rewrite
 - prioritise bounded scope, explicit risks, and safe validation paths
 
@@ -310,6 +297,9 @@ Run the focused offline Codex launcher suite with `make test-launcher`; see
 
 See also:
 
+- [`docs/architecture.md`](docs/architecture.md) for framework architecture, responsibilities, trust boundaries, and current capability status
+- [`docs/evolution.md`](docs/evolution.md) for the framework's engineering evolution and public/private provenance model
+- [`docs/public-evidence.md`](docs/public-evidence.md) for public claim and disclosure boundaries
 - `framework.yml` for machine-readable framework metadata
 - `docs/validation.md` for framework self-validation
 - `docs/launcher-testing.md` for the offline baseline launcher test architecture
