@@ -103,7 +103,7 @@ Use the framework to initialise a new repository that is intended to support age
 Typical flow:
 
 1. copy or instantiate artefacts from `baseline/` into their target paths
-2. apply relevant adapters
+2. apply relevant adapters when implementations are available
 3. specialise the docs for the project domain, architecture, and workflow
 4. wire up hooks, Make targets, and CI
 5. begin work using issue-driven, agent-compatible processes

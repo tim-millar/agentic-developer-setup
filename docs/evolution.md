@@ -10,7 +10,7 @@ The broad evolution was:
 2. Repeated implementation work exposed recurring controls and workflow patterns.
 3. Those observations informed more reusable internal patterns and conventions.
 4. Related principles were applied in an established production repository with different constraints and risk boundaries.
-5. Further use across greenfield and differently shaped private applications tested which concerns were genuinely reusable and which required specialisation.
+5. Further use across greenfield and differently shaped private applications helped distinguish which concerns were reusable and which required specialisation.
 6. The reusable public framework in this repository was independently specified and implemented.
 
 Private personal and professional experience informs general engineering conclusions and reusable design principles. Private code, prompts, schemas, repository structures, operational details, and other proprietary implementation material were not copied or closely translated into this public repository. The framework should remain understandable and supportable entirely from its public source.

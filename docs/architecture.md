@@ -141,7 +141,7 @@ Agent runtimes are tool-specific integrations because tools differ in interfaces
 - private temporary resources, signal handling, and cleanup;
 - agent, access-mode, Git-mode, and launch provenance metadata where implemented.
 
-The executable implementation is [`baseline/scripts/run_codex.sh`](../baseline/scripts/run_codex.sh); its offline behavioural test architecture is documented in [`docs/launcher-testing.md`](launcher-testing.md). These sources, rather than this overview, define implementation details.
+For this framework source repository, [`scripts/run_codex.sh`](../scripts/run_codex.sh) is the supported operational entrypoint: it applies repository-specific location and identity defaults, then delegates to the canonical reusable launcher implementation at [`baseline/scripts/run_codex.sh`](../baseline/scripts/run_codex.sh). The reusable launcher's offline behavioural test architecture is documented in [`docs/launcher-testing.md`](launcher-testing.md). These sources, rather than this overview, define implementation details.
 
 Launcher-managed renewal exists for App-mode GitHub authority. Recovery across sufficiently long process suspension or inactivity remains a lifecycle area under refinement; [Issue #43](https://github.com/tim-millar/agentic-developer-setup/issues/43) tracks that follow-up. This limitation should not be read as a promise of transparent credential availability after arbitrary suspension, nor does this document prescribe the eventual solution.
 

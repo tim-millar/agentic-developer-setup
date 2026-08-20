@@ -23,7 +23,7 @@ Publicly inspectable evidence is material an external reader can independently e
 - public issues and pull requests;
 - public examples and evaluation artefacts once they exist.
 
-Claims about implemented framework behaviour should link or otherwise correspond to these sources. [`framework.yml`](../framework.yml), for example, is evidence of declared runtime and adapter status; [`baseline/scripts/run_codex.sh`](../baseline/scripts/run_codex.sh) and its public tests are evidence of implemented launcher behaviour.
+Claims about implemented framework behaviour should link or otherwise correspond to these sources. [`framework.yml`](../framework.yml), for example, is evidence of declared runtime and adapter status. Root [`scripts/run_codex.sh`](../scripts/run_codex.sh) is evidence of this source repository's operational Codex entrypoint, repository-specific defaults, and delegation behaviour; [`baseline/scripts/run_codex.sh`](../baseline/scripts/run_codex.sh) and its [public launcher tests](../test/launcher_test.rb) are evidence of reusable baseline launcher behaviour under the tested conditions.
 
 A planned file, planned metadata entry, roadmap statement, or open issue is evidence of intent or investigation, not evidence that behaviour exists. Public artefacts also have limited scope: a test pass supports the tested contract under its stated conditions, not universal correctness.
 
