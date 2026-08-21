@@ -686,7 +686,12 @@ class LauncherTest < Minitest::Test
     assert_includes prompt, "commit, push, pull-request publication, and verification when required"
     assert_includes prompt, "Issue context alone does not require publication"
     assert_includes prompt, "App mode alone does not require publication"
-    assert_includes prompt, 'obtain the current token from "$AGENT_GITHUB_TOKEN_HELPER" and retry the exact same operation once'
+    assert_includes prompt, 'obtain the authoritative freshness-aware token from "$AGENT_GITHUB_TOKEN_HELPER" before each operation'
+    assert_includes prompt, '"$AGENT_GITHUB_TOKEN_HELPER --force-refresh" and retry the exact same operation once'
+    assert_includes prompt, "HTTP 403"
+    assert_includes prompt, "not sufficient evidence for forced refresh"
+    assert_includes prompt, "Do not refresh again"
+    assert_includes prompt, "helper can request bounded renewal but cannot mint credentials independently"
     refute_includes prompt, LauncherHarness::INSTALLATION_TOKEN
     refute_includes prompt, LauncherHarness::PRIVATE_KEY_CONTENT.strip
     refute_includes prompt, @harness.key_file
@@ -816,15 +821,23 @@ class LauncherTest < Minitest::Test
     askpass = env_fact("GIT_ASKPASS", "value")
     credential_dir = File.dirname(helper)
     token_file = File.join(credential_dir, "current-token")
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    result_file = File.join(credential_dir, "renewal-result")
 
     assert_equal 0o700, File.stat(credential_dir).mode & 0o777
     assert_equal 0o600, File.stat(token_file).mode & 0o777
+    %w[current-token.meta renewal-worker.pid renewal-worker.ready renewal-result].each do |name|
+      assert_equal 0o600, File.stat(File.join(credential_dir, name)).mode & 0o777, name
+    end
     assert_equal 0o700, File.stat(helper).mode & 0o777
     assert_equal 0o700, File.stat(askpass).mode & 0o777
     assert_equal credential_dir, File.dirname(env_fact("GH_CONFIG_DIR", "value"))
     assert_equal 1, @harness.token_attempts
     assert File.binread(token_file) == LauncherHarness::INSTALLATION_TOKEN,
            "authoritative token file did not contain exactly the initial token"
+    assert_equal "generation=1\npublished_at_epoch=", File.read(metadata_file).lines.first(2).join.sub(/\d+\n\z/, "")
+    assert_equal({"attempt" => "0", "outcome" => "none", "generation" => "1", "completed_at_epoch" => "0"},
+                 parse_state_file(result_file))
     events_before_helper = @harness.events.dup
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::INSTALLATION_TOKEN)
     assert_helper_token(
@@ -839,15 +852,443 @@ class LauncherTest < Minitest::Test
                     @harness.events.index { |event| event.start_with?("renewal:wait ") }
 
     generated_material = File.read(helper) + File.read(askpass)
-    refute_includes generated_material, LauncherHarness::PRIVATE_KEY_CONTENT.strip
-    refute_includes generated_material, @harness.key_file
+    assert_includes File.read(helper), "refresh_interval=2700\n"
+    assert_includes File.read(helper), "wait_bound=40\n"
+    coordination_material = %w[
+      current-token.meta renewal-worker.pid renewal-worker.ready renewal-result
+    ].map { |name| File.binread(File.join(credential_dir, name)) }.join
+    [generated_material, coordination_material].each do |material|
+      refute_includes material, LauncherHarness::INSTALLATION_TOKEN
+      refute_includes material, LauncherHarness::RENEWED_INSTALLATION_TOKEN
+      refute_includes material, LauncherHarness::PRIVATE_KEY_CONTENT.strip
+      refute_includes material, @harness.key_file
+    end
     refute_includes generated_material, LauncherHarness::APP_ID
     refute_includes generated_material, LauncherHarness::INSTALLATION_ID
+    %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].each do |name|
+      refute_includes generated_material, name
+    end
 
     result = finish_renewable_session(session)
     assert_success(result, "initial renewable App session")
     assert_empty @harness.launcher_temporary_paths
   ensure
+    stop_renewable_session(session)
+  end
+
+  def test_stale_current_token_triggers_one_reactive_renewal_and_git_askpass_uses_it
+    session = start_renewable_session
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    askpass = env_fact("GIT_ASKPASS", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    @harness.advance_clock(2700)
+    posts_before = @harness.token_attempts
+
+    assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    assert_equal posts_before + 1, @harness.token_attempts
+    assert_equal "2", parse_state_file(metadata_file).fetch("generation")
+    assert_helper_token(
+      @harness.run_generated_helper(askpass, "Password for 'https://github.com':"),
+      LauncherHarness::RENEWED_INSTALLATION_TOKEN
+    )
+    assert_equal posts_before + 1, @harness.token_attempts
+    assert_equal 1, @harness.codex_invocations.length
+
+    result = finish_renewable_session(session)
+    assert_success(result, "stale-token reactive renewal")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_force_refresh_replaces_a_fresh_generation_once
+    session = start_renewable_session
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    posts_before = @harness.token_attempts
+
+    assert_helper_token(
+      @harness.run_generated_helper(helper, "--force-refresh"),
+      LauncherHarness::RENEWED_INSTALLATION_TOKEN
+    )
+    assert_equal posts_before + 1, @harness.token_attempts
+    assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
+    assert_equal "success", parse_state_file(File.join(credential_dir, "renewal-result")).fetch("outcome")
+
+    result = finish_renewable_session(session)
+    assert_success(result, "forced reactive renewal")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_before_first_cadence_wait_is_serviced_immediately
+    @harness.enable_renewal_gate("before-first-wait")
+    session = start_renewable_session(wait_for_first_wait: false)
+    wait_until { @harness.renewal_gate_started?("before-first-wait") }
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    helper_marker = File.join(@harness.renewal_control_dir, "pre-wait-force-helper-waiting")
+
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    assert_equal 1, @harness.token_attempts
+    refute @harness.renewal_wait_started?(1)
+
+    @harness.release_renewal_gate("before-first-wait")
+    assert_helper_token(request.value, LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    wait_until { @harness.renewal_wait_started?(1) }
+    assert_equal 2, @harness.token_attempts
+    assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
+    assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=2 ") }, :<,
+                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=1" }
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request before first cadence wait")
+  ensure
+    @harness&.release_renewal_gate("before-first-wait")
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_after_attempt_completion_precedes_the_next_cadence_wait
+    third_token = "synthetic-third-installation-token"
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN),
+      @harness.token_response(third_token)
+    ]
+    @harness.enable_renewal_gate("after-attempt")
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    metadata_file = File.join(File.dirname(helper), "current-token.meta")
+    @harness.advance_clock(2700)
+
+    assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    wait_until { @harness.renewal_gate_started?("after-attempt") }
+    helper_marker = File.join(@harness.renewal_control_dir, "post-attempt-force-helper-waiting")
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    refute @harness.renewal_wait_started?(2)
+
+    @harness.release_renewal_gate("after-attempt")
+    assert_helper_token(request.value, third_token)
+    wait_until { @harness.renewal_wait_started?(2) }
+    assert_equal 3, @harness.token_attempts
+    assert_equal "3", parse_state_file(metadata_file).fetch("generation")
+    assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }, :<,
+                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=2" }
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request between attempt and next cadence wait")
+  ensure
+    @harness&.release_renewal_gate("after-attempt")
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_after_token_publication_remains_pending_for_one_later_serial_attempt
+    third_token = "synthetic-third-installation-token"
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN),
+      @harness.token_response(third_token)
+    ]
+    @harness.enable_renewal_gate("after-publication")
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    result_file = File.join(credential_dir, "renewal-result")
+
+    @harness.release_renewal_wait(1)
+    wait_until { @harness.renewal_gate_started?("after-publication") }
+    assert_equal "2", parse_state_file(metadata_file).fetch("generation")
+    assert_equal "0", parse_state_file(result_file).fetch("attempt")
+
+    helper_marker = File.join(@harness.renewal_control_dir, "publication-boundary-force-helper-waiting")
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    assert_equal 2, @harness.token_attempts
+
+    @harness.release_renewal_gate("after-publication")
+    assert_helper_token(request.value, third_token)
+    wait_until { @harness.renewal_wait_started?(2) }
+    assert_equal 3, @harness.token_attempts
+    assert_equal "3", parse_state_file(metadata_file).fetch("generation")
+    assert_equal({"attempt" => "2", "outcome" => "success", "generation" => "3"},
+                 parse_state_file(result_file).slice("attempt", "outcome", "generation"))
+    attempt_two_complete = @harness.events.index { |event| event == "curl:token-complete attempt=2" }
+    attempt_three_start = @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }
+    refute_nil attempt_two_complete
+    refute_nil attempt_three_start
+    assert_operator attempt_two_complete, :<, attempt_three_start,
+                    "installation-token POSTs overlapped instead of remaining serial"
+    assert_equal 1, @harness.events.grep(/^curl:token attempt=2 /).length
+    assert_equal 1, @harness.events.grep(/^curl:token attempt=3 /).length
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request across token/result publication boundary")
+  ensure
+    @harness&.release_renewal_gate("after-publication")
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_concurrent_stale_helpers_and_force_during_in_progress_renewal_share_one_attempt
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.blocked_token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    ]
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    @harness.advance_clock(2700)
+
+    requests = 3.times.map { Thread.new { @harness.run_generated_helper(helper) } }
+    wait_until { @harness.token_attempt_started?(2) }
+    force_marker = File.join(@harness.renewal_control_dir, "force-helper-waiting")
+    force = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => force_marker})
+    end
+    wait_until { File.exist?(force_marker) }
+    assert_equal 2, @harness.token_attempts
+    @harness.release_token_attempt(2)
+    results = requests.map(&:value) << force.value
+
+    results.each { |result| assert_helper_token(result, LauncherHarness::RENEWED_INSTALLATION_TOKEN) }
+    assert_equal 2, @harness.token_attempts
+    assert_equal "2", parse_state_file(metadata_file).fetch("generation")
+    assert_equal 1, @harness.events.grep(/^curl:token attempt=2 /).length
+
+    result = finish_renewable_session(session)
+    assert_success(result, "coalesced reactive renewal")
+  ensure
+    @harness.release_token_attempt(2) if @harness&.token_attempt_started?(2)
+    requests&.each(&:join)
+    force&.join
+    stop_renewable_session(session)
+  end
+
+  def test_failed_reactive_renewal_preserves_state_and_a_new_request_interrupts_retry_wait
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.renewal_failure,
+      @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    ]
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    token_file = File.join(credential_dir, "current-token")
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    result_file = File.join(credential_dir, "renewal-result")
+    @harness.advance_clock(2700)
+
+    failed = @harness.run_generated_helper(helper)
+    refute failed.status.success?
+    assert_empty failed.stdout
+    assert_includes failed.stderr, "GitHub credential renewal failed"
+    assert_equal LauncherHarness::INSTALLATION_TOKEN, File.binread(token_file)
+    assert_equal "1", parse_state_file(metadata_file).fetch("generation")
+    assert_equal({"attempt" => "1", "outcome" => "failure", "generation" => "1"},
+                 parse_state_file(result_file).slice("attempt", "outcome", "generation"))
+    wait_until { @harness.renewal_wait_started?(2) }
+    assert_equal "300", File.read(File.join(@harness.renewal_control_dir, "wait-2.started"))
+
+    assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    assert_equal 3, @harness.token_attempts
+    wait_until { @harness.renewal_wait_started?(3) }
+    assert_equal "2700", File.read(File.join(@harness.renewal_control_dir, "wait-3.started"))
+
+    result = finish_renewable_session(session)
+    assert_success(result, "reactive failure and interruption recovery")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_metadata_publication_failure_rolls_back_token_and_preserves_generation
+    session = start_renewable_session
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    token_file = File.join(credential_dir, "current-token")
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    original_metadata = File.binread(metadata_file)
+    @harness.advance_clock(2700)
+    @harness.fail_next_metadata_publication
+
+    failed = @harness.run_generated_helper(helper)
+    refute failed.status.success?
+    assert_empty failed.stdout
+    assert_equal LauncherHarness::INSTALLATION_TOKEN, File.binread(token_file)
+    assert_equal original_metadata, File.binread(metadata_file)
+    assert_equal "failure", parse_state_file(File.join(credential_dir, "renewal-result")).fetch("outcome")
+    assert_empty Dir[File.join(credential_dir, "current-token.previous.*")]
+
+    result = finish_renewable_session(session)
+    assert_success(result, "metadata publication rollback")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_proactive_boundary_and_reactive_request_race_publish_one_generation
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.blocked_token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    ]
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    metadata_file = File.join(File.dirname(helper), "current-token.meta")
+    @harness.advance_clock(2700)
+
+    request = Thread.new { @harness.run_generated_helper(helper) }
+    @harness.release_renewal_wait(1)
+    wait_until { @harness.token_attempt_started?(2) }
+    assert_equal 2, @harness.token_attempts
+    @harness.release_token_attempt(2)
+    assert_helper_token(request.value, LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    assert_equal 2, @harness.token_attempts
+    assert_equal "2", parse_state_file(metadata_file).fetch("generation")
+
+    result = finish_renewable_session(session)
+    assert_success(result, "proactive and reactive race")
+  ensure
+    @harness.release_token_attempt(2) if @harness&.token_attempt_started?(2)
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_missing_malformed_and_future_metadata_each_require_reactive_renewal
+    tokens = %w[renewed-two renewed-three renewed-four renewed-five]
+    sequence = [@harness.token_response(LauncherHarness::INSTALLATION_TOKEN)] +
+               tokens.map { |token| @harness.token_response(token) }
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    metadata_file = File.join(File.dirname(helper), "current-token.meta")
+    invalid_states = [
+      nil,
+      "generation=bad\npublished_at_epoch=#{@harness.synthetic_epoch}\n",
+      "generation=2\npublished_at_epoch=bad\n",
+      "generation=3\npublished_at_epoch=#{@harness.synthetic_epoch + 60}\n"
+    ]
+
+    invalid_states.zip(tokens).each_with_index do |(contents, expected_token), index|
+      contents ? File.write(metadata_file, contents) : FileUtils.rm_f(metadata_file)
+      assert_helper_token(@harness.run_generated_helper(helper), expected_token)
+      assert_equal index + 2, @harness.token_attempts
+    end
+
+    result = finish_renewable_session(session)
+    assert_success(result, "invalid freshness metadata recovery")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_invalid_freshness_metadata_is_not_accepted_and_helper_wait_is_bounded
+    session = start_renewable_session
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    pid_file = File.join(credential_dir, "renewal-worker.pid")
+
+    File.write(metadata_file, "generation=bad\npublished_at_epoch=#{@harness.synthetic_epoch}\n")
+    assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+
+    dummy_pid = Process.spawn("/bin/bash", "-c", 'trap "" USR1 USR2; while :; do /bin/sleep 1; done')
+    File.write(pid_file, "#{dummy_pid}\n")
+    @harness.advance_clock(2700)
+    initial_clock = @harness.synthetic_epoch
+    File.write(@harness.helper_clock_file, initial_clock.to_s)
+    timed_out = @harness.run_generated_helper(
+      helper,
+      env: {"FAKE_HELPER_CLOCK" => @harness.helper_clock_file}
+    )
+    refute timed_out.status.success?
+    assert_empty timed_out.stdout
+    assert_includes timed_out.stderr, "GitHub credential refresh timed out"
+    assert_operator Integer(File.read(@harness.helper_clock_file), 10), :>=, initial_clock + 40
+    assert_equal 2, @harness.token_attempts
+
+    result = finish_renewable_session(session)
+    assert_success(result, "invalid metadata and bounded helper wait")
+  ensure
+    if dummy_pid
+      Process.kill("TERM", dummy_pid) rescue nil
+      Process.wait(dummy_pid) rescue nil
+    end
+    stop_renewable_session(session)
+  end
+
+  def test_ensure_fresh_no_op_preserves_remaining_proactive_cadence
+    session = start_renewable_session
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    worker_pid = Integer(File.read(File.join(credential_dir, "renewal-worker.pid")), 10)
+    @harness.advance_clock(600)
+
+    Process.kill("USR1", worker_pid)
+    wait_until { @harness.renewal_wait_started?(2) }
+    remaining = Integer(File.read(File.join(@harness.renewal_control_dir, "wait-2.started")), 10)
+    assert_operator remaining, :<=, 2100
+    assert_operator remaining, :>=, 2098
+    assert_equal 1, @harness.token_attempts
+    assert_equal "1", parse_state_file(metadata_file).fetch("generation")
+
+    result = finish_renewable_session(session)
+    assert_success(result, "ensure-fresh no-op cadence")
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_worker_readiness_failure_prevents_codex_start
+    result = @harness.run(env: @harness.renewable_app_env.merge("FAKE_FAIL_READY_CHMOD" => "1"))
+
+    refute result.status.success?
+    assert_includes result.stderr, "renewal worker exited before becoming ready"
+    assert_empty @harness.codex_invocations
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_shutdown_during_reactive_renewal_fails_waiting_helper_and_prevents_publication
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.blocked_token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    ]
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    @harness.advance_clock(2700)
+    request = Thread.new { @harness.run_generated_helper(helper) }
+    wait_until { @harness.token_attempt_started?(2) }
+
+    Process.kill("TERM", session.fetch(:wait_thread).pid)
+    wait_until { File.exist?(File.join(credential_dir, ".shutting-down")) }
+    helper_result = request.value
+    refute helper_result.status.success?
+    assert_empty helper_result.stdout
+    assert_includes helper_result.stderr, "session is shutting down"
+    assert_equal "1", parse_state_file(metadata_file).fetch("generation")
+
+    @harness.release_token_attempt(2)
+    status = Timeout.timeout(5) { session.fetch(:wait_thread).value }
+    assert_equal 143, status.exitstatus
+    session.fetch(:stdout).read
+    session.fetch(:stderr).read
+    session.fetch(:stdout).close
+    session.fetch(:stderr).close
+    session[:finished] = true
+    refute File.exist?(credential_dir)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    @harness.release_token_attempt(2) if @harness&.token_attempt_started?(2)
+    request&.join
     stop_renewable_session(session)
   end
 
@@ -860,7 +1301,7 @@ class LauncherTest < Minitest::Test
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::INSTALLATION_TOKEN)
     %w[
       AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
-      FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+      FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE FAKE_LAUNCHER_CLOCK
     ].each do |name|
       assert_equal "unset", source_fact(name, "state"), name
     end
@@ -960,13 +1401,15 @@ class LauncherTest < Minitest::Test
   def test_current_token_helper_fails_safely_when_authoritative_state_is_unavailable
     session = start_renewable_session
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
-    token_file = File.join(File.dirname(helper), "current-token")
+    credential_dir = File.dirname(helper)
+    token_file = File.join(credential_dir, "current-token")
+    FileUtils.rm_f(File.join(credential_dir, "renewal-worker.ready"))
     File.truncate(token_file, 0)
 
     unavailable = @harness.run_generated_helper(helper)
     refute unavailable.status.success?
     assert_empty unavailable.stdout
-    assert_includes unavailable.stderr, "current GitHub session token is unavailable"
+    assert_includes unavailable.stderr, "GitHub credential renewal worker is unavailable"
     refute_includes unavailable.stderr, LauncherHarness::PRIVATE_KEY_CONTENT.strip
     refute_includes unavailable.stderr, @harness.key_file
     FileUtils.rm_f(token_file)
@@ -1183,6 +1626,12 @@ class LauncherTest < Minitest::Test
     @harness.invocation.fetch("source_env").fetch(name).fetch(key)
   end
 
+  def parse_state_file(path)
+    File.readlines(path, chomp: true).to_h do |line|
+      line.split("=", 2)
+    end
+  end
+
   def assert_path_contract(expected_path)
     invocation = @harness.invocation
     assert_equal expected_path, invocation.fetch("env").fetch("PATH").fetch("value")
@@ -1215,12 +1664,12 @@ class LauncherTest < Minitest::Test
   end
 
   def wait_until(&condition)
-    Timeout.timeout(5) do
+    Timeout.timeout(10) do
       sleep 0.01 until condition.call
     end
   end
 
-  def start_renewable_session(*arguments, sequence: nil, env: {})
+  def start_renewable_session(*arguments, sequence: nil, env: {}, wait_for_first_wait: true)
     sequence ||= [
       @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
       @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
@@ -1235,7 +1684,7 @@ class LauncherTest < Minitest::Test
     wait_until do
       File.exist?(@harness.started_marker) &&
         @harness.codex_invocations.any? &&
-        @harness.renewal_wait_started?(1)
+        (!wait_for_first_wait || @harness.renewal_wait_started?(1))
     end
     session
   rescue StandardError
@@ -1263,7 +1712,12 @@ class LauncherTest < Minitest::Test
     wait_thread = session[:wait_thread]
     if wait_thread&.alive?
       Process.kill("TERM", wait_thread.pid)
-      Timeout.timeout(5) { wait_thread.value }
+      begin
+        Timeout.timeout(5) { wait_thread.value }
+      rescue Timeout::Error
+        Process.kill("KILL", wait_thread.pid) if wait_thread.alive?
+        wait_thread.value
+      end
     end
   rescue Errno::ESRCH
     nil
