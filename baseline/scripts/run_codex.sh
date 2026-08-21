@@ -738,7 +738,10 @@ create_app_session_credentials() {
   publish_token_and_metadata "$INSTALL_TOKEN" 1 "$(now_epoch)"
   publish_renewal_result 0 none 1 0
 
-  cat > "$TOKEN_HELPER" <<'EOF'
+  [[ "$GITHUB_REFRESH_INTERVAL_SECONDS" =~ ^[0-9]+$ && "$GITHUB_REFRESH_INTERVAL_SECONDS" -gt 0 ]] || return 1
+  [[ "$GITHUB_HELPER_WAIT_SECONDS" =~ ^[0-9]+$ && "$GITHUB_HELPER_WAIT_SECONDS" -gt 0 ]] || return 1
+  {
+    cat <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -749,8 +752,11 @@ pid_file="${credential_dir}/renewal-worker.pid"
 ready_file="${credential_dir}/renewal-worker.ready"
 result_file="${credential_dir}/renewal-result"
 shutdown_file="${credential_dir}/.shutting-down"
-refresh_interval=2700
-wait_bound=40
+EOF
+    printf 'refresh_interval=%s\nwait_bound=%s\n' \
+      "$GITHUB_REFRESH_INTERVAL_SECONDS" \
+      "$GITHUB_HELPER_WAIT_SECONDS"
+    cat <<'EOF'
 
 mode="default"
 if [[ $# -eq 1 && "$1" == "--force-refresh" ]]; then
@@ -883,6 +889,7 @@ while true; do
   sleep 1
 done
 EOF
+  } > "$TOKEN_HELPER"
   chmod 700 "$TOKEN_HELPER"
 
   cat > "$TMP_ASKPASS" <<'EOF'
@@ -923,7 +930,8 @@ renew_current_token() {
   [[ -n "$renewed_token" ]] || return 1
   [[ ! -e "$SESSION_SHUTDOWN_FILE" ]] || return 1
   published_at="$(now_epoch)"
-  publish_token_and_metadata "$renewed_token" "$next_generation" "$published_at"
+  publish_token_and_metadata "$renewed_token" "$next_generation" "$published_at" || return 1
+  renewal_test_gate after-publication
 }
 
 renewal_wait() {
@@ -933,6 +941,15 @@ renewal_wait() {
     exec launcher-test-sleep "$seconds"
   else
     exec sleep "$seconds"
+  fi
+}
+
+renewal_test_gate() {
+  local transition="$1"
+
+  if [[ "${AGENT_LAUNCHER_TEST_MODE:-0}" == "1" &&
+        -e "${FAKE_RENEWAL_CONTROL_DIR}/gate-${transition}.enabled" ]]; then
+    launcher-test-gate "$transition"
   fi
 }
 
@@ -960,8 +977,9 @@ renewal_worker() {
   local wait_seconds=""
   local wait_pid=""
   local pending_ensure=0 pending_force=0 shutting_down=0 attempt_in_progress=0
-  local retry_after_failure=0 attempt=0 generation=1 completed_at
+  local retry_after_failure=0 attempt=0 generation=1 completed_at active_target_generation=0
   local request_ensure=0 request_force=0
+  local first_wait=1
 
   worker_stop() {
     shutting_down=1
@@ -976,7 +994,17 @@ renewal_worker() {
   }
 
   worker_force() {
-    if [[ "$attempt_in_progress" -eq 0 && "$shutting_down" -eq 0 ]]; then
+    [[ "$shutting_down" -eq 0 ]] || return
+    if [[ "$attempt_in_progress" -eq 1 ]]; then
+      # A force request shares the active attempt while its replacement has not
+      # become authoritative. Once that generation is already published, the
+      # caller observed it as its baseline and needs one later serial attempt.
+      if read_current_token_metadata &&
+         [[ "$METADATA_GENERATION" -ge "$active_target_generation" ]]; then
+        pending_force=1
+        pending_ensure=0
+      fi
+    else
       pending_force=1
       pending_ensure=0
       if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; fi
@@ -993,23 +1021,42 @@ renewal_worker() {
   while true; do
     [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
 
-    if [[ "$retry_after_failure" -eq 1 ]]; then
-      wait_seconds="$GITHUB_RETRY_INTERVAL_SECONDS"
-    else
-      wait_seconds="$(seconds_until_token_stale)"
+    if [[ "$first_wait" -eq 1 ]]; then
+      renewal_test_gate before-first-wait
+      first_wait=0
     fi
 
-    renewal_wait "$wait_seconds" &
-    wait_pid=$!
-    wait "$wait_pid" 2>/dev/null || true
-    wait_pid=""
+    # Check both before and after establishing the wait. A signal in the small
+    # creation window records pending work while wait_pid is empty; the second
+    # check then terminates the new wait instead of stranding the request.
+    if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 ]]; then
+      if [[ "$retry_after_failure" -eq 1 ]]; then
+        wait_seconds="$GITHUB_RETRY_INTERVAL_SECONDS"
+      else
+        wait_seconds="$(seconds_until_token_stale)"
+      fi
+
+      if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 ]]; then
+        renewal_wait "$wait_seconds" &
+        wait_pid=$!
+        if [[ "$pending_force" -eq 1 || "$pending_ensure" -eq 1 ]]; then
+          kill -TERM "$wait_pid" 2>/dev/null || true
+        fi
+        wait "$wait_pid" 2>/dev/null || true
+        wait_pid=""
+      fi
+    fi
     [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
 
+    if read_current_token_metadata && [[ "$METADATA_PUBLISHED_AT" -le "$(now_epoch)" ]]; then
+      generation="$METADATA_GENERATION"
+    fi
+    active_target_generation=$((generation + 1))
+    attempt_in_progress=1
     request_force="$pending_force"
     request_ensure="$pending_ensure"
     pending_force=0
     pending_ensure=0
-    attempt_in_progress=1
 
     if [[ "$request_force" -eq 1 ]]; then
       :
@@ -1020,15 +1067,11 @@ renewal_worker() {
       fi
     fi
 
-    if read_current_token_metadata && [[ "$METADATA_PUBLISHED_AT" -le "$(now_epoch)" ]]; then
-      generation="$METADATA_GENERATION"
-    fi
     attempt=$((attempt + 1))
 
-    if run_serial_renewal_attempt "$((generation + 1))"; then
-      attempt_in_progress=0
+    if run_serial_renewal_attempt "$active_target_generation"; then
       [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
-      generation=$((generation + 1))
+      generation="$active_target_generation"
       completed_at="$(now_epoch)"
       if publish_renewal_result "$attempt" success "$generation" "$completed_at"; then
         retry_after_failure=0
@@ -1037,22 +1080,25 @@ renewal_worker() {
         retry_after_failure=1
       fi
     else
-      attempt_in_progress=0
       [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
       completed_at="$(now_epoch)"
       publish_renewal_result "$attempt" failure "$generation" "$completed_at" || true
       echo "Warning: GitHub credential renewal failed; retaining the current session token and retrying in 5 minutes." >&2
       retry_after_failure=1
     fi
+    attempt_in_progress=0
+    active_target_generation=0
+    renewal_test_gate after-attempt
   done
 }
 
 start_renewal_worker() {
   local polls=0 published_pid
+  local max_polls=$((GITHUB_WORKER_READY_WAIT_SECONDS * 10))
 
   renewal_worker &
   RENEWAL_PID=$!
-  while [[ "$polls" -lt 50 ]]; do
+  while [[ "$polls" -lt "$max_polls" ]]; do
     if ! kill -0 "$RENEWAL_PID" 2>/dev/null; then
       echo "Error: GitHub credential renewal worker exited before becoming ready." >&2
       return 1

@@ -173,14 +173,16 @@ invalid, or future-dated metadata is not accepted as freshness evidence.
 The worker normally renews at the token publication epoch plus 2700 seconds.
 `SIGUSR1` asks it to ensure freshness and `SIGUSR2` asks it to force one
 replacement attempt. Signal traps only coalesce pending state and wake the
-cadence wait; the worker loop serialises every POST. Force dominates ensure, and
-a request received during an in-progress attempt shares that attempt. A fresh
-ensure request is a no-op and retains the remaining interval rather than
-starting another 2700 seconds. A successful proactive or reactive publication
-starts a new 45-minute interval. Failure retains the old token and metadata,
-records a failed result, emits a sanitised warning, and schedules 5-minute
-background retry; a later reactive request may interrupt that wait for one new
-immediate attempt.
+cadence wait; the worker loop checks pending state on both sides of wait
+establishment and serialises every POST. Force dominates ensure. Requests that
+arrive before an active attempt publishes its generation share that attempt; a
+force caller that already observed the published generation remains queued for
+one later serial attempt. A fresh ensure request is a no-op and retains the
+remaining interval rather than starting another 2700 seconds. A successful
+proactive or reactive publication starts a new 45-minute interval. Failure
+retains the old token and metadata, records a failed result, emits a sanitised
+warning, and schedules 5-minute background retry; a later reactive request may
+interrupt that wait for one new immediate attempt.
 
 Only the background installation-token POST uses fixed curl network bounds: a
 10-second connection timeout and a 30-second total HTTP timeout. Initial App
@@ -213,13 +215,16 @@ observe new token plus old metadata, but do not accept old token plus new
 freshness evidence. Black-box cases cover fresh reads, ordinary proactive
 renewal, suspend-equivalent stale age while the proactive wait remains blocked,
 askpass recovery, force refresh, concurrent coalescing, proactive/reactive
-races, requests during an in-progress POST, no-op cadence, reactive failure and
-retry interruption, eventual recovery, invalid metadata, unavailable state,
-bounded timeout, atomic reads, resume, disabled mode, and shutdown during a
-request and mint. Synthetic canaries cover initial and renewed tokens, App
-source/JWT material, private-key content, and its path across prompt,
-diagnostic, coordination, and temporary-state boundaries. This is deterministic
-offline evidence, not live GitHub integration coverage.
+races, requests before wait establishment and after attempt completion,
+publication/result-boundary force requests, requests during an in-progress POST,
+no-op cadence, reactive failure and retry interruption, eventual recovery,
+invalid metadata, unavailable state, bounded timeout, atomic reads, resume,
+disabled mode, and shutdown during a request and mint. Explicit test gates hold
+those worker transitions without relying on host scheduling. Synthetic canaries
+cover initial and renewed tokens, App source/JWT material, private-key content,
+and its path across prompt, diagnostic, coordination, and temporary-state
+boundaries. This is deterministic offline evidence, not live GitHub integration
+coverage.
 
 ## Processes, signals, and cleanup
 

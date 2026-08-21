@@ -285,6 +285,19 @@ class LauncherHarness
     File.exist?(path) ? Integer(File.read(path), 10) : nil
   end
 
+  def enable_renewal_gate(transition, ordinal = 1)
+    File.write(File.join(renewal_control_dir, "gate-#{transition}.enabled"), "enabled\n")
+    File.write(File.join(renewal_control_dir, "gate-#{transition}-#{ordinal}.enabled"), "enabled\n")
+  end
+
+  def renewal_gate_started?(transition, ordinal = 1)
+    File.exist?(File.join(renewal_control_dir, "gate-#{transition}-#{ordinal}.started"))
+  end
+
+  def release_renewal_gate(transition, ordinal = 1)
+    File.write(File.join(renewal_control_dir, "gate-#{transition}-#{ordinal}.release"), "release\n")
+  end
+
   def token_attempts
     File.exist?(token_attempt_file) ? Integer(File.read(token_attempt_file), 10) : 0
   end
@@ -624,6 +637,11 @@ class LauncherHarness
       end
       abort "synthetic GitHub request failure" if response&.fetch("failure", false)
       STDOUT.write(response ? JSON.generate(response) : File.read(fixture))
+      if endpoint == "token" && sequence_attempt
+        File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) do |file|
+          file.puts("curl:token-complete attempt=\#{sequence_attempt + 1}")
+        end
+      end
     RUBY
 
     executable("jq", <<~RUBY)
@@ -702,6 +720,22 @@ class LauncherHarness
         file.puts("renewal:wait seconds=\#{ARGV.fetch(0)} ordinal=\#{ordinal}")
       end
       release = File.join(control_dir, "release-\#{ordinal}")
+      sleep 0.01 until File.exist?(release)
+    RUBY
+
+    executable("launcher-test-gate", <<~RUBY)
+      #!#{RbConfig.ruby}
+
+      control_dir = ENV.fetch("FAKE_RENEWAL_CONTROL_DIR")
+      transition = ARGV.fetch(0)
+      count_path = File.join(control_dir, "gate-\#{transition}.count")
+      ordinal = File.exist?(count_path) ? Integer(File.read(count_path), 10) + 1 : 1
+      File.write(count_path, ordinal.to_s)
+      enabled = File.join(control_dir, "gate-\#{transition}-\#{ordinal}.enabled")
+      exit 0 unless File.exist?(enabled)
+
+      File.write(File.join(control_dir, "gate-\#{transition}-\#{ordinal}.started"), Process.pid.to_s)
+      release = File.join(control_dir, "gate-\#{transition}-\#{ordinal}.release")
       sleep 0.01 until File.exist?(release)
     RUBY
 

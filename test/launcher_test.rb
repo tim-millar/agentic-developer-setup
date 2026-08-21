@@ -852,6 +852,8 @@ class LauncherTest < Minitest::Test
                     @harness.events.index { |event| event.start_with?("renewal:wait ") }
 
     generated_material = File.read(helper) + File.read(askpass)
+    assert_includes File.read(helper), "refresh_interval=2700\n"
+    assert_includes File.read(helper), "wait_bound=40\n"
     coordination_material = %w[
       current-token.meta renewal-worker.pid renewal-worker.ready renewal-result
     ].map { |name| File.binread(File.join(credential_dir, name)) }.join
@@ -863,6 +865,9 @@ class LauncherTest < Minitest::Test
     end
     refute_includes generated_material, LauncherHarness::APP_ID
     refute_includes generated_material, LauncherHarness::INSTALLATION_ID
+    %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].each do |name|
+      refute_includes generated_material, name
+    end
 
     result = finish_renewable_session(session)
     assert_success(result, "initial renewable App session")
@@ -913,6 +918,125 @@ class LauncherTest < Minitest::Test
     result = finish_renewable_session(session)
     assert_success(result, "forced reactive renewal")
   ensure
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_before_first_cadence_wait_is_serviced_immediately
+    @harness.enable_renewal_gate("before-first-wait")
+    session = start_renewable_session(wait_for_first_wait: false)
+    wait_until { @harness.renewal_gate_started?("before-first-wait") }
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    helper_marker = File.join(@harness.renewal_control_dir, "pre-wait-force-helper-waiting")
+
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    assert_equal 1, @harness.token_attempts
+    refute @harness.renewal_wait_started?(1)
+
+    @harness.release_renewal_gate("before-first-wait")
+    assert_helper_token(request.value, LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    wait_until { @harness.renewal_wait_started?(1) }
+    assert_equal 2, @harness.token_attempts
+    assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
+    assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=2 ") }, :<,
+                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=1" }
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request before first cadence wait")
+  ensure
+    @harness&.release_renewal_gate("before-first-wait")
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_after_attempt_completion_precedes_the_next_cadence_wait
+    third_token = "synthetic-third-installation-token"
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN),
+      @harness.token_response(third_token)
+    ]
+    @harness.enable_renewal_gate("after-attempt")
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    metadata_file = File.join(File.dirname(helper), "current-token.meta")
+    @harness.advance_clock(2700)
+
+    assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::RENEWED_INSTALLATION_TOKEN)
+    wait_until { @harness.renewal_gate_started?("after-attempt") }
+    helper_marker = File.join(@harness.renewal_control_dir, "post-attempt-force-helper-waiting")
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    refute @harness.renewal_wait_started?(2)
+
+    @harness.release_renewal_gate("after-attempt")
+    assert_helper_token(request.value, third_token)
+    wait_until { @harness.renewal_wait_started?(2) }
+    assert_equal 3, @harness.token_attempts
+    assert_equal "3", parse_state_file(metadata_file).fetch("generation")
+    assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }, :<,
+                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=2" }
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request between attempt and next cadence wait")
+  ensure
+    @harness&.release_renewal_gate("after-attempt")
+    request&.join
+    stop_renewable_session(session)
+  end
+
+  def test_force_request_after_token_publication_remains_pending_for_one_later_serial_attempt
+    third_token = "synthetic-third-installation-token"
+    sequence = [
+      @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
+      @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN),
+      @harness.token_response(third_token)
+    ]
+    @harness.enable_renewal_gate("after-publication")
+    session = start_renewable_session(sequence: sequence)
+    helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    credential_dir = File.dirname(helper)
+    metadata_file = File.join(credential_dir, "current-token.meta")
+    result_file = File.join(credential_dir, "renewal-result")
+
+    @harness.release_renewal_wait(1)
+    wait_until { @harness.renewal_gate_started?("after-publication") }
+    assert_equal "2", parse_state_file(metadata_file).fetch("generation")
+    assert_equal "0", parse_state_file(result_file).fetch("attempt")
+
+    helper_marker = File.join(@harness.renewal_control_dir, "publication-boundary-force-helper-waiting")
+    request = Thread.new do
+      @harness.run_generated_helper(helper, "--force-refresh", env: {"FAKE_HELPER_WAIT_MARKER" => helper_marker})
+    end
+    wait_until { File.exist?(helper_marker) }
+    assert_equal 2, @harness.token_attempts
+
+    @harness.release_renewal_gate("after-publication")
+    assert_helper_token(request.value, third_token)
+    wait_until { @harness.renewal_wait_started?(2) }
+    assert_equal 3, @harness.token_attempts
+    assert_equal "3", parse_state_file(metadata_file).fetch("generation")
+    assert_equal({"attempt" => "2", "outcome" => "success", "generation" => "3"},
+                 parse_state_file(result_file).slice("attempt", "outcome", "generation"))
+    attempt_two_complete = @harness.events.index { |event| event == "curl:token-complete attempt=2" }
+    attempt_three_start = @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }
+    refute_nil attempt_two_complete
+    refute_nil attempt_three_start
+    assert_operator attempt_two_complete, :<, attempt_three_start,
+                    "installation-token POSTs overlapped instead of remaining serial"
+    assert_equal 1, @harness.events.grep(/^curl:token attempt=2 /).length
+    assert_equal 1, @harness.events.grep(/^curl:token attempt=3 /).length
+
+    result = finish_renewable_session(session)
+    assert_success(result, "force request across token/result publication boundary")
+  ensure
+    @harness&.release_renewal_gate("after-publication")
+    request&.join
     stop_renewable_session(session)
   end
 
@@ -1545,7 +1669,7 @@ class LauncherTest < Minitest::Test
     end
   end
 
-  def start_renewable_session(*arguments, sequence: nil, env: {})
+  def start_renewable_session(*arguments, sequence: nil, env: {}, wait_for_first_wait: true)
     sequence ||= [
       @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
       @harness.token_response(LauncherHarness::RENEWED_INSTALLATION_TOKEN)
@@ -1560,7 +1684,7 @@ class LauncherTest < Minitest::Test
     wait_until do
       File.exist?(@harness.started_marker) &&
         @harness.codex_invocations.any? &&
-        @harness.renewal_wait_started?(1)
+        (!wait_for_first_wait || @harness.renewal_wait_started?(1))
     end
     session
   rescue StandardError
