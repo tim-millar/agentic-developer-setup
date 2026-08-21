@@ -137,13 +137,16 @@ Agent runtimes are tool-specific integrations because tools differ in interfaces
 - `disabled` and GitHub App access modes;
 - launcher-side custody of long-lived App source credentials;
 - short-lived, repository-scoped installation authority exposed to the child through restricted environment and helper boundaries;
+- one launcher-owned worker for proactive renewal and bounded signal-requested reactive renewal;
 - separation between launcher state and the Codex process environment;
 - private temporary resources, signal handling, and cleanup;
 - agent, access-mode, Git-mode, and launch provenance metadata where implemented.
 
 For this framework source repository, [`scripts/run_codex.sh`](../scripts/run_codex.sh) is the supported operational entrypoint: it applies repository-specific location and identity defaults, then delegates to the canonical reusable launcher implementation at [`baseline/scripts/run_codex.sh`](../baseline/scripts/run_codex.sh). The reusable launcher's offline behavioural test architecture is documented in [`docs/launcher-testing.md`](launcher-testing.md). These sources, rather than this overview, define implementation details.
 
-Launcher-managed renewal exists for App-mode GitHub authority. Recovery across sufficiently long process suspension or inactivity remains a lifecycle area under refinement; [Issue #43](https://github.com/tim-millar/agentic-developer-setup/issues/43) tracks that follow-up. This limitation should not be read as a promise of transparent credential availability after arbitrary suspension, nor does this document prescribe the eventual solution.
+Launcher-managed renewal combines a proactive 45-minute cadence with bounded on-demand recovery for stale App-mode authority. Wall-clock metadata makes suspend-equivalent age observable. The child-visible helper can ask the still-running launcher worker to ensure freshness or, after a clear authentication failure, force one replacement attempt; it cannot mint independently. Git uses the same freshness-aware path through askpass, while `gh` and direct API policy require helper-derived credentials. App ID, installation selection, private-key material, and App JWTs remain launcher/worker-only, and repository and permission scope do not change.
+
+This lifecycle is bounded rather than a guarantee of perpetual GitHub availability. A synchronous request waits at most 40 seconds and does not follow the worker into its 5-minute background retry. Invalid App configuration, unavailable GitHub service, revoked authority, permission failures, launcher termination, or repeated renewal failure can still leave GitHub work unavailable while local Codex work continues. The boundary minimises inherited credentials for cooperating same-user processes; it is not adversarial operating-system isolation.
 
 ## Human review boundary
 

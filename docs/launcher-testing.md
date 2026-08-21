@@ -35,9 +35,13 @@ cryptography, or Codex:
   and fails every unexpected call;
 - `jq` supports only the query forms used by the public launcher;
 - `openssl` models key validation, base64 operations, and signing without a real
-  private key.
+  private key;
 - a test-only wait executable exposes explicit renewal boundaries without
-  changing the launcher's production 45-minute and 5-minute constants.
+  changing the launcher's production 45-minute and 5-minute constants;
+- controlled token responses can hold a renewal POST in progress while tests
+  send concurrent requests or begin shutdown;
+- test-only clock and one-second sleep executables advance the helper's
+  40-second synchronous bound immediately, without changing production values.
 
 App-mode test runs that enable the controlled-wait path must provide that wait
 executable. The launcher rejects an incomplete test setup before App API access
@@ -153,11 +157,30 @@ needed.
 ## Renewable App credentials
 
 In App mode the launcher keeps the long-lived App ID, installation ID, and
-private-key path on the launcher side. It writes the initial installation token
-to a private `0700` session directory, with the authoritative token file at
-`0600`, then proactively refreshes that token every 45 minutes. A failed refresh
-leaves the previous token intact, emits a sanitised warning, and retries after 5
-minutes until renewal succeeds.
+private-key path on the launcher side. One launcher-owned worker is the sole
+minting authority for proactive and reactive renewal. Before Codex starts, that
+worker publishes its numeric PID and readiness marker; launch fails if observable
+readiness is not established within 5 seconds.
+
+The private `0700` session directory contains the raw `0600` `current-token`,
+data-only `current-token.meta`, worker PID and readiness files, atomic
+`renewal-result`, executable token and askpass helpers, and private GitHub CLI
+configuration. Freshness metadata records a positive generation and wall-clock
+publication epoch. Age therefore advances across suspend even when the worker's
+45-minute wait did not run. Missing, malformed, empty, non-numeric, internally
+invalid, or future-dated metadata is not accepted as freshness evidence.
+
+The worker normally renews at the token publication epoch plus 2700 seconds.
+`SIGUSR1` asks it to ensure freshness and `SIGUSR2` asks it to force one
+replacement attempt. Signal traps only coalesce pending state and wake the
+cadence wait; the worker loop serialises every POST. Force dominates ensure, and
+a request received during an in-progress attempt shares that attempt. A fresh
+ensure request is a no-op and retains the remaining interval rather than
+starting another 2700 seconds. A successful proactive or reactive publication
+starts a new 45-minute interval. Failure retains the old token and metadata,
+records a failed result, emits a sanitised warning, and schedules 5-minute
+background retry; a later reactive request may interrupt that wait for one new
+immediate attempt.
 
 Only the background installation-token POST uses fixed curl network bounds: a
 10-second connection timeout and a 30-second total HTTP timeout. Initial App
@@ -168,21 +191,35 @@ the 5-minute retry.
 
 The Codex child retains its initial `GH_TOKEN`, `GITHUB_TOKEN`, and
 `INSTALL_TOKEN` values for compatibility; a parent cannot update that static
-environment. `AGENT_GITHUB_TOKEN_HELPER` instead names a launcher-generated
-helper that returns the current token. The generated Git askpass helper reads
-the same authoritative state at every invocation, so HTTPS Git authentication
-automatically uses renewed credentials. Neither helper contains or receives the
-App source credentials.
+environment. `AGENT_GITHUB_TOKEN_HELPER` is the authoritative freshness-aware
+path for `gh` and direct API credentials. Default mode returns a token younger
+than 2700 seconds or requests one ensure-fresh attempt. `--force-refresh`
+requires one newer successful generation and is reserved by policy for clear
+authentication failures involving a helper-derived token. The helper polls
+private state once per second for at most 40 seconds and fails immediately on a
+relevant failed attempt, worker loss, or shutdown; it never waits through the
+5-minute retry. Successful stdout is only the opaque token plus a newline.
 
-Renewed tokens are published by writing a private sibling file and atomically
-renaming it over the authoritative token. Behavioural tests read concurrently
-across that replacement and accept only the complete old or new token. Other
-tests remove the token state to verify safe helper failure, retain token A across
-a timed-out refresh, verify the 5-minute retry and return to the 45-minute
-cadence, and exercise the same lifecycle for resumed sessions. Credential
-containment cases also seed exported ambient `JWT` and `TOKEN_JSON` canaries and
-verify that neither their replacement launcher values nor their export
-attributes reach Codex.
+The generated Git askpass password path invokes the helper in default mode, so
+HTTPS Git recovers from suspend-equivalent stale state before returning a
+credential. Launcher policy requires helper-first `gh` and API use, one forced
+refresh and exact retry only for a clear authentication failure, and no ambient
+credential fallback. In particular, HTTP 403 alone is not classified as token
+expiry. Neither generated helper contains or receives App source credentials.
+
+Renewal stages token and metadata privately, atomically replaces token bytes
+first, and only then atomically replaces metadata. Readers may conservatively
+observe new token plus old metadata, but do not accept old token plus new
+freshness evidence. Black-box cases cover fresh reads, ordinary proactive
+renewal, suspend-equivalent stale age while the proactive wait remains blocked,
+askpass recovery, force refresh, concurrent coalescing, proactive/reactive
+races, requests during an in-progress POST, no-op cadence, reactive failure and
+retry interruption, eventual recovery, invalid metadata, unavailable state,
+bounded timeout, atomic reads, resume, disabled mode, and shutdown during a
+request and mint. Synthetic canaries cover initial and renewed tokens, App
+source/JWT material, private-key content, and its path across prompt,
+diagnostic, coordination, and temporary-state boundaries. This is deterministic
+offline evidence, not live GitHub integration coverage.
 
 ## Processes, signals, and cleanup
 
@@ -195,9 +232,11 @@ configuration, and askpass files. No arbitrary delay is used as the readiness
 condition.
 
 Success, child failure, resume, App failure paths where resources exist, and
-handled signals assert cleanup beneath the controlled `TMPDIR`. Cleanup stops
-and waits for the renewal worker before removing its state, so a worker cannot
-race with credential deletion. A debug prompt created by
+handled signals assert cleanup beneath the controlled `TMPDIR`. Cleanup marks
+the session as shutting down, rejects new helper work, stops and waits for the
+renewal worker, and then removes its state. Controlled in-flight renewal tests
+verify that token or coordination state is not published after teardown begins
+and that helper, worker, and wait processes do not survive. A debug prompt created by
 `DEBUG_CODEX_PROMPT=1` is deliberately retained, checked for mode `0600`, and
 compared exactly with the final prompt passed to Codex.
 

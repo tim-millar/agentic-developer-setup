@@ -47,8 +47,13 @@ TMP_GH_CONFIG_DIR=""
 TMP_ASKPASS=""
 SESSION_CREDENTIAL_DIR=""
 CURRENT_TOKEN_FILE=""
+CURRENT_TOKEN_META_FILE=""
 TOKEN_HELPER=""
 RENEWAL_PID=""
+RENEWAL_PID_FILE=""
+RENEWAL_READY_FILE=""
+RENEWAL_RESULT_FILE=""
+SESSION_SHUTDOWN_FILE=""
 DEBUG_PROMPT_PATH=""
 CODEX_PID=""
 HOST_ENV_DIR=""
@@ -57,6 +62,8 @@ GITHUB_REFRESH_INTERVAL_SECONDS=2700
 GITHUB_RETRY_INTERVAL_SECONDS=300
 GITHUB_RENEWAL_CONNECT_TIMEOUT_SECONDS=10
 GITHUB_RENEWAL_HTTP_TIMEOUT_SECONDS=30
+GITHUB_HELPER_WAIT_SECONDS=40
+GITHUB_WORKER_READY_WAIT_SECONDS=5
 
 APP_SLUG="disabled"
 EXPIRES_AT="n/a"
@@ -68,6 +75,10 @@ DEFAULT_BRANCH=""
 cleanup() {
   local status=$?
 
+  if [[ -n "$SESSION_SHUTDOWN_FILE" && -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]]; then
+    : > "$SESSION_SHUTDOWN_FILE" 2>/dev/null || true
+    chmod 600 "$SESSION_SHUTDOWN_FILE" 2>/dev/null || true
+  fi
   if declare -F stop_renewal_worker >/dev/null; then
     stop_renewal_worker
   fi
@@ -576,19 +587,136 @@ mint_installation_token_json() {
     "$max_time"
 }
 
-publish_current_token() {
+atomic_publish() {
+  local destination="$1"
+  local mode="$2"
+  local contents="$3"
+  local temporary_file
+
+  temporary_file="$(mktemp "${destination}.tmp.XXXXXX")" || return 1
+  if ! printf '%s' "$contents" > "$temporary_file" ||
+     ! chmod "$mode" "$temporary_file" ||
+     ! mv -f "$temporary_file" "$destination"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+}
+
+METADATA_GENERATION=""
+METADATA_PUBLISHED_AT=""
+
+read_current_token_metadata() {
+  local file="${1:-$CURRENT_TOKEN_META_FILE}"
+  local key value generation="" published_at="" generation_seen=0 published_seen=0
+
+  [[ -f "$file" && -s "$file" ]] || return 1
+  while IFS='=' read -r key value || [[ -n "$key$value" ]]; do
+    case "$key" in
+      generation)
+        [[ "$generation_seen" -eq 0 ]] || return 1
+        generation="$value"
+        generation_seen=1
+        ;;
+      published_at_epoch)
+        [[ "$published_seen" -eq 0 ]] || return 1
+        published_at="$value"
+        published_seen=1
+        ;;
+      *) return 1 ;;
+    esac
+  done < "$file"
+
+  [[ "$generation" =~ ^[0-9]+$ && "$generation" -ge 1 ]] || return 1
+  [[ "$published_at" =~ ^[0-9]+$ ]] || return 1
+  METADATA_GENERATION="$generation"
+  METADATA_PUBLISHED_AT="$published_at"
+}
+
+current_token_is_fresh() {
+  local current age
+
+  [[ -f "$CURRENT_TOKEN_FILE" && -s "$CURRENT_TOKEN_FILE" ]] || return 1
+  read_current_token_metadata || return 1
+  current="$(now_epoch)"
+  [[ "$current" =~ ^[0-9]+$ && "$current" -ge "$METADATA_PUBLISHED_AT" ]] || return 1
+  age=$((current - METADATA_PUBLISHED_AT))
+  [[ "$age" -lt "$GITHUB_REFRESH_INTERVAL_SECONDS" ]]
+}
+
+seconds_until_token_stale() {
+  local current age remaining
+
+  if ! current_token_is_fresh; then
+    printf '0\n'
+    return 0
+  fi
+  current="$(now_epoch)"
+  age=$((current - METADATA_PUBLISHED_AT))
+  remaining=$((GITHUB_REFRESH_INTERVAL_SECONDS - age))
+  ((remaining > 0)) || remaining=0
+  printf '%s\n' "$remaining"
+}
+
+publish_token_and_metadata() {
   local token="$1"
-  local temporary_token_file
+  local generation="$2"
+  local published_at="$3"
+  local temporary_token_file temporary_metadata_file previous_token_file=""
 
   [[ -n "$token" ]] || return 1
+  [[ "$generation" =~ ^[0-9]+$ && "$generation" -ge 1 ]] || return 1
+  [[ "$published_at" =~ ^[0-9]+$ ]] || return 1
   temporary_token_file="$(mktemp "${CURRENT_TOKEN_FILE}.tmp.XXXXXX")" || return 1
+  temporary_metadata_file="$(mktemp "${CURRENT_TOKEN_META_FILE}.tmp.XXXXXX")" || {
+    rm -f "$temporary_token_file"
+    return 1
+  }
 
   if ! printf '%s' "$token" > "$temporary_token_file" ||
      ! chmod 600 "$temporary_token_file" ||
-     ! mv -f "$temporary_token_file" "$CURRENT_TOKEN_FILE"; then
-    rm -f "$temporary_token_file"
+     ! printf 'generation=%s\npublished_at_epoch=%s\n' "$generation" "$published_at" > "$temporary_metadata_file" ||
+     ! chmod 600 "$temporary_metadata_file"; then
+    rm -f "$temporary_token_file" "$temporary_metadata_file"
     return 1
   fi
+
+  if [[ -f "$CURRENT_TOKEN_FILE" ]]; then
+    previous_token_file="$(mktemp "${CURRENT_TOKEN_FILE}.previous.XXXXXX")" || {
+      rm -f "$temporary_token_file" "$temporary_metadata_file"
+      return 1
+    }
+    if ! cp "$CURRENT_TOKEN_FILE" "$previous_token_file" || ! chmod 600 "$previous_token_file"; then
+      rm -f "$temporary_token_file" "$temporary_metadata_file" "$previous_token_file"
+      return 1
+    fi
+  fi
+
+  # Publish credential bytes before freshness evidence. A concurrent reader may
+  # conservatively see a new token with old metadata, never the reverse.
+  if ! mv -f "$temporary_token_file" "$CURRENT_TOKEN_FILE"; then
+    rm -f "$temporary_token_file" "$temporary_metadata_file" "$previous_token_file"
+    return 1
+  fi
+  if ! mv -f "$temporary_metadata_file" "$CURRENT_TOKEN_META_FILE"; then
+    rm -f "$temporary_metadata_file"
+    if [[ -n "$previous_token_file" ]]; then
+      mv -f "$previous_token_file" "$CURRENT_TOKEN_FILE" 2>/dev/null || true
+    fi
+    return 1
+  fi
+  [[ -z "$previous_token_file" ]] || rm -f "$previous_token_file"
+}
+
+publish_renewal_result() {
+  local attempt="$1"
+  local outcome="$2"
+  local generation="$3"
+  local completed_at="$4"
+  local contents
+
+  printf -v contents 'attempt=%s\noutcome=%s\ngeneration=%s\ncompleted_at_epoch=%s\n' \
+    "$attempt" "$outcome" "$generation" "$completed_at"
+  atomic_publish "$RENEWAL_RESULT_FILE" 600 "$contents"
 }
 
 create_app_session_credentials() {
@@ -596,13 +724,19 @@ create_app_session_credentials() {
   chmod 700 "$SESSION_CREDENTIAL_DIR"
 
   CURRENT_TOKEN_FILE="${SESSION_CREDENTIAL_DIR}/current-token"
+  CURRENT_TOKEN_META_FILE="${SESSION_CREDENTIAL_DIR}/current-token.meta"
   TOKEN_HELPER="${SESSION_CREDENTIAL_DIR}/current-token-helper"
   TMP_ASKPASS="${SESSION_CREDENTIAL_DIR}/git-askpass"
+  RENEWAL_PID_FILE="${SESSION_CREDENTIAL_DIR}/renewal-worker.pid"
+  RENEWAL_READY_FILE="${SESSION_CREDENTIAL_DIR}/renewal-worker.ready"
+  RENEWAL_RESULT_FILE="${SESSION_CREDENTIAL_DIR}/renewal-result"
+  SESSION_SHUTDOWN_FILE="${SESSION_CREDENTIAL_DIR}/.shutting-down"
   TMP_GH_CONFIG_DIR="${SESSION_CREDENTIAL_DIR}/gh-config"
   mkdir "$TMP_GH_CONFIG_DIR"
   chmod 700 "$TMP_GH_CONFIG_DIR"
 
-  publish_current_token "$INSTALL_TOKEN"
+  publish_token_and_metadata "$INSTALL_TOKEN" 1 "$(now_epoch)"
+  publish_renewal_result 0 none 1 0
 
   cat > "$TOKEN_HELPER" <<'EOF'
 #!/usr/bin/env bash
@@ -610,23 +744,144 @@ set -euo pipefail
 
 credential_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 token_file="${credential_dir}/current-token"
+metadata_file="${credential_dir}/current-token.meta"
+pid_file="${credential_dir}/renewal-worker.pid"
+ready_file="${credential_dir}/renewal-worker.ready"
+result_file="${credential_dir}/renewal-result"
+shutdown_file="${credential_dir}/.shutting-down"
+refresh_interval=2700
+wait_bound=40
 
-if [[ ! -f "$token_file" || ! -s "$token_file" ]]; then
-  echo "Error: current GitHub session token is unavailable." >&2
-  exit 1
+mode="default"
+if [[ $# -eq 1 && "$1" == "--force-refresh" ]]; then
+  mode="force"
+elif [[ $# -ne 0 ]]; then
+  echo "Error: unsupported GitHub token helper arguments." >&2
+  exit 2
 fi
 
-token="$(cat "$token_file")" || {
-  echo "Error: current GitHub session token could not be read." >&2
+fail() {
+  echo "Error: $1" >&2
   exit 1
 }
 
-if [[ -z "$token" ]]; then
-  echo "Error: current GitHub session token is invalid." >&2
-  exit 1
+worker_pid() {
+  local pid
+  [[ -f "$pid_file" && -s "$pid_file" && -f "$ready_file" && ! -e "$shutdown_file" ]] || return 1
+  pid="$(cat "$pid_file" 2>/dev/null)" || return 1
+  [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
+}
+
+META_GENERATION=""
+META_PUBLISHED_AT=""
+read_metadata() {
+  local key value generation="" published_at="" generation_seen=0 published_seen=0
+  [[ -f "$metadata_file" && -s "$metadata_file" ]] || return 1
+  while IFS='=' read -r key value || [[ -n "$key$value" ]]; do
+    case "$key" in
+      generation) [[ "$generation_seen" -eq 0 ]] || return 1; generation="$value"; generation_seen=1 ;;
+      published_at_epoch) [[ "$published_seen" -eq 0 ]] || return 1; published_at="$value"; published_seen=1 ;;
+      *) return 1 ;;
+    esac
+  done < "$metadata_file"
+  [[ "$generation" =~ ^[0-9]+$ && "$generation" -ge 1 ]] || return 1
+  [[ "$published_at" =~ ^[0-9]+$ ]] || return 1
+  META_GENERATION="$generation"
+  META_PUBLISHED_AT="$published_at"
+}
+
+RESULT_ATTEMPT=""
+RESULT_OUTCOME=""
+RESULT_GENERATION=""
+read_result() {
+  local key value attempt="" outcome="" generation="" completed=""
+  local attempt_seen=0 outcome_seen=0 generation_seen=0 completed_seen=0
+  [[ -f "$result_file" && -s "$result_file" ]] || return 1
+  while IFS='=' read -r key value || [[ -n "$key$value" ]]; do
+    case "$key" in
+      attempt) [[ "$attempt_seen" -eq 0 ]] || return 1; attempt="$value"; attempt_seen=1 ;;
+      outcome) [[ "$outcome_seen" -eq 0 ]] || return 1; outcome="$value"; outcome_seen=1 ;;
+      generation) [[ "$generation_seen" -eq 0 ]] || return 1; generation="$value"; generation_seen=1 ;;
+      completed_at_epoch) [[ "$completed_seen" -eq 0 ]] || return 1; completed="$value"; completed_seen=1 ;;
+      *) return 1 ;;
+    esac
+  done < "$result_file"
+  [[ "$attempt" =~ ^[0-9]+$ ]] || return 1
+  [[ "$outcome" == none || "$outcome" == success || "$outcome" == failure ]] || return 1
+  [[ "$generation" =~ ^[0-9]+$ && "$generation" -ge 1 ]] || return 1
+  [[ "$completed" =~ ^[0-9]+$ ]] || return 1
+  RESULT_ATTEMPT="$attempt"
+  RESULT_OUTCOME="$outcome"
+  RESULT_GENERATION="$generation"
+}
+
+fresh_token() {
+  local first_metadata second_metadata token now age
+  [[ -f "$token_file" && -s "$token_file" ]] || return 1
+  read_metadata || return 1
+  first_metadata="${META_GENERATION}:${META_PUBLISHED_AT}"
+  token="$(cat "$token_file" 2>/dev/null)" || return 1
+  [[ -n "$token" ]] || return 1
+  read_metadata || return 1
+  second_metadata="${META_GENERATION}:${META_PUBLISHED_AT}"
+  [[ "$first_metadata" == "$second_metadata" ]] || return 1
+  now="$(date +%s)"
+  [[ "$now" =~ ^[0-9]+$ && "$now" -ge "$META_PUBLISHED_AT" ]] || return 1
+  age=$((now - META_PUBLISHED_AT))
+  [[ "$age" -lt "$refresh_interval" ]] || return 1
+  printf '%s\n' "$token"
+}
+
+pid="$(worker_pid)" || fail "GitHub credential renewal worker is unavailable."
+
+if [[ "$mode" == "default" ]] && token="$(fresh_token)"; then
+  printf '%s\n' "$token"
+  exit 0
 fi
 
-printf '%s\n' "$token"
+read_result || fail "GitHub credential renewal state is unavailable."
+baseline_attempt="$RESULT_ATTEMPT"
+baseline_generation=0
+if read_metadata; then
+  baseline_generation="$META_GENERATION"
+fi
+started_at="$(date +%s)"
+[[ "$started_at" =~ ^[0-9]+$ ]] || fail "GitHub credential refresh timed out."
+deadline=$((started_at + wait_bound))
+
+if [[ "$mode" == "force" ]]; then
+  kill -USR2 "$pid" 2>/dev/null || fail "GitHub credential renewal worker is unavailable."
+else
+  kill -USR1 "$pid" 2>/dev/null || fail "GitHub credential renewal worker is unavailable."
+fi
+
+while true; do
+  [[ ! -e "$shutdown_file" ]] || fail "GitHub credential session is shutting down."
+  pid="$(worker_pid)" || fail "GitHub credential renewal worker is unavailable."
+
+  if [[ "$mode" == "default" ]] && token="$(fresh_token)"; then
+    printf '%s\n' "$token"
+    exit 0
+  fi
+
+  if read_result && [[ "$RESULT_ATTEMPT" -gt "$baseline_attempt" ]]; then
+    if [[ "$RESULT_OUTCOME" == failure ]]; then
+      fail "GitHub credential renewal failed."
+    fi
+    if [[ "$mode" == "force" && "$RESULT_OUTCOME" == success && "$RESULT_GENERATION" -gt "$baseline_generation" ]] &&
+       token="$(fresh_token)"; then
+      printf '%s\n' "$token"
+      exit 0
+    fi
+  fi
+
+  now="$(date +%s)"
+  [[ "$now" =~ ^[0-9]+$ ]] || fail "GitHub credential refresh timed out."
+  [[ "$now" -lt "$deadline" ]] || fail "GitHub credential refresh timed out."
+  sleep 1
+done
 EOF
   chmod 700 "$TOKEN_HELPER"
 
@@ -654,7 +909,8 @@ EOF
 }
 
 renew_current_token() {
-  local token_json renewed_token
+  local next_generation="$1"
+  local token_json renewed_token published_at
 
   token_json="$(
     mint_installation_token_json \
@@ -665,7 +921,9 @@ renew_current_token() {
   )" || return 1
   renewed_token="$(printf '%s' "$token_json" | jq -r '.token // empty' 2>/dev/null)" || return 1
   [[ -n "$renewed_token" ]] || return 1
-  publish_current_token "$renewed_token"
+  [[ ! -e "$SESSION_SHUTDOWN_FILE" ]] || return 1
+  published_at="$(now_epoch)"
+  publish_token_and_metadata "$renewed_token" "$next_generation" "$published_at"
 }
 
 renewal_wait() {
@@ -678,33 +936,140 @@ renewal_wait() {
   fi
 }
 
-renewal_worker() {
-  local wait_seconds="$GITHUB_REFRESH_INTERVAL_SECONDS"
-  local wait_pid=""
+run_serial_renewal_attempt() {
+  local next_generation="$1"
+  local mint_pid status
 
-  trap 'if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; wait "$wait_pid" 2>/dev/null || true; fi; exit 0' INT TERM
+  renew_current_token "$next_generation" &
+  mint_pid=$!
+  while true; do
+    set +e
+    wait "$mint_pid"
+    status=$?
+    set -e
+    if [[ "$status" -ge 128 && "$status" -ne 127 ]]; then
+      # A reactive signal interrupts Bash's wait without cancelling the bounded
+      # HTTP child. Wait again so that request shares this attempt.
+      continue
+    fi
+    return "$status"
+  done
+}
+
+renewal_worker() {
+  local wait_seconds=""
+  local wait_pid=""
+  local pending_ensure=0 pending_force=0 shutting_down=0 attempt_in_progress=0
+  local retry_after_failure=0 attempt=0 generation=1 completed_at
+  local request_ensure=0 request_force=0
+
+  worker_stop() {
+    shutting_down=1
+    if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; fi
+  }
+
+  worker_ensure() {
+    if [[ "$attempt_in_progress" -eq 0 && "$shutting_down" -eq 0 ]]; then
+      pending_ensure=1
+      if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; fi
+    fi
+  }
+
+  worker_force() {
+    if [[ "$attempt_in_progress" -eq 0 && "$shutting_down" -eq 0 ]]; then
+      pending_force=1
+      pending_ensure=0
+      if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; fi
+    fi
+  }
+
+  trap worker_stop INT TERM
+  trap worker_ensure USR1
+  trap worker_force USR2
+
+  atomic_publish "$RENEWAL_PID_FILE" 600 "$BASHPID"
+  atomic_publish "$RENEWAL_READY_FILE" 600 ready
 
   while true; do
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
+
+    if [[ "$retry_after_failure" -eq 1 ]]; then
+      wait_seconds="$GITHUB_RETRY_INTERVAL_SECONDS"
+    else
+      wait_seconds="$(seconds_until_token_stale)"
+    fi
+
     renewal_wait "$wait_seconds" &
     wait_pid=$!
-    if ! wait "$wait_pid"; then
-      wait_pid=""
-      exit 0
-    fi
+    wait "$wait_pid" 2>/dev/null || true
     wait_pid=""
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
 
-    if renew_current_token; then
-      wait_seconds="$GITHUB_REFRESH_INTERVAL_SECONDS"
+    request_force="$pending_force"
+    request_ensure="$pending_ensure"
+    pending_force=0
+    pending_ensure=0
+    attempt_in_progress=1
+
+    if [[ "$request_force" -eq 1 ]]; then
+      :
+    elif [[ "$request_ensure" -eq 1 ]]; then
+      if current_token_is_fresh; then
+        attempt_in_progress=0
+        continue
+      fi
+    fi
+
+    if read_current_token_metadata && [[ "$METADATA_PUBLISHED_AT" -le "$(now_epoch)" ]]; then
+      generation="$METADATA_GENERATION"
+    fi
+    attempt=$((attempt + 1))
+
+    if run_serial_renewal_attempt "$((generation + 1))"; then
+      attempt_in_progress=0
+      [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
+      generation=$((generation + 1))
+      completed_at="$(now_epoch)"
+      if publish_renewal_result "$attempt" success "$generation" "$completed_at"; then
+        retry_after_failure=0
+      else
+        echo "Warning: GitHub credential renewal failed; retaining conservative credential freshness state and retrying in 5 minutes." >&2
+        retry_after_failure=1
+      fi
     else
+      attempt_in_progress=0
+      [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
+      completed_at="$(now_epoch)"
+      publish_renewal_result "$attempt" failure "$generation" "$completed_at" || true
       echo "Warning: GitHub credential renewal failed; retaining the current session token and retrying in 5 minutes." >&2
-      wait_seconds="$GITHUB_RETRY_INTERVAL_SECONDS"
+      retry_after_failure=1
     fi
   done
 }
 
 start_renewal_worker() {
+  local polls=0 published_pid
+
   renewal_worker &
   RENEWAL_PID=$!
+  while [[ "$polls" -lt 50 ]]; do
+    if ! kill -0 "$RENEWAL_PID" 2>/dev/null; then
+      echo "Error: GitHub credential renewal worker exited before becoming ready." >&2
+      return 1
+    fi
+    if [[ -s "$RENEWAL_PID_FILE" && -s "$RENEWAL_READY_FILE" ]]; then
+      published_pid="$(cat "$RENEWAL_PID_FILE" 2>/dev/null || true)"
+      if [[ "$published_pid" == "$RENEWAL_PID" ]]; then
+        return 0
+      fi
+    fi
+    sleep 0.1
+    polls=$((polls + 1))
+  done
+
+  echo "Error: GitHub credential renewal worker did not become ready within ${GITHUB_WORKER_READY_WAIT_SECONDS} seconds." >&2
+  stop_renewal_worker
+  return 1
 }
 
 stop_renewal_worker() {
@@ -871,10 +1236,13 @@ GitHub tool-use policy for this session:
 - Autonomous implementation of a supplied issue may activate the repository publication contract in AGENTS.md, including commit, push, pull-request publication, and verification when required.
 - Issue context alone does not require publication, and App mode alone does not require publication; determine the working mode from the task, human instructions, and repository state.
 - Use shell tools for GitHub operations.
-- Prefer git, gh, and curl with the provided environment credentials.
-- Git authentication reads launcher-managed renewable credentials automatically.
-- The launch-time gh and API token is static. If a gh or direct GitHub API operation fails with a possible authentication failure, obtain the current token from "\$AGENT_GITHUB_TOKEN_HELPER" and retry the exact same operation once with that token.
-- If that one retry fails, do not retry again, seek GitHub App source credentials, or use ambient developer credentials; report the failure clearly.
+- Prefer git, gh, and curl with the launcher-managed session credentials.
+- Git authentication obtains a freshness-aware credential automatically through GIT_ASKPASS.
+- For gh and direct GitHub API operations, obtain the authoritative freshness-aware token from "\$AGENT_GITHUB_TOKEN_HELPER" before each operation; launch-time GH_TOKEN, GITHUB_TOKEN, and INSTALL_TOKEN values are compatibility values only.
+- If and only if a helper-derived credential receives a clear authentication failure such as HTTP 401 or an explicit invalid/expired-credential response, obtain one replacement with "\$AGENT_GITHUB_TOKEN_HELPER --force-refresh" and retry the exact same operation once.
+- HTTP 403, HTTP 404, permission or policy failures, rate limits, network failures, and generic command failures are not sufficient evidence for forced refresh.
+- If the exact retry fails, stop. Do not refresh again, change the operation, seek GitHub App source credentials, or use ambient developer credentials.
+- GitHub App source credentials remain launcher-only; the helper can request bounded renewal but cannot mint credentials independently.
 - Do not use internal GitHub tools, connectors, or built-in GitHub actions for pull requests, issues, branches, labels, comments, or repository mutations.
 - Do not fall back to any non-shell GitHub integration if a shell-based GitHub command fails.
 - If a GitHub operation cannot be completed through shell tools with the provided credentials, stop and report the failure clearly.
@@ -1057,7 +1425,7 @@ fi
 unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
 unset JWT TOKEN_JSON
 unset AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
-unset FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+unset FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE FAKE_LAUNCHER_CLOCK
 
 if [[ -n "$RESUME_SESSION" ]]; then
   CODEX_STATUS=0

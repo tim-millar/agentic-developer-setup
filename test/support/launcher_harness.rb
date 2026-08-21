@@ -30,7 +30,7 @@ class LauncherHarness
               :extra_prompt_file, :event_log, :codex_log, :started_marker,
               :signal_log, :key_file, :app_json, :token_json, :repository_json,
               :issue_json, :renewal_control_dir, :token_sequence_json,
-              :token_attempt_file
+              :token_attempt_file, :helper_clock_file
 
   def initialize
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
@@ -50,6 +50,9 @@ class LauncherHarness
     @renewal_control_dir = File.join(root, "renewal-control")
     @token_sequence_json = File.join(root, "token-sequence.json")
     @token_attempt_file = File.join(root, "token-attempts")
+    @helper_clock_file = File.join(root, "helper-clock")
+    @synthetic_clock_file = File.join(root, "synthetic-clock")
+    File.write(@synthetic_clock_file, Time.now.to_i.to_s)
 
     [repository, home, tmpdir, @fake_bin, renewal_control_dir].each { |path| FileUtils.mkdir_p(path) }
     build_fakes
@@ -111,7 +114,8 @@ class LauncherHarness
       "AGENT_LAUNCHER_TEST_MODE" => "1",
       "FAKE_RENEWAL_CONTROL_DIR" => renewal_control_dir,
       "FAKE_TOKEN_SEQUENCE_JSON" => token_sequence_json,
-      "FAKE_TOKEN_ATTEMPT_FILE" => token_attempt_file
+      "FAKE_TOKEN_ATTEMPT_FILE" => token_attempt_file,
+      "FAKE_LAUNCHER_CLOCK" => @synthetic_clock_file
     )
   end
 
@@ -248,6 +252,22 @@ class LauncherHarness
     {"failure" => "timeout"}
   end
 
+  def blocked_token_response(token)
+    token_response(token).merge("wait" => true)
+  end
+
+  def token_attempt_started?(ordinal)
+    File.exist?(File.join(renewal_control_dir, "token-attempt-#{ordinal}.started"))
+  end
+
+  def release_token_attempt(ordinal)
+    File.write(File.join(renewal_control_dir, "token-attempt-#{ordinal}.release"), "release\n")
+  end
+
+  def fail_next_metadata_publication
+    File.write(File.join(renewal_control_dir, "fail-metadata-publication"), "fail\n")
+  end
+
   def remove_renewal_wait_executable
     FileUtils.rm_f(File.join(@fake_bin, "launcher-test-sleep"))
   end
@@ -269,6 +289,14 @@ class LauncherHarness
     File.exist?(token_attempt_file) ? Integer(File.read(token_attempt_file), 10) : 0
   end
 
+  def advance_clock(seconds)
+    File.write(@synthetic_clock_file, (synthetic_epoch + seconds).to_s)
+  end
+
+  def synthetic_epoch
+    Integer(File.read(@synthetic_clock_file), 10)
+  end
+
   def release_codex
     File.write(File.join(root, "codex.release"), "release\n")
   end
@@ -277,9 +305,12 @@ class LauncherHarness
     File.join(root, "codex.release")
   end
 
-  def run_generated_helper(path, *arguments)
+  def run_generated_helper(path, *arguments, env: {})
     stdout, stderr, status = Open3.capture3(
-      {"PATH" => [BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR)},
+      {
+        "PATH" => [@fake_bin, BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR),
+        "FAKE_LAUNCHER_CLOCK" => @synthetic_clock_file
+      }.merge(env),
       path,
       *arguments,
       unsetenv_others: true
@@ -320,10 +351,13 @@ class LauncherHarness
         "- Autonomous implementation of a supplied issue may activate the repository publication contract in AGENTS.md, including commit, push, pull-request publication, and verification when required.",
         "- Issue context alone does not require publication, and App mode alone does not require publication; determine the working mode from the task, human instructions, and repository state.",
         "- Use shell tools for GitHub operations.",
-        "- Prefer git, gh, and curl with the provided environment credentials.",
-        "- Git authentication reads launcher-managed renewable credentials automatically.",
-        '- The launch-time gh and API token is static. If a gh or direct GitHub API operation fails with a possible authentication failure, obtain the current token from "$AGENT_GITHUB_TOKEN_HELPER" and retry the exact same operation once with that token.',
-        "- If that one retry fails, do not retry again, seek GitHub App source credentials, or use ambient developer credentials; report the failure clearly.",
+        "- Prefer git, gh, and curl with the launcher-managed session credentials.",
+        "- Git authentication obtains a freshness-aware credential automatically through GIT_ASKPASS.",
+        '- For gh and direct GitHub API operations, obtain the authoritative freshness-aware token from "$AGENT_GITHUB_TOKEN_HELPER" before each operation; launch-time GH_TOKEN, GITHUB_TOKEN, and INSTALL_TOKEN values are compatibility values only.',
+        '- If and only if a helper-derived credential receives a clear authentication failure such as HTTP 401 or an explicit invalid/expired-credential response, obtain one replacement with "$AGENT_GITHUB_TOKEN_HELPER --force-refresh" and retry the exact same operation once.',
+        "- HTTP 403, HTTP 404, permission or policy failures, rate limits, network failures, and generic command failures are not sufficient evidence for forced refresh.",
+        "- If the exact retry fails, stop. Do not refresh again, change the operation, seek GitHub App source credentials, or use ambient developer credentials.",
+        "- GitHub App source credentials remain launcher-only; the helper can request bounded renewal but cannot mint credentials independently.",
         "- Do not use internal GitHub tools, connectors, or built-in GitHub actions for pull requests, issues, branches, labels, comments, or repository mutations.",
         "- Do not fall back to any non-shell GitHub integration if a shell-based GitHub command fails.",
         "- If a GitHub operation cannot be completed through shell tools with the provided credentials, stop and report the failure clearly."
@@ -416,6 +450,26 @@ class LauncherHarness
   end
 
   def build_fakes
+    executable("chmod", <<~RUBY)
+      #!#{RbConfig.ruby}
+      if ENV["FAKE_FAIL_READY_CHMOD"] == "1" && ARGV.last.include?("/renewal-worker.ready")
+        warn "synthetic readiness publication failure"
+        exit 1
+      end
+      exec "/bin/chmod", *ARGV
+    RUBY
+
+    executable("mv", <<~RUBY)
+      #!#{RbConfig.ruby}
+      marker = ENV["FAKE_RENEWAL_CONTROL_DIR"] && File.join(ENV.fetch("FAKE_RENEWAL_CONTROL_DIR"), "fail-metadata-publication")
+      if marker && File.exist?(marker) && ARGV.last.end_with?("/current-token.meta")
+        File.delete(marker)
+        warn "synthetic metadata publication failure"
+        exit 1
+      end
+      exec "/bin/mv", *ARGV
+    RUBY
+
     executable("codex", <<~RUBY)
       #!#{RbConfig.ruby}
       require "json"
@@ -441,7 +495,7 @@ class LauncherHarness
       sources = %w[
         GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
         JWT TOKEN_JSON AGENT_LAUNCHER_TEST_MODE FAKE_RENEWAL_CONTROL_DIR
-        FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE
+        FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE FAKE_LAUNCHER_CLOCK
       ]
       record = {
         "executable" => File.basename($PROGRAM_NAME),
@@ -561,6 +615,13 @@ class LauncherHarness
         file.puts("curl:\#{endpoint}\#{attempt}\#{outcome} method=\#{method} url=\#{url} auth_matches_expected=\#{auth_matches}\#{timeouts}")
       end
       abort "unexpected authorization category for \#{endpoint}" unless auth_matches
+      if endpoint == "token" && response&.fetch("wait", false)
+        control_dir = ENV.fetch("FAKE_RENEWAL_CONTROL_DIR")
+        ordinal = sequence_attempt + 1
+        File.write(File.join(control_dir, "token-attempt-\#{ordinal}.started"), Process.pid.to_s)
+        release = File.join(control_dir, "token-attempt-\#{ordinal}.release")
+        sleep 0.01 until File.exist?(release)
+      end
       abort "synthetic GitHub request failure" if response&.fetch("failure", false)
       STDOUT.write(response ? JSON.generate(response) : File.read(fixture))
     RUBY
@@ -642,6 +703,27 @@ class LauncherHarness
       end
       release = File.join(control_dir, "release-\#{ordinal}")
       sleep 0.01 until File.exist?(release)
+    RUBY
+
+    executable("date", <<~RUBY)
+      #!#{RbConfig.ruby}
+      clock = ENV["FAKE_HELPER_CLOCK"] || ENV["FAKE_LAUNCHER_CLOCK"]
+      if clock && ARGV == ["+%s"]
+        puts File.read(clock).strip
+      else
+        exec "/bin/date", *ARGV
+      end
+    RUBY
+
+    executable("sleep", <<~RUBY)
+      #!#{RbConfig.ruby}
+      File.write(ENV.fetch("FAKE_HELPER_WAIT_MARKER"), Process.pid.to_s) if ENV["FAKE_HELPER_WAIT_MARKER"]
+      if ENV["FAKE_HELPER_CLOCK"]
+        path = ENV.fetch("FAKE_HELPER_CLOCK")
+        File.write(path, (Integer(File.read(path), 10) + Integer(ARGV.fetch(0), 10)).to_s)
+      else
+        exec "/bin/sleep", *ARGV
+      end
     RUBY
   end
 
