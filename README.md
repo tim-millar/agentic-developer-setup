@@ -36,6 +36,7 @@ The framework is not a single application template. It is a reusable operating l
 ```text
 baseline/    Shared baseline artefacts used in agent-enabled repos
 adapters/    Adapter taxonomy and planned implementation locations
+agent-runtimes/  Globally installed coding-agent runtime source
 prompts/     Prompt packs for using the framework with agents/LLMs
 docs/        Documentation about the framework itself
 framework.yml  Machine-readable framework metadata
@@ -267,7 +268,12 @@ This framework is general-purpose at the repository and workflow level, but agen
 
 Different coding agents have different interfaces, strengths, failure modes, and safety characteristics. Rather than hiding those differences behind a single generic wrapper, the framework treats each supported agent as a distinct runtime with its own launcher, prompt assembly, access policy, and operating constraints.
 
-The current public baseline is Codex-first. It includes a Codex launcher for local agent sessions, repository validation, prompt construction, and optional GitHub App access.
+Two coding-agent runtimes are supported with deliberately separate purposes and distribution models:
+
+- Codex is repository-distributed through baseline launcher and prompt artefacts for deterministic implementation and optional GitHub App workflows.
+- [`claude-explore`](docs/runtimes/claude-explore.md) is globally installed user tooling for supervised exploratory engineering with reduced ambient authority. It is not an autonomous issue-to-PR workflow.
+
+Coding-agent runtimes are separate from repository enablement and environment adapters. Repository files such as `AGENTS.md` and `CLAUDE.md` provide project context; environment adapters describe where repository commands execute; a coding-agent runtime controls how the coding-agent process is launched.
 
 The launcher also requests preservation of the host command `PATH` used by Codex. An adopting repository may provide an optional non-symlink regular file at `scripts/agent_host_env.sh` to select already-installed host tools; without it, the inherited `PATH` is preserved explicitly. The hook runs in an isolated credential-sanitised Bash subprocess, returns only `PATH`, and does not alter the parent launcher's command resolution. Launcher sessions disable Codex login-shell startup and shell-profile environment reconstruction, and forwarded Codex configuration cannot override those settings or `shell_environment_policy`; unrelated forwarded configuration remains supported.
 
@@ -292,6 +298,8 @@ make check
 See `docs/validation.md` for the validation contract, path semantics, and extension guidance.
 Run the focused offline Codex launcher suite with `make test-launcher`; see
 `docs/launcher-testing.md` for its black-box fixture and fake-command architecture.
+Run the focused offline Claude exploration runtime suite with
+`make test-claude-runtime`.
 
 ## Further Documentation
 
@@ -303,6 +311,7 @@ See also:
 - `framework.yml` for machine-readable framework metadata
 - `docs/validation.md` for framework self-validation
 - `docs/launcher-testing.md` for the offline baseline launcher test architecture
+- [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md) for installation, policy, threat model, and smoke testing
 - `adapters/README.md` for adapter taxonomy and composition guidance
 - `prompts/greenfield-bootstrap.md` for greenfield framework adoption
 - `prompts/existing-repo-audit.md` for existing repository assessment

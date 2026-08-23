@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+runtime_root = File.expand_path("..", __dir__)
+require File.join(runtime_root, "lib", "claude_explore")
+
+begin
+  exit ClaudeExplore::Runtime.new(runtime_root: runtime_root).run(ARGV)
+rescue ClaudeExplore::Error => e
+  warn "claude-explore: #{e.message}"
+  exit 1
+end

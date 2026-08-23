@@ -1,0 +1,181 @@
+schema_version: 1
+runtime:
+  id: claude-explore
+  version: 1
+  minimum_claude_version: "2.1.224"
+native_controls:
+  sandbox:
+    enabled: true
+    fail_if_unavailable: true
+    allow_unsandboxed_commands: false
+  disable_all_hooks: true
+  disable_artifact: true
+  deny_mcp_tools: true
+environment:
+  unset:
+    - GITHUB_TOKEN
+    - GH_TOKEN
+    - GH_ENTERPRISE_TOKEN
+    - GITHUB_ENTERPRISE_TOKEN
+    - SSH_AUTH_SOCK
+    - SSH_AGENT_PID
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_SESSION_TOKEN
+    - AWS_SECURITY_TOKEN
+    - AWS_PROFILE
+    - AWS_DEFAULT_PROFILE
+    - AWS_SHARED_CREDENTIALS_FILE
+    - AWS_CONFIG_FILE
+    - AWS_WEB_IDENTITY_TOKEN_FILE
+    - AWS_ROLE_ARN
+    - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+    - AWS_CONTAINER_CREDENTIALS_FULL_URI
+    - GOOGLE_APPLICATION_CREDENTIALS
+    - CLOUDSDK_AUTH_ACCESS_TOKEN
+    - AZURE_CLIENT_ID
+    - AZURE_CLIENT_SECRET
+    - AZURE_TENANT_ID
+    - AZURE_SUBSCRIPTION_ID
+    - ARM_CLIENT_ID
+    - ARM_CLIENT_SECRET
+    - ARM_TENANT_ID
+    - ARM_SUBSCRIPTION_ID
+    - KUBECONFIG
+    - TF_CLI_CONFIG_FILE
+    - VERCEL_TOKEN
+    - NETLIFY_AUTH_TOKEN
+    - HEROKU_API_KEY
+    - FLY_API_TOKEN
+    - DATABASE_URL
+    - REDIS_URL
+    - PGHOST
+    - PGHOSTADDR
+    - PGPORT
+    - PGDATABASE
+    - PGUSER
+    - PGPASSWORD
+    - PGPASSFILE
+    - PGSERVICE
+    - PGSERVICEFILE
+    - MYSQL_PWD
+    - MONGODB_URI
+    - NPM_TOKEN
+    - NODE_AUTH_TOKEN
+    - GEM_HOST_API_KEY
+    - PYPI_TOKEN
+  set:
+    GIT_TERMINAL_PROMPT: "0"
+    GCM_INTERACTIVE: never
+    AWS_EC2_METADATA_DISABLED: "true"
+credential_files:
+  deny_read:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.azure
+    - ~/.config/gcloud
+    - ~/.kube
+    - ~/.config/gh
+    - ~/.git-credentials
+    - ~/.netrc
+    - ~/.docker/config.json
+    - ~/.npmrc
+    - ~/.pypirc
+    - ~/.gem/credentials
+commands:
+  denied_exit_status: 126
+  blocked:
+    github:
+      rule: github.all
+      reason: GitHub CLI access is not permitted in explore mode
+      executables: [gh]
+    cloud:
+      rule: cloud.all
+      reason: cloud-provider commands are not permitted in explore mode
+      executables: [aws, gcloud, az]
+    infrastructure:
+      rule: infrastructure.all
+      reason: infrastructure and secrets commands are not permitted in explore mode
+      executables: [kubectl, helm, terraform, tofu, pulumi, packer, vault, nomad, consul]
+    deployment:
+      rule: deployment.all
+      reason: hosting and deployment commands are not permitted in explore mode
+      executables: [heroku, vercel, netlify, fly, flyctl]
+    remote-shell:
+      rule: remote-shell.all
+      reason: remote shell and file-transfer commands are not permitted in explore mode
+      executables: [ssh, scp, sftp]
+    container:
+      rule: container.all
+      reason: container and host-control commands are not permitted in explore mode
+      executables: [docker, docker-compose, podman, podman-compose]
+    database:
+      rule: database.direct-client
+      reason: direct shared database and cache clients are not permitted in explore mode
+      executables: [mysql, mariadb, redis-cli, mongo, mongosh]
+  git:
+    allowed_local:
+      - add
+      - apply
+      - bisect
+      - blame
+      - cat-file
+      - checkout
+      - cherry-pick
+      - commit
+      - describe
+      - diff
+      - diff-tree
+      - for-each-ref
+      - grep
+      - init
+      - log
+      - merge
+      - merge-base
+      - mv
+      - name-rev
+      - rebase
+      - reflog
+      - reset
+      - restore
+      - rev-list
+      - rev-parse
+      - rm
+      - shortlog
+      - show
+      - show-ref
+      - stash
+      - status
+      - switch
+      - worktree
+    blocked_remote: [push, fetch, pull, clone, ls-remote, credential, credential-cache, credential-store, send-email, imap-send]
+    rules:
+      allowed: git.local-operation
+      remote_mutation: git.remote-mutation
+      upstream_mutation: git.upstream-mutation
+      remote_configuration: git.remote-configuration
+      config_mutation: git.config-mutation
+      tag_mutation: git.tag-mutation
+      submodule_network: git.submodule-network
+      unclassified: git.unclassified
+    reasons:
+      remote_mutation: remote Git operations are not permitted in explore mode
+      upstream_mutation: Git upstream configuration is not permitted in explore mode
+      remote_configuration: remote mutation and network-capable queries are not permitted
+      config_mutation: only explicit read-oriented Git configuration operations are permitted
+      tag_mutation: tag creation, deletion, signing, and replacement are not permitted
+      submodule_network: network-capable and unclassified submodule operations are not permitted
+      unclassified: unclassified Git operations are not permitted
+  psql:
+    local_hosts: [localhost, "127.0.0.1", "::1"]
+    rules:
+      allowed: psql.local-connection
+      remote: psql.remote-connection
+      ambiguous: psql.ambiguous-connection
+    reasons:
+      remote: only deterministic local PostgreSQL connections are permitted
+      ambiguous: only deterministic local PostgreSQL connections are permitted
+diagnostics:
+  blocked_identifier: CLAUDE_EXPLORE_BLOCKED
+  classification_identifier: CLAUDE_EXPLORE_CLASSIFICATION
+  next_action: report the blocked operation for human-controlled follow-up

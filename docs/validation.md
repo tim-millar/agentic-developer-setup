@@ -1,6 +1,6 @@
 # Framework self-validation
 
-This repository validates its own schema-v1 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository.
+This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository.
 
 The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
@@ -34,7 +34,7 @@ The public validator entrypoint is `scripts/validate_framework.rb`. It resolves 
 
 Validation has three distinct responsibilities:
 
-1. **Schema and type validation** checks schema version 1, required and unknown fields, exact object shapes, scalar and collection types, non-empty values, closed status values, and uniqueness rules.
+1. **Schema and type validation** checks schema version 2, required and unknown fields, exact object shapes, scalar and collection types, non-empty values, closed status values, and uniqueness rules. Schema version 1 is no longer a live alternative and fails with an unsupported-version diagnostic.
 2. **Semantic and cross-reference validation** checks declared relationships among baseline artefacts, supported runtimes, issue templates, adoption tiers, and adapter taxonomy entries.
 3. **Filesystem and repository-structure validation** checks repository-local source paths, supported implementations, symlink containment, and the minimum root structure required to interpret and operate the framework.
 
@@ -54,15 +54,15 @@ The root self-hosted harness and the distributable baseline are separate layers:
 - `baseline/AGENTS.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
 
-The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts.
+The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts. Repository-distributed runtime artefacts require target paths and retain their baseline cross-references. Global-user runtime artefacts have repository source paths but no artificial adopted-repository target paths.
 
-Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. The same supported-versus-planned distinction applies to runtime implementation metadata as defined by schema version 1.
+Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported coding-agent runtime source artefacts must exist; planned runtime entries remain descriptive.
 
 ## Extending validation
 
 When adding a schema field:
 
-1. update `framework.yml` and the explicit schema-v1 shape in `scripts/validate_framework.rb` together;
+1. update `framework.yml` and the explicit schema-v2 shape in `scripts/validate_framework.rb` together;
 2. decide whether the field is descriptive or a concrete source or target path;
 3. document any new type, closed set, uniqueness rule, or relationship;
 4. add focused valid and invalid fixture scenarios in `test/framework_validation_test.rb`;
@@ -76,13 +76,13 @@ Each test scenario should mutate or remove only the minimum fixture state needed
 
 ## Intentional exclusions
 
-Schema version 1 deliberately does not validate these incidental or future relationships:
+Schema version 2 deliberately does not validate these incidental or future relationships:
 
 - prompt IDs do not need to equal usage-mode IDs;
 - adoption tiers do not need disjoint artefact sets;
 - baseline categories are not a globally closed enum;
 - planned adapter directories do not need to exist;
-- planned runtimes do not declare launcher or prompt implementations;
+- planned runtimes do not declare implementation artefacts;
 - descriptive `path_conventions` values are not concrete paths;
 - conventional Make target strings are not checked against root or baseline Makefiles;
 - documentation links and file contents are not checked;

@@ -130,7 +130,9 @@ This repository's own command and validation contract is documented in [`docs/va
 
 Agent runtimes are tool-specific integrations because tools differ in interfaces, prompt handling, credential models, process lifecycles, and security properties. They are not assumed to be interchangeable.
 
-[`framework.yml`](../framework.yml) currently declares Codex as the supported public runtime. Claude Code is planned and must not be treated as supported runtime behaviour. At an architectural level, the public Codex launcher implements:
+[`framework.yml`](../framework.yml) declares two supported coding-agent runtimes. Codex is repository-distributed and serves deterministic implementation workflows. The global-user [`claude-explore`](runtimes/claude-explore.md) runtime launches the developer's existing Claude Code client for supervised exploration with reduced ambient authority. Neither runtime is an environment adapter, and `claude-explore` does not pre-empt adapter composition or organisational governance contracts.
+
+At an architectural level, the public Codex launcher implements:
 
 - repository-root discovery and expected repository identity checking;
 - assembly of repository instructions, session metadata, and optional task context;

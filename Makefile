@@ -12,6 +12,10 @@ test:
 test-launcher:
 	ruby -Itest test/launcher_test.rb
 
+.PHONY: test-claude-runtime
+test-claude-runtime:
+	ruby -Itest test/claude_explore_runtime_test.rb
+
 .PHONY: check
 check:
 	$(MAKE) test

@@ -76,13 +76,13 @@ class FrameworkValidationTest < Minitest::Test
   def test_root_prompt_does_not_replace_missing_runtime_baseline_prompt
     FileUtils.rm(File.join(@fixture_root, "baseline/docs/AGENT_PROMPT.txt"))
 
-    assert_fails("agent_runtimes.supported[codex].prompt.source_path", "baseline/docs/AGENT_PROMPT.txt")
+    assert_fails("agent_runtimes.supported[codex].artefacts[1].source_path", "baseline/docs/AGENT_PROMPT.txt")
   end
 
   def test_root_launcher_does_not_replace_missing_runtime_baseline_launcher
     FileUtils.rm(File.join(@fixture_root, "baseline/scripts/run_codex.sh"))
 
-    assert_fails("agent_runtimes.supported[codex].launcher.source_path", "baseline/scripts/run_codex.sh")
+    assert_fails("agent_runtimes.supported[codex].artefacts[0].source_path", "baseline/scripts/run_codex.sh")
   end
 
   def test_missing_required_top_level_section_fails
@@ -98,9 +98,9 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_unsupported_schema_version_fails
-    mutate { |metadata| metadata["schema_version"] = 2 }
+    mutate { |metadata| metadata["schema_version"] = 1 }
 
-    assert_fails("unsupported schema version", "expected: 1")
+    assert_fails("unsupported schema version", "expected: 2")
   end
 
   def test_missing_required_nested_field_fails
@@ -171,6 +171,89 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("unsupported runtime status", "expected: planned")
   end
 
+  def test_empty_planned_runtime_collection_is_valid
+    mutate { |metadata| metadata["agent_runtimes"]["planned"] = [] }
+
+    assert_passes("empty planned runtime collection")
+  end
+
+  def test_invalid_runtime_version_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["runtime_version"] = 0 }
+
+    assert_fails("runtime_version: expected a positive integer")
+  end
+
+  def test_invalid_runtime_distribution_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["distribution"] = "system" }
+
+    assert_fails("distribution: unsupported value")
+  end
+
+  def test_invalid_runtime_artefact_role_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["artefacts"].first["role"] = "binary" }
+
+    assert_fails("role: unsupported value")
+  end
+
+  def test_duplicate_runtime_artefact_role_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["artefacts"][1]["role"] = "launcher" }
+
+    assert_fails("duplicate artefact role: launcher")
+  end
+
+  def test_repository_runtime_requires_target_path
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["artefacts"].first.delete("target_path") }
+
+    assert_fails("artefacts[0].target_path: missing required field")
+  end
+
+  def test_global_user_runtime_rejects_target_path
+    add_claude_runtime
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].last["artefacts"].first["target_path"] = "bin/claude-explore" }
+
+    assert_fails("target_path: unknown field")
+  end
+
+  def test_missing_runtime_source_artefact_fails
+    add_claude_runtime(source_path: "agent-runtimes/claude-explore/missing")
+
+    assert_fails("file does not exist: agent-runtimes/claude-explore/missing")
+  end
+
+  def test_invalid_runtime_platform_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["supported_platforms"] << "windows" }
+
+    assert_fails("unsupported value: \"windows\"")
+  end
+
+  def test_duplicate_runtime_capability_fails
+    mutate do |metadata|
+      capability = metadata["agent_runtimes"]["supported"].first["capabilities"].first
+      metadata["agent_runtimes"]["supported"].first["capabilities"] << capability
+    end
+
+    assert_fails("duplicate value: repository work")
+  end
+
+  def test_invalid_runtime_configuration_type_fails
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["configuration"] = {"type" => "other"} }
+
+    assert_fails("unsupported configuration type")
+  end
+
+  def test_valid_claude_runtime_configuration_passes
+    add_claude_runtime
+
+    assert_passes("valid Claude runtime configuration")
+  end
+
+  def test_invalid_claude_runtime_configuration_fails
+    add_claude_runtime
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].last["configuration"]["minimum_client_version"] = "2.0.0" }
+
+    assert_fails("unsupported minimum client version", "expected: 2.1.224")
+  end
+
   def test_unsupported_adapter_status_fails
     mutate { |metadata| metadata["adapters"]["available"].first["status"] = "experimental" }
 
@@ -178,14 +261,14 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_unsupported_runtime_access_mode_fails
-    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["access_modes"] << "ssh" }
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["configuration"]["access_modes"] << "ssh" }
 
     assert_fails("unsupported value: \"ssh\"", "expected one of: disabled, app")
   end
 
   def test_unsupported_origin_scheme_fails
     mutate do |metadata|
-      metadata["agent_runtimes"]["supported"].first["repository_identity"]["origin_remote_scheme"] = "ssh"
+      metadata["agent_runtimes"]["supported"].first["configuration"]["repository_identity"]["origin_remote_scheme"] = "ssh"
     end
 
     assert_fails("unsupported origin scheme", "expected: https")
@@ -225,8 +308,8 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("duplicate value: bin/codex")
   end
 
-  def test_duplicate_runtime_name_across_supported_and_planned_fails
-    mutate { |metadata| metadata["agent_runtimes"]["planned"].first["name"] = "codex" }
+  def test_duplicate_runtime_id_across_supported_and_planned_fails
+    mutate { |metadata| metadata["agent_runtimes"]["planned"].first["id"] = "codex" }
 
     assert_fails("duplicate value: codex")
   end
@@ -259,7 +342,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_duplicate_access_mode_fails
-    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["access_modes"] << "app" }
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["configuration"]["access_modes"] << "app" }
 
     assert_fails("duplicate value: app")
   end
@@ -285,7 +368,7 @@ class FrameworkValidationTest < Minitest::Test
   def test_missing_supported_runtime_launcher_fails
     FileUtils.rm(File.join(@fixture_root, "baseline/scripts/run_codex.sh"))
 
-    assert_fails("agent_runtimes.supported[codex].launcher.source_path", "file does not exist")
+    assert_fails("agent_runtimes.supported[codex].artefacts[0].source_path", "file does not exist")
   end
 
   def test_missing_issue_template_source_fails
@@ -418,21 +501,21 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_runtime_launcher_pair_must_match_baseline
-    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["launcher"]["target_path"] = "bin/other" }
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["artefacts"][0]["target_path"] = "bin/other" }
 
-    assert_fails("launcher: source_path/target_path pair does not match a baseline artefact")
+    assert_fails("artefacts[0]: source_path/target_path pair does not match a baseline artefact")
   end
 
   def test_runtime_launcher_baseline_category_must_match
     mutate { |metadata| metadata["baseline"]["required"].first["category"] = "command-surface" }
 
-    assert_fails("launcher.category", "expected: agent-launcher")
+    assert_fails("artefacts[0].category", "expected: agent-launcher")
   end
 
   def test_runtime_prompt_pair_must_match_baseline
-    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["prompt"]["target_path"] = "docs/OTHER.txt" }
+    mutate { |metadata| metadata["agent_runtimes"]["supported"].first["artefacts"][1]["target_path"] = "docs/OTHER.txt" }
 
-    assert_fails("prompt: source_path/target_path pair does not match a baseline artefact")
+    assert_fails("artefacts[1]: source_path/target_path pair does not match a baseline artefact")
   end
 
   def test_issue_template_pair_must_match_baseline
@@ -509,7 +592,7 @@ class FrameworkValidationTest < Minitest::Test
 
   def valid_metadata
     {
-      "schema_version" => 1,
+      "schema_version" => 2,
       "framework" => {
         "name" => "fixture-framework",
         "framework_version" => "1.0.0",
@@ -525,7 +608,7 @@ class FrameworkValidationTest < Minitest::Test
       ],
       "path_conventions" => {
         "baseline" => {"source_path" => "Framework source path.", "target_path" => "Adopted target path."},
-        "agent_runtimes" => {"launcher" => {"source_path" => "Runtime source.", "target_path" => "Runtime target."}},
+        "agent_runtimes" => {"source_path" => "Runtime source.", "target_path" => "Optional runtime target."},
         "adapters" => {"path" => "Adapter implementation path."},
         "prompts" => {"path" => "Reusable prompt path."}
       },
@@ -543,24 +626,36 @@ class FrameworkValidationTest < Minitest::Test
         "philosophy" => "Runtime-specific launchers.",
         "supported" => [
           {
-            "name" => "codex",
+            "id" => "codex",
+            "display_name" => "Codex",
             "status" => "supported",
-            "launcher" => {"source_path" => "baseline/scripts/run_codex.sh", "target_path" => "bin/codex"},
-            "prompt" => {"source_path" => "baseline/docs/AGENT_PROMPT.txt", "target_path" => "target/docs/AGENT_PROMPT.txt"},
-            "access_modes" => ["disabled", "app"],
-            "repository_identity" => {
-              "origin_remote_required" => true,
-              "origin_remote_scheme" => "https",
-              "expected_owner_env" => "EXPECTED_OWNER",
-              "expected_owner_default" => "example",
-              "expected_repo_env" => "EXPECTED_REPO",
-              "expected_repo_default" => "repository"
-            },
-            "description" => "Supported fixture runtime."
+            "runtime_version" => 1,
+            "distribution" => "repository",
+            "description" => "Supported fixture runtime.",
+            "artefacts" => [
+              {"role" => "launcher", "source_path" => "baseline/scripts/run_codex.sh", "target_path" => "bin/codex"},
+              {"role" => "prompt", "source_path" => "baseline/docs/AGENT_PROMPT.txt", "target_path" => "target/docs/AGENT_PROMPT.txt"}
+            ],
+            "supported_platforms" => ["macos", "linux"],
+            "required_executables" => [],
+            "capabilities" => ["repository work"],
+            "limitations" => ["fixture limitation"],
+            "configuration" => {
+              "type" => "codex",
+              "access_modes" => ["disabled", "app"],
+              "repository_identity" => {
+                "origin_remote_required" => true,
+                "origin_remote_scheme" => "https",
+                "expected_owner_env" => "EXPECTED_OWNER",
+                "expected_owner_default" => "example",
+                "expected_repo_env" => "EXPECTED_REPO",
+                "expected_repo_default" => "repository"
+              }
+            }
           }
         ],
         "planned" => [
-          {"name" => "future-agent", "status" => "planned", "description" => "Planned fixture runtime."}
+          {"id" => "future-agent", "display_name" => "Future Agent", "status" => "planned", "description" => "Planned fixture runtime."}
         ]
       },
       "adoption_tiers" => [
@@ -613,6 +708,30 @@ class FrameworkValidationTest < Minitest::Test
       "target_path" => target_path,
       "description" => "Fixture baseline artefact."
     }
+  end
+
+  def add_claude_runtime(source_path: "agent-runtimes/claude-explore/bin/claude-explore")
+    write_file("agent-runtimes/claude-explore/bin/claude-explore") if source_path.end_with?("bin/claude-explore")
+    mutate do |metadata|
+      metadata["agent_runtimes"]["supported"] << {
+        "id" => "claude-explore",
+        "display_name" => "Claude Code Explore",
+        "status" => "supported",
+        "runtime_version" => 1,
+        "distribution" => "global-user",
+        "description" => "Reduced-authority exploration runtime.",
+        "artefacts" => [{"role" => "launcher", "source_path" => source_path}],
+        "supported_platforms" => ["macos", "linux"],
+        "required_executables" => [{"name" => "ruby", "minimum_version" => "3.3"}],
+        "capabilities" => ["local exploration"],
+        "limitations" => ["not a hostile-code sandbox"],
+        "configuration" => {
+          "type" => "claude-explore",
+          "policy_schema_version" => 1,
+          "minimum_client_version" => "2.1.224"
+        }
+      }
+    end
   end
 
   def mutate

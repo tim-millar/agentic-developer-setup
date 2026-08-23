@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 framework:
   name: agent-development-framework
   framework_version: 0.1.0
@@ -50,9 +50,8 @@ path_conventions:
     source_path: Path inside this framework source repository.
     target_path: Intended path inside an instantiated target repository.
   agent_runtimes:
-    launcher:
-      source_path: Launcher path inside this framework source repository.
-      target_path: Intended launcher path inside an instantiated target repository.
+    source_path: Runtime artefact path inside this framework source repository.
+    target_path: Optional adopted-repository path for repository-distributed runtime artefacts; absent for global-user runtimes.
   adapters:
     path: Path inside this framework source repository.
   prompts:
@@ -182,34 +181,84 @@ agent_runtimes:
     and operational constraints.
 
   supported:
-    - name: codex
+    - id: codex
+      display_name: Codex
       status: supported
-      launcher:
-        source_path: baseline/scripts/run_codex.sh
-        target_path: scripts/run_codex.sh
-      prompt:
-        source_path: baseline/docs/AGENT_PROMPT.txt
-        target_path: docs/AGENT_PROMPT.txt
-      access_modes:
-        - disabled
-        - app
-      repository_identity:
-        origin_remote_required: true
-        origin_remote_scheme: https
-        expected_owner_env: EXPECTED_OWNER
-        expected_owner_default: tim-millar
-        expected_repo_env: EXPECTED_REPO
-        expected_repo_default: target repository directory name
+      runtime_version: 1
+      distribution: repository
       description: >
         Codex-first local agent runtime for deterministic implementation tasks,
         repository-scoped execution, prompt assembly, and optional GitHub App access.
+      artefacts:
+        - role: launcher
+          source_path: baseline/scripts/run_codex.sh
+          target_path: scripts/run_codex.sh
+        - role: prompt
+          source_path: baseline/docs/AGENT_PROMPT.txt
+          target_path: docs/AGENT_PROMPT.txt
+      supported_platforms:
+        - macos
+        - linux
+      required_executables: []
+      capabilities:
+        - deterministic repository implementation
+        - repository-scoped execution
+        - optional GitHub App access
+      limitations:
+        - requires repository-owned workflow configuration
+      configuration:
+        type: codex
+        access_modes:
+          - disabled
+          - app
+        repository_identity:
+          origin_remote_required: true
+          origin_remote_scheme: https
+          expected_owner_env: EXPECTED_OWNER
+          expected_owner_default: tim-millar
+          expected_repo_env: EXPECTED_REPO
+          expected_repo_default: target repository directory name
 
-  planned:
-    - name: claude-code
-      status: planned
+    - id: claude-explore
+      display_name: Claude Code Explore
+      status: supported
+      runtime_version: 1
+      distribution: global-user
       description: >
-        Potential future runtime for exploratory development workflows. Expected
-        to require distinct operating constraints and separate safety guidance.
+        Globally installed Claude Code runtime for supervised exploratory engineering
+        with deliberately reduced ambient authority.
+      artefacts:
+        - role: launcher
+          source_path: agent-runtimes/claude-explore/bin/claude-explore
+        - role: installer
+          source_path: agent-runtimes/claude-explore/install.rb
+        - role: policy
+          source_path: agent-runtimes/claude-explore/policy.yml
+      supported_platforms:
+        - macos
+        - linux
+      required_executables:
+        - name: ruby
+          minimum_version: "3.3"
+        - name: claude
+          minimum_version: "2.1.224"
+      capabilities:
+        - local repository exploration
+        - local working-tree modification
+        - local validation
+        - local commits
+        - reduced ambient authority
+      limitations:
+        - not a hostile-code sandbox
+        - no Docker execution
+        - no GitHub CLI access
+        - no remote Git operations
+      configuration:
+        type: claude-explore
+        policy_schema_version: 1
+        minimum_client_version: "2.1.224"
+
+  planned: []
 
 adoption_tiers:
   - id: tier-1
