@@ -130,7 +130,7 @@ This repository's own command and validation contract is documented in [`docs/va
 
 Agent runtimes are tool-specific integrations because tools differ in interfaces, prompt handling, credential models, process lifecycles, and security properties. They are not assumed to be interchangeable.
 
-[`framework.yml`](../framework.yml) currently declares Codex as the supported public runtime. Claude Code is planned and must not be treated as supported runtime behaviour. At an architectural level, the public Codex launcher implements:
+[`framework.yml`](../framework.yml) declares two supported public runtimes with different distribution and authority boundaries. Codex is repository-distributed. Claude Code Explore is global-user infrastructure and has no target-repository artefacts. At an architectural level, the public Codex launcher implements:
 
 - repository-root discovery and expected repository identity checking;
 - assembly of repository instructions, session metadata, and optional task context;
@@ -147,6 +147,10 @@ For this framework source repository, [`scripts/run_codex.sh`](../scripts/run_co
 Launcher-managed renewal combines a proactive 45-minute cadence with bounded on-demand recovery for stale App-mode authority. Wall-clock metadata makes suspend-equivalent age observable. The child-visible helper can ask the still-running launcher worker to ensure freshness or, after a clear authentication failure, force one replacement attempt; it cannot mint independently. Git uses the same freshness-aware path through askpass, while `gh` and direct API policy require helper-derived credentials. App ID, installation selection, private-key material, and App JWTs remain launcher/worker-only, and repository and permission scope do not change.
 
 This lifecycle is bounded rather than a guarantee of perpetual GitHub availability. A synchronous request waits at most 40 seconds and does not follow the worker into its 5-minute background retry. Invalid App configuration, unavailable GitHub service, revoked authority, permission failures, launcher termination, or repeated renewal failure can still leave GitHub work unavailable while local Codex work continues. The boundary minimises inherited credentials for cooperating same-user processes; it is not adversarial operating-system isolation.
+
+The separate [`claude-explore`](runtimes/claude-explore.md) runtime launches an existing user-installed Claude Code client for supervised exploration. Its trusted `/bin/sh` bootstrap enters Bash 3.2-compatible policy code with startup injection disabled. The runtime records Claude's stable launcher, re-resolves updater changes on every invocation, requires native sandbox failure to be fatal, removes selected credentials, supplies an empty strict MCP configuration, classifies Claude startup arguments, and prepends guarded Git, PostgreSQL, publication, cloud, infrastructure, deployment, container, and database commands. Its source is under `agent-runtimes/`, not `baseline/` or the adapter taxonomy, because it governs the coding-agent process rather than repository enablement or application execution.
+
+This boundary reduces common ambient-authority paths; it is not a VM, container, hostile-code boundary, or same-user isolation mechanism. Absolute command paths, unclassified equivalent tools, sandbox-permitted networking, application-mediated services, managed Claude settings, Claude authentication, OS credential stores, and deliberately evasive same-user processes remain residual risks.
 
 ## Human review boundary
 

@@ -12,6 +12,9 @@ class FrameworkValidator
   ].freeze
   ACCESS_MODES = %w[disabled app].freeze
   ADAPTER_STATUSES = %w[supported planned].freeze
+  RUNTIME_DISTRIBUTIONS = %w[repository global-user].freeze
+  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy].freeze
+  RUNTIME_PLATFORMS = %w[macos linux].freeze
 
   def initialize(root)
     @root = Pathname.new(root).expand_path
@@ -79,7 +82,7 @@ class FrameworkValidator
     location = "framework.yml: schema_version"
     return unless integer(value, location)
 
-    error(location, "unsupported schema version: #{value.inspect}; expected: 1") unless value == 1
+    error(location, "unsupported schema version: #{value.inspect}; expected: 2") unless value == 2
   end
 
   def validate_framework(value)
@@ -127,10 +130,7 @@ class FrameworkValidator
 
     validate_leaf_mapping(value["baseline"], "#{location}.baseline", %w[source_path target_path])
 
-    runtimes = value["agent_runtimes"]
-    if controlled_mapping(runtimes, "#{location}.agent_runtimes", ["launcher"])
-      validate_leaf_mapping(runtimes["launcher"], "#{location}.agent_runtimes.launcher", %w[source_path target_path])
-    end
+    validate_leaf_mapping(value["agent_runtimes"], "#{location}.agent_runtimes", %w[source_path target_path])
     validate_leaf_mapping(value["adapters"], "#{location}.adapters", ["path"])
     validate_leaf_mapping(value["prompts"], "#{location}.prompts", ["path"])
   end
@@ -183,55 +183,120 @@ class FrameworkValidator
     string(value["philosophy"], "#{location}.philosophy")
     supported_valid = sequence(value["supported"], "#{location}.supported")
     planned_valid = sequence(value["planned"], "#{location}.planned")
-    names = []
+    ids = []
 
     if supported_valid
       value["supported"].each_with_index do |runtime, index|
         item_location = runtime_location("supported", runtime, index)
         validate_supported_runtime(runtime, item_location)
-        names << [runtime["name"], "framework.yml: #{item_location}.name"] if runtime.is_a?(Hash)
+        ids << [runtime["id"], "framework.yml: #{item_location}.id"] if runtime.is_a?(Hash)
       end
     end
     if planned_valid
       value["planned"].each_with_index do |runtime, index|
         item_location = runtime_location("planned", runtime, index)
         validate_planned_runtime(runtime, item_location)
-        names << [runtime["name"], "framework.yml: #{item_location}.name"] if runtime.is_a?(Hash)
+        ids << [runtime["id"], "framework.yml: #{item_location}.id"] if runtime.is_a?(Hash)
       end
     end
-    validate_unique(names)
+    validate_unique(ids)
   end
 
   def validate_supported_runtime(runtime, item_location)
-    fields = %w[name status launcher prompt access_modes repository_identity description]
+    fields = %w[id display_name status runtime_version distribution description artefacts supported_platforms required_executables capabilities limitations configuration]
     location = "framework.yml: #{item_location}"
     return unless controlled_mapping(runtime, location, fields)
 
-    %w[name status description].each { |field| string(runtime[field], "#{location}.#{field}") }
+    %w[id display_name status distribution description].each { |field| string(runtime[field], "#{location}.#{field}") }
+    integer(runtime["runtime_version"], "#{location}.runtime_version")
+    if runtime["runtime_version"].is_a?(Integer) && runtime["runtime_version"] < 1
+      error("#{location}.runtime_version", "expected a positive integer")
+    end
     if runtime["status"].is_a?(String) && runtime["status"] != "supported"
       error("#{location}.status", "unsupported runtime status: #{runtime['status'].inspect}; expected: supported")
     end
-    validate_path_pair(runtime["launcher"], "#{location}.launcher")
-    validate_path_pair(runtime["prompt"], "#{location}.prompt")
-    string_sequence(runtime["access_modes"], "#{location}.access_modes", non_empty: true, allowed: ACCESS_MODES)
-    validate_repository_identity(runtime["repository_identity"], "#{location}.repository_identity")
+    if runtime["distribution"].is_a?(String) && !RUNTIME_DISTRIBUTIONS.include?(runtime["distribution"])
+      error("#{location}.distribution", "unsupported distribution: #{runtime['distribution'].inspect}; expected one of: #{RUNTIME_DISTRIBUTIONS.join(', ')}")
+    end
+    validate_runtime_artefacts(runtime["artefacts"], "#{location}.artefacts", runtime["distribution"])
+    string_sequence(runtime["supported_platforms"], "#{location}.supported_platforms", non_empty: true, allowed: RUNTIME_PLATFORMS)
+    validate_required_executables(runtime["required_executables"], "#{location}.required_executables")
+    string_sequence(runtime["capabilities"], "#{location}.capabilities", non_empty: true)
+    string_sequence(runtime["limitations"], "#{location}.limitations", non_empty: true)
+    validate_runtime_configuration(runtime["configuration"], "#{location}.configuration")
   end
 
   def validate_planned_runtime(runtime, item_location)
     location = "framework.yml: #{item_location}"
-    return unless controlled_mapping(runtime, location, %w[name status description])
+    return unless controlled_mapping(runtime, location, %w[id display_name status description])
 
-    %w[name status description].each { |field| string(runtime[field], "#{location}.#{field}") }
+    %w[id display_name status description].each { |field| string(runtime[field], "#{location}.#{field}") }
     if runtime["status"].is_a?(String) && runtime["status"] != "planned"
       error("#{location}.status", "unsupported runtime status: #{runtime['status'].inspect}; expected: planned")
     end
   end
 
-  def validate_path_pair(value, location)
-    return unless controlled_mapping(value, location, %w[source_path target_path])
+  def validate_runtime_artefacts(value, location, distribution)
+    return unless sequence(value, location, non_empty: true)
 
-    string(value["source_path"], "#{location}.source_path")
-    string(value["target_path"], "#{location}.target_path")
+    roles = []
+    value.each_with_index do |artefact, index|
+      item_location = "#{location}[#{index}]"
+      next unless mapping(artefact, item_location)
+
+      expected = distribution == "global-user" ? %w[role source_path] : %w[role source_path target_path]
+      next unless controlled_mapping(artefact, item_location, expected)
+
+      string(artefact["role"], "#{item_location}.role")
+      string(artefact["source_path"], "#{item_location}.source_path")
+      string(artefact["target_path"], "#{item_location}.target_path") if expected.include?("target_path")
+      if artefact["role"].is_a?(String) && !RUNTIME_ARTEFACT_ROLES.include?(artefact["role"])
+        error("#{item_location}.role", "unsupported artefact role: #{artefact['role'].inspect}; expected one of: #{RUNTIME_ARTEFACT_ROLES.join(', ')}")
+      end
+      roles << [artefact["role"], "#{item_location}.role"]
+    end
+    validate_unique(roles, label: "role")
+  end
+
+  def validate_required_executables(value, location)
+    return unless sequence(value, location, non_empty: true)
+
+    names = []
+    value.each_with_index do |entry, index|
+      item_location = "#{location}[#{index}]"
+      next unless controlled_mapping_with_optional(entry, item_location, ["name"], ["minimum_version"])
+
+      string(entry["name"], "#{item_location}.name")
+      string(entry["minimum_version"], "#{item_location}.minimum_version") if entry.key?("minimum_version")
+      names << [entry["name"], "#{item_location}.name"]
+    end
+    validate_unique(names)
+  end
+
+  def validate_runtime_configuration(value, location)
+    return unless mapping(value, location)
+
+    type = value["type"]
+    case type
+    when "codex"
+      return unless controlled_mapping(value, location, %w[type access_modes repository_identity])
+      string(type, "#{location}.type")
+      string_sequence(value["access_modes"], "#{location}.access_modes", non_empty: true, allowed: ACCESS_MODES)
+      validate_repository_identity(value["repository_identity"], "#{location}.repository_identity")
+    when "claude-explore"
+      return unless controlled_mapping(value, location, %w[type policy_schema_version minimum_client_version])
+      string(type, "#{location}.type")
+      integer(value["policy_schema_version"], "#{location}.policy_schema_version")
+      string(value["minimum_client_version"], "#{location}.minimum_client_version")
+      error("#{location}.policy_schema_version", "unsupported policy schema version; expected: 1") if value["policy_schema_version"].is_a?(Integer) && value["policy_schema_version"] != 1
+      if value["minimum_client_version"].is_a?(String) && value["minimum_client_version"] != "2.1.224"
+        error("#{location}.minimum_client_version", "unsupported minimum client version; expected: 2.1.224")
+      end
+    else
+      controlled_mapping(value, location, ["type"])
+      string(type, "#{location}.type")
+      error("#{location}.type", "unsupported configuration type: #{type.inspect}") if type.is_a?(String)
+    end
   end
 
   def validate_repository_identity(value, location)
@@ -404,8 +469,15 @@ class FrameworkValidator
       next unless runtime.is_a?(Hash)
 
       item_location = runtime_location("supported", runtime, index)
-      validate_baseline_pair_reference(runtime["launcher"], baseline, "framework.yml: #{item_location}.launcher", "agent-launcher")
-      validate_baseline_pair_reference(runtime["prompt"], baseline, "framework.yml: #{item_location}.prompt", "agent-session-brief")
+      next unless runtime["distribution"] == "repository" && runtime["artefacts"].is_a?(Array)
+
+      runtime["artefacts"].each_with_index do |artefact, artefact_index|
+        next unless artefact.is_a?(Hash)
+        expected_category = {"launcher" => "agent-launcher", "prompt" => "agent-session-brief"}[artefact["role"]]
+        next unless expected_category
+
+        validate_baseline_pair_reference(artefact, baseline, "framework.yml: #{item_location}.artefacts[#{artefact_index}]", expected_category)
+      end
     end
   end
 
@@ -518,12 +590,13 @@ class FrameworkValidator
       next unless runtime.is_a?(Hash)
 
       item_location = runtime_location("supported", runtime, index)
-      %w[launcher prompt].each do |kind|
-        pair = runtime[kind]
-        next unless pair.is_a?(Hash)
+      next unless runtime["artefacts"].is_a?(Array)
+      runtime["artefacts"].each_with_index do |artefact, artefact_index|
+        next unless artefact.is_a?(Hash)
 
-        validate_source_file(pair["source_path"], "framework.yml: #{item_location}.#{kind}.source_path")
-        validate_target_path(pair["target_path"], "framework.yml: #{item_location}.#{kind}.target_path")
+        artefact_location = "framework.yml: #{item_location}.artefacts[#{artefact_index}]"
+        validate_source_file(artefact["source_path"], "#{artefact_location}.source_path")
+        validate_target_path(artefact["target_path"], "#{artefact_location}.target_path") if artefact.key?("target_path")
       end
     end
 
@@ -682,6 +755,15 @@ class FrameworkValidator
     true
   end
 
+  def controlled_mapping_with_optional(value, location, required_keys, optional_keys)
+    return false unless mapping(value, location)
+
+    required_keys.each { |key| error("#{location}.#{key}", "missing required field") unless value.key?(key) }
+    allowed = required_keys + optional_keys
+    (value.keys - allowed).map(&:to_s).sort.each { |key| error("#{location}.#{key}", "unknown field") }
+    true
+  end
+
   def mapping(value, location)
     return true if value.is_a?(Hash)
 
@@ -795,7 +877,7 @@ class FrameworkValidator
   end
 
   def runtime_location(collection, entry, index)
-    identity = entry.is_a?(Hash) && entry["name"].is_a?(String) && !entry["name"].empty? ? entry["name"] : index
+    identity = entry.is_a?(Hash) && entry["id"].is_a?(String) && !entry["id"].empty? ? entry["id"] : index
     "agent_runtimes.#{collection}[#{identity}]"
   end
 
