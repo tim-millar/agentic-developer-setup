@@ -20,6 +20,8 @@ The installer discovers `claude` on the pre-install `PATH`. Select a particular 
 agent-runtimes/claude-explore/install.sh install --claude-bin /absolute/path/to/claude
 ```
 
+If another tool or shell configuration already wraps the `claude` command, use `--claude-bin` with the vendor Claude launcher explicitly. `claude-explore` records exactly the selected stable launcher and does not attempt to infer which third-party wrapper should be bypassed or silently search for a replacement later.
+
 Upgrade or uninstall with:
 
 ```sh
@@ -27,15 +29,21 @@ agent-runtimes/claude-explore/install.sh upgrade
 agent-runtimes/claude-explore/install.sh uninstall
 ```
 
-Installation is user-level. The stable command is `~/.local/bin/claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Explicit `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values must be absolute; relative roots fail rather than creating state under the caller's working directory. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required. Uninstall removes only ownership-proven framework resources and preserves Claude, Claude settings and sessions, repositories, and unrelated user files.
+Installation is user-level. The stable command is `~/.local/bin/claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Explicit `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values must be absolute; relative roots fail rather than creating state under the caller's working directory. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required.
+
+The installer owns only its documented framework paths. A non-framework object already at `~/.local/bin/claude-explore` is an exact-destination collision and fails closed. An unrelated executable with the same name elsewhere on `PATH` is left untouched: installation succeeds, then reports that bare `claude-explore` remains shadowed and identifies both paths so the developer can deliberately reorder `PATH` or use the installed absolute path. No profile or unrelated command is rewritten. Uninstall removes only ownership-proven framework resources and preserves the selected Claude launcher, repositories, Claude settings, and unrelated user files.
 
 The metadata records Claude's stable launcher path, not only its current binary target. Installation and every invocation validate the launcher and resolved target path hierarchy: root-owned or current-user-owned, non-group/world-writable components are accepted, as are normal root-owned sticky temporary roots. A normal Claude updater symlink change therefore takes effect without reinstalling `claude-explore`; a missing, recursive, replaceable through an unsafe ancestor, unparseable, or too-old target fails rather than triggering a `PATH` search.
 
-Activation stages the version directory, `current` link, stable launcher, and metadata before replacing any live path. Link replacement does not follow an existing symlink-to-directory, and prior links, metadata, and same-version content remain available until every activation step succeeds. A failed upgrade rolls those resources back and removes transaction artefacts.
+Activation stages the version directory, `current` link, stable launcher, and metadata before replacing any live path. Link replacement does not follow an existing symlink-to-directory, and prior links, metadata, and same-version content remain available until every activation step succeeds. A failed upgrade rolls those resources back and removes transaction artefacts. Per-session controls live outside version directories, so successful and failed upgrades preserve active session state.
 
 ## Runtime controls
 
-Small `/bin/sh` entrypoints remove shell-startup control variables before invoking `/bin/bash --noprofile --norc -p`. Privileged Bash startup prevents exported `BASH_FUNC_*` definitions from becoming trusted installer/runtime/guard functions; function definitions are also removed before Claude is launched. Each bootstrap validates the expected executable runtime files and non-executable policy before handing off. Trusted runtime logic remains Bash 3.2-compatible and keeps argv as arrays. Each session creates a unique mode-0700 control directory outside the repository and removes only its own directory at exit.
+Small `/bin/sh` entrypoints remove shell-startup control variables before invoking `/bin/bash --noprofile --norc -p`. Privileged Bash startup prevents exported `BASH_FUNC_*` definitions from becoming trusted installer/runtime/guard functions; function definitions are also removed before Claude is launched. Each bootstrap validates the expected executable runtime files and non-executable policy before handing off. Trusted runtime logic remains Bash 3.2-compatible and keeps argv as arrays.
+
+Each session creates a unique mode-0700 control directory under the stable framework-owned `${XDG_DATA_HOME:-$HOME/.local/share}/agent-development-framework/claude-explore/sessions/` root. The root is ownership-, mode-, symlink-, and containment-checked; an arbitrary `XDG_RUNTIME_DIR` never selects control storage. Settings, MCP configuration, guards, delegate metadata, askpass, and the empty PostgreSQL password file remain within that exact session. Cleanup revalidates the captured path, uses a trusted absolute system utility rather than the restored project `PATH`, and removes only that session; the stable sessions root and unrelated similarly named entries remain.
+
+Claude and project commands still receive the ordinary developer `PATH` after the private guard directory. Framework housekeeping does not: trusted external operations that continue after PATH restoration use fixed trusted system paths, while validated Git/PostgreSQL delegates remain the only intentional command delegation from guard processes.
 
 The generated Claude settings require the native sandbox, fail when it is unavailable, retain filesystem isolation, and prohibit unsandboxed command retries. They disable all hooks and Artifact, deny writes to installed/session controls, protect the policy credential-file list through sandbox credentials plus `Read` denies, and reinforce runtime writes through `Edit` denies. The runtime also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and `CLAUDE_CODE_DISABLE_ARTIFACT=1`.
 
@@ -81,7 +89,7 @@ This is a cooperating-agent reduced-authority guardrail, not hostile-code contai
 
 ## Disposable manual smoke procedure
 
-Use a disposable user/XDG environment and synthetic credentials, then:
+Use a disposable user/XDG environment and synthetic credentials. Inspect `type -a claude-explore` and `type -a claude` first; if `claude` is wrapped, install with the explicit vendor launcher and initially invoke `~/.local/bin/claude-explore` rather than assuming either bare command resolves to the intended executable. Then:
 
 1. install with an explicit stable Claude launcher and inspect runtime info;
 2. enter repositories selecting incompatible Ruby, Node, and Python versions and confirm the wrapper still starts;

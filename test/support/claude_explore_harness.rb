@@ -35,7 +35,8 @@ class ClaudeExploreHarness
       "FAKE_GIT_INJECTION_MARKER" => File.join(root, "git-injection"),
       "FAKE_PSQLRC_MARKER" => File.join(root, "psqlrc-ran"),
       "FAKE_PGPASS_MARKER" => File.join(root, "pgpass-used"),
-      "FAKE_PSQL_STDIN_MARKER" => File.join(root, "psql-stdin-used")
+      "FAKE_PSQL_STDIN_MARKER" => File.join(root, "psql-stdin-used"),
+      "FAKE_RM_MARKER" => File.join(root, "hostile-rm-ran")
     }
     FileUtils.mkdir_p(env.fetch("XDG_RUNTIME_DIR"))
   end
@@ -72,6 +73,19 @@ class ClaudeExploreHarness
 
   def data_root
     File.join(env.fetch("XDG_DATA_HOME"), "agent-development-framework/claude-explore")
+  end
+
+  def sessions_root
+    stable_root = File.exist?(data_root) ? File.realpath(data_root) : data_root
+    File.join(stable_root, "sessions")
+  end
+
+  def logged_session_dir
+    arguments = read(env.fetch("FAKE_CLAUDE_LOG")).lines(chomp: true)
+    settings_index = arguments.index("--settings")
+    return unless settings_index && arguments[settings_index + 1]
+
+    File.dirname(arguments[settings_index + 1])
   end
 
   def current_runtime

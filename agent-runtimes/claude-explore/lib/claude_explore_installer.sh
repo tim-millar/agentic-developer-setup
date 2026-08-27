@@ -225,6 +225,7 @@ activate_transaction() {
 }
 
 install_or_upgrade() {
+  local selected_public selected_parent
   validate_source
   ensure_private_dir "$DATA_ROOT"; ensure_private_dir "$VERSIONS_ROOT"; ensure_private_dir "$CONFIG_ROOT"; ensure_private_dir "$BIN_ROOT"
   DATA_ROOT_REAL=$($REALPATH_BIN "$DATA_ROOT")
@@ -232,17 +233,36 @@ install_or_upgrade() {
   preflight_destination
   if [ -n "$REQUESTED_CLAUDE" ]; then
     CLAUDE_LAUNCHER=$REQUESTED_CLAUDE
+    CLAUDE_SELECTION_SOURCE=explicit
   elif [ "$OPERATION" = upgrade ] && [ -f "$METADATA_FILE" ]; then
     CLAUDE_LAUNCHER=$EXISTING_CLAUDE_LAUNCHER
+    CLAUDE_SELECTION_SOURCE=recorded
   else
     CLAUDE_LAUNCHER=$(PATH=$ORIGINAL_PATH command -v claude 2>/dev/null) || die "Claude was not found on the pre-install PATH; use --claude-bin"
+    CLAUDE_SELECTION_SOURCE=path
   fi
   case "$CLAUDE_LAUNCHER" in /*) ;; *) CLAUDE_LAUNCHER=$(CDPATH= cd -- "$(dirname "$CLAUDE_LAUNCHER")" && pwd -P)/$(basename "$CLAUDE_LAUNCHER") ;; esac
   validate_claude_launcher "$CLAUDE_LAUNCHER"
   stage_metadata; stage_runtime; activate_transaction
   printf 'claude-explore %s %s\n' "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$OPERATION"
-  printf 'launcher=%s\nruntime=%s\nclaude_launcher=%s\nclaude_resolved=%s\nclaude_version=%s\npolicy_version=%s\n' "$STABLE_LAUNCHER" "$CURRENT_LINK" "$CLAUDE_LAUNCHER" "$CLAUDE_TARGET" "$CLAUDE_VERSION" "$CLAUDE_EXPLORE_POLICY_VERSION"
+  printf 'launcher=%s\nruntime=%s\nclaude_launcher=%s\nclaude_resolved=%s\nclaude_version=%s\nclaude_selection=%s\npolicy_version=%s\n' "$STABLE_LAUNCHER" "$CURRENT_LINK" "$CLAUDE_LAUNCHER" "$CLAUDE_TARGET" "$CLAUDE_VERSION" "$CLAUDE_SELECTION_SOURCE" "$CLAUDE_EXPLORE_POLICY_VERSION"
+  if [ "$CLAUDE_SELECTION_SOURCE" = path ]; then
+    printf '%s\n' 'Claude was selected from PATH. If that command is wrapped, install again with --claude-bin ABSOLUTE_PATH for the vendor Claude launcher.'
+  fi
   case ":$ORIGINAL_PATH:" in *":$BIN_ROOT:"*) ;; *) printf 'Add %s to PATH manually.\n' "$BIN_ROOT" ;; esac
+  selected_public=$(PATH=$ORIGINAL_PATH command -v claude-explore 2>/dev/null) || selected_public=
+  if [ -n "$selected_public" ]; then
+    case "$selected_public" in
+      /*) ;;
+      *)
+        selected_parent=$(CDPATH= cd -- "$(dirname "$selected_public")" 2>/dev/null && pwd -P) || selected_parent=
+        [ -n "$selected_parent" ] && selected_public=$selected_parent/$(basename "$selected_public")
+        ;;
+    esac
+  fi
+  if [ -n "$selected_public" ] && [ "$selected_public" != "$STABLE_LAUNCHER" ]; then
+    printf 'PATH shadowing: installed public launcher=%s; bare claude-explore resolves to=%s. Bare invocation will continue to select the earlier PATH entry; reorder PATH deliberately or invoke the installed launcher by its absolute path.\n' "$STABLE_LAUNCHER" "$selected_public" >&2
+  fi
 }
 
 uninstall_runtime() {

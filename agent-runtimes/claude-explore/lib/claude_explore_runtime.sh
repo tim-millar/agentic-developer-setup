@@ -39,17 +39,17 @@ require_realpath() {
 }
 
 file_mode() {
-  if stat -f '%Lp' "$1" >/dev/null 2>&1; then stat -f '%Lp' "$1"; else stat -c '%a' "$1"; fi
+  if /usr/bin/stat -f '%Lp' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%Lp' "$1"; else /usr/bin/stat -c '%a' "$1"; fi
 }
 
 file_uid() {
-  if stat -f '%u' "$1" >/dev/null 2>&1; then stat -f '%u' "$1"; else stat -c '%u' "$1"; fi
+  if /usr/bin/stat -f '%u' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%u' "$1"; else /usr/bin/stat -c '%u' "$1"; fi
 }
 
 safe_owned_file_kind() {
   local path=$1 kind=$2 mode
   [ -f "$path" ] && [ ! -L "$path" ] || return 1
-  [ "$(file_uid "$path" 2>/dev/null)" = "$(id -u)" ] || return 1
+  [ "$(file_uid "$path" 2>/dev/null)" = "$(/usr/bin/id -u)" ] || return 1
   mode=$(file_mode "$path" 2>/dev/null) || return 1
   [ $((8#$mode & 022)) -eq 0 ] || return 1
   if [ "$kind" = executable ]; then [ -x "$path" ]; else [ ! -x "$path" ]; fi
@@ -62,7 +62,7 @@ safe_owned_policy() { safe_owned_file_kind "$1" policy; }
 safe_owned_dir() {
   local path=$1 mode
   [ -d "$path" ] && [ ! -L "$path" ] || return 1
-  [ "$(file_uid "$path" 2>/dev/null)" = "$(id -u)" ] || return 1
+  [ "$(file_uid "$path" 2>/dev/null)" = "$(/usr/bin/id -u)" ] || return 1
   mode=$(file_mode "$path" 2>/dev/null) || return 1
   [ $((8#$mode & 022)) -eq 0 ]
 }
@@ -73,7 +73,7 @@ safe_path_ancestors() {
   while :; do
     [ -d "$parent" ] || return 1
     uid=$(file_uid "$parent" 2>/dev/null) || return 1
-    [ "$uid" = 0 ] || [ "$uid" = "$(id -u)" ] || return 1
+    [ "$uid" = 0 ] || [ "$uid" = "$(/usr/bin/id -u)" ] || return 1
     mode=$(file_mode "$parent" 2>/dev/null) || return 1
     [ $((8#$mode & 022)) -eq 0 ] || { [ "$uid" = 0 ] && [ $((8#$mode & 01000)) -ne 0 ]; } || return 1
     [ "$parent" = / ] && break
@@ -116,7 +116,7 @@ version_at_least() {
 }
 
 function_environment_names() {
-  /usr/bin/env | sed -n 's/^\(BASH_FUNC_[^=]*%%\)=.*/\1/p'
+  /usr/bin/env | /usr/bin/sed -n 's/^\(BASH_FUNC_[^=]*%%\)=.*/\1/p'
 }
 
 claude_version() {
@@ -525,12 +525,23 @@ find_delegate() {
 }
 
 make_session() {
-  local base command
+  local command resolved_session
   umask 077
-  base=${XDG_RUNTIME_DIR:-/tmp}
-  case "$base" in /*) ;; *) base=/tmp ;; esac
-  SESSION_DIR=$(mktemp -d "$base/claude-explore.XXXXXX") || return 1
+  SESSIONS_ROOT=$DATA_INSTALL_ROOT/sessions
+  if [ -e "$SESSIONS_ROOT" ] || [ -L "$SESSIONS_ROOT" ]; then
+    safe_owned_dir "$SESSIONS_ROOT" || return 1
+  else
+    mkdir "$SESSIONS_ROOT" || return 1
+    chmod 700 "$SESSIONS_ROOT" || return 1
+  fi
+  [ "$(file_mode "$SESSIONS_ROOT" 2>/dev/null)" = 700 ] || return 1
+  [ "$($REALPATH_BIN "$SESSIONS_ROOT" 2>/dev/null)" = "$SESSIONS_ROOT" ] || return 1
+  case "$SESSIONS_ROOT" in "$DATA_INSTALL_ROOT"/sessions) ;; *) return 1 ;; esac
+  SESSION_DIR=$(mktemp -d "$SESSIONS_ROOT/claude-explore.XXXXXX") || return 1
   chmod 700 "$SESSION_DIR" || return 1
+  resolved_session=$($REALPATH_BIN "$SESSION_DIR" 2>/dev/null) || return 1
+  [ "$resolved_session" = "$SESSION_DIR" ] || return 1
+  case "$SESSION_DIR" in "$SESSIONS_ROOT"/claude-explore.*) ;; *) return 1 ;; esac
   GUARD_DIR=$SESSION_DIR/guard; mkdir "$GUARD_DIR" || return 1; chmod 700 "$GUARD_DIR" || return 1
   SETTINGS_FILE=$SESSION_DIR/settings.json; MCP_FILE=$SESSION_DIR/mcp.json; DELEGATES_FILE=$GUARD_DIR/delegates
   : > "$DELEGATES_FILE" || return 1
@@ -548,8 +559,19 @@ EOF
 }
 
 cleanup_session() {
+  local resolved_session leaf
   [ -n "${SESSION_DIR:-}" ] || return 0
-  case "$SESSION_DIR" in /tmp/claude-explore.*|"${XDG_RUNTIME_DIR:-/nonexistent}"/claude-explore.*) rm -rf -- "$SESSION_DIR" ;; esac
+  [ -n "${SESSIONS_ROOT:-}" ] || return 1
+  [ -d "$SESSION_DIR" ] && [ ! -L "$SESSION_DIR" ] || return 1
+  resolved_session=$($REALPATH_BIN "$SESSION_DIR" 2>/dev/null) || return 1
+  [ "$resolved_session" = "$SESSION_DIR" ] || return 1
+  case "$SESSION_DIR" in "$SESSIONS_ROOT"/claude-explore.*) ;; *) return 1 ;; esac
+  leaf=${SESSION_DIR#"$SESSIONS_ROOT"/}
+  case "$leaf" in */*|claude-explore.) return 1 ;; esac
+  safe_owned_dir "$SESSION_DIR" || return 1
+  [ "$(file_mode "$SESSION_DIR" 2>/dev/null)" = 700 ] || return 1
+  /bin/rm -rf -- "$SESSION_DIR" || return 1
+  [ ! -e "$SESSION_DIR" ] || return 1
   SESSION_DIR=
 }
 

@@ -56,11 +56,21 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     stdout, stderr, status = @harness.install(claude: nil)
     assert status.success?, stderr
     assert_includes stdout, "claude_launcher=#{@harness.claude_launcher}"
+    assert_includes stdout, "claude_selection=path"
+    assert_includes stdout, "If that command is wrapped"
     metadata_before = @harness.read(@harness.metadata)
 
     _stdout, stderr, status = @harness.install("upgrade", claude: nil)
     assert status.success?, stderr
     assert_equal metadata_before, @harness.read(@harness.metadata)
+  end
+
+  def test_explicit_claude_launcher_is_recorded_exactly
+    stdout, stderr, status = @harness.install
+    assert status.success?, stderr
+    assert_includes stdout, "claude_launcher=#{@harness.claude_launcher}"
+    assert_includes stdout, "claude_selection=explicit"
+    assert_includes @harness.read(@harness.metadata), "claude_launcher_path=#{@harness.claude_launcher}\n"
   end
 
   def test_missing_old_unparseable_recursive_and_broken_launchers_fail_closed
@@ -478,12 +488,18 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
   def test_cross_version_upgrade_and_injected_failure_are_atomic
     install!
+    FileUtils.mkdir_p(@harness.sessions_root)
+    File.chmod(0o700, @harness.sessions_root)
+    preserved_session = File.join(@harness.sessions_root, "claude-explore.active")
+    FileUtils.mkdir_p(preserved_session)
+    File.chmod(0o700, preserved_session)
     source_v2 = @harness.copy_runtime_source(version: 2)
     _stdout, stderr, status = @harness.install_from(File.join(source_v2, "install.sh"), "upgrade")
     assert status.success?, stderr
     assert_match(%r{/versions/2\z}, File.realpath(File.join(@harness.data_root, "current")))
     assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
     assert_includes @harness.read(@harness.metadata), "runtime_version=2"
+    assert Dir.exist?(preserved_session), "upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
 
     active_before = File.realpath(File.join(@harness.data_root, "current"))
@@ -495,6 +511,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_equal active_before, File.realpath(File.join(@harness.data_root, "current"))
     assert_equal metadata_before, @harness.read(@harness.metadata)
     assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert Dir.exist?(preserved_session), "failed upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
   end
 
@@ -526,35 +543,108 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_equal "developer-owned\n", File.read(collision)
   end
 
-  def test_child_exit_status_and_session_cleanup
-    install!
-    before = Dir.glob(File.join(@harness.env.fetch("XDG_RUNTIME_DIR"), "claude-explore.*"))
-    _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_CLAUDE_EXIT" => "37"})
-    assert_equal 37, status.exitstatus, stderr
-    after = Dir.glob(File.join(@harness.env.fetch("XDG_RUNTIME_DIR"), "claude-explore.*"))
-    assert_equal before, after
+  def test_unrelated_path_shadowing_claude_explore_is_preserved_and_reported
+    unrelated = File.join(@harness.fake_bin, "claude-explore")
+    contents = "#!/bin/sh\necho unrelated-explore\n"
+    @harness.write_executable(unrelated, contents)
+
+    stdout, stderr, status = @harness.install
+    assert status.success?, stderr
+    assert File.symlink?(@harness.installed_launcher)
+    assert_equal contents, File.read(unrelated)
+    assert_includes stderr, "PATH shadowing"
+    assert_includes stderr, "installed public launcher=#{@harness.installed_launcher}"
+    assert_includes stderr, "bare claude-explore resolves to=#{unrelated}"
+    assert_includes stderr, "will continue to select the earlier PATH entry"
+    assert_includes stdout, "launcher=#{@harness.installed_launcher}"
+    assert_includes stdout, "Add #{File.dirname(@harness.installed_launcher)} to PATH manually."
   end
 
-  def test_signal_handlers_and_sigterm_cleanup
+  def test_trusted_cleanup_ignores_original_path_and_xdg_runtime_dir
     install!
-    @harness.replace_claude_with_signal_runtime
-    persistent = File.join(@harness.env.fetch("XDG_RUNTIME_DIR"), "claude-explore.keep")
+    hostile_rm = File.join(@harness.fake_bin, "rm")
+    @harness.write_executable(hostile_rm, "#!/bin/sh\n: > \"$FAKE_RM_MARKER\"\nexit 91\n")
+    repository_runtime = File.join(@harness.root, "repository-controlled-runtime")
+    FileUtils.mkdir_p(repository_runtime)
+    FileUtils.mkdir_p(@harness.sessions_root)
+    File.chmod(0o700, @harness.sessions_root)
+    persistent = File.join(@harness.sessions_root, "claude-explore.keep")
     FileUtils.mkdir_p(persistent)
+    File.chmod(0o700, persistent)
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {
+      "FAKE_CLAUDE_EXIT" => "37",
+      "XDG_RUNTIME_DIR" => repository_runtime
+    })
+    assert_equal 37, status.exitstatus, stderr
+    session = @harness.logged_session_dir
+    assert session.start_with?("#{@harness.sessions_root}/claude-explore."), session
+    refute File.exist?(session)
+    refute File.exist?(@harness.env.fetch("FAKE_RM_MARKER"))
+    assert Dir.exist?(@harness.sessions_root)
+    assert Dir.exist?(persistent)
+    assert_empty Dir.children(repository_runtime)
+    runtime_source = File.read(File.join(ClaudeExploreHarness::REPOSITORY_ROOT, "agent-runtimes/claude-explore/lib/claude_explore_runtime.sh"))
+    refute_includes runtime_source, "XDG_RUNTIME_DIR"
+  end
+
+  def test_sessions_root_permissions_and_signal_cleanup_use_trusted_rm
+    install!
+    hostile_rm = File.join(@harness.fake_bin, "rm")
+    @harness.write_executable(hostile_rm, "#!/bin/sh\n: > \"$FAKE_RM_MARKER\"\nexit 91\n")
+    @harness.replace_claude_with_signal_runtime
+    FileUtils.mkdir_p(@harness.sessions_root)
+    File.chmod(0o700, @harness.sessions_root)
+    persistent = File.join(@harness.sessions_root, "claude-explore.keep")
+    FileUtils.mkdir_p(persistent)
+    File.chmod(0o700, persistent)
+    repository_runtime = File.join(@harness.root, "repository-controlled-signal-runtime")
+    FileUtils.mkdir_p(repository_runtime)
     started = File.join(@harness.root, "started-TERM")
-    process_env = @harness.env.merge("FAKE_STARTED" => started)
+    process_env = @harness.env.merge("FAKE_STARTED" => started, "XDG_RUNTIME_DIR" => repository_runtime)
     _stdin, _stdout, _stderr, wait_thread = Open3.popen3(process_env, @harness.installed_launcher, chdir: ClaudeExploreHarness::REPOSITORY_ROOT)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
     until File.exist?(started)
       flunk "fake Claude did not start" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
       sleep 0.02
     end
+    sessions = Dir.glob(File.join(@harness.sessions_root, "claude-explore.*")).reject { |path| path == persistent }
+    assert_equal 1, sessions.length
+    session = sessions.fetch(0)
+    assert_equal 0o700, File.stat(@harness.sessions_root).mode & 0o777
+    assert_equal 0o700, File.stat(session).mode & 0o777
+    assert_equal 0o700, File.stat(File.join(session, "guard")).mode & 0o777
+    assert_equal 0o700, File.stat(File.join(session, "gh")).mode & 0o777
+    assert_equal 0o700, File.stat(File.join(session, "askpass")).mode & 0o777
+    %w[settings.json mcp.json pgpass].each do |name|
+      assert_equal 0o600, File.stat(File.join(session, name)).mode & 0o777
+    end
+    assert_equal 0o600, File.stat(File.join(session, "guard", "delegates")).mode & 0o777
+    assert_empty Dir.children(repository_runtime)
     Process.kill("TERM", wait_thread.pid)
     assert_equal 143, wait_thread.value.exitstatus
     assert Dir.exist?(persistent)
-    assert_equal [persistent], Dir.glob(File.join(@harness.env.fetch("XDG_RUNTIME_DIR"), "claude-explore.*"))
+    refute File.exist?(session)
+    refute File.exist?(@harness.env.fetch("FAKE_RM_MARKER"))
+    assert Dir.exist?(@harness.sessions_root)
+    assert_equal [persistent], Dir.glob(File.join(@harness.sessions_root, "claude-explore.*"))
     runtime_source = File.read(File.join(ClaudeExploreHarness::REPOSITORY_ROOT, "agent-runtimes/claude-explore/lib/claude_explore_runtime.sh"))
     assert_includes runtime_source, "kill -INT \"$CHILD_PID\""
     assert_includes runtime_source, "kill -TERM \"$CHILD_PID\""
+  end
+
+  def test_unsafe_sessions_parent_fails_before_claude_starts
+    install!
+    outside = File.join(@harness.root, "outside-sessions")
+    FileUtils.mkdir_p(outside)
+    File.symlink(outside, @harness.sessions_root)
+    FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+
+    _stdout, stderr, status = @harness.runtime
+    assert_equal 1, status.exitstatus
+    assert_includes stderr, "could not create private session state"
+    refute File.exist?(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+    assert_empty Dir.children(outside)
   end
 
   private
