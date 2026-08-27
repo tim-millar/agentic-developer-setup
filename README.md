@@ -84,7 +84,7 @@ An agent runtime is the tool-specific launcher and operating policy for a specif
 
 The framework is agent-runtime-aware rather than agent-agnostic: shared repository practices live in the baseline, while agent-specific execution behaviour lives in runtime launchers.
 
-Two distributions are supported. Repository runtimes, such as Codex, declare target-repository paths for adopted artefacts. Global-user runtimes, such as `claude-explore`, install outside repositories and deliberately have no target-repository paths.
+Two distributions are supported. Repository runtimes, such as Codex, may declare target-repository paths for adopted artefacts where applicable. Global-user runtimes, such as `claude-explore`, install outside repositories and deliberately have no target-repository paths.
 
 ### Prompts
 

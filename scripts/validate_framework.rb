@@ -218,7 +218,7 @@ class FrameworkValidator
     if runtime["distribution"].is_a?(String) && !RUNTIME_DISTRIBUTIONS.include?(runtime["distribution"])
       error("#{location}.distribution", "unsupported distribution: #{runtime['distribution'].inspect}; expected one of: #{RUNTIME_DISTRIBUTIONS.join(', ')}")
     end
-    validate_runtime_artefacts(runtime["artefacts"], "#{location}.artefacts", runtime["distribution"])
+    validate_runtime_artefacts(runtime["artefacts"], "#{location}.artefacts", runtime["distribution"], runtime.dig("configuration", "type"))
     string_sequence(runtime["supported_platforms"], "#{location}.supported_platforms", non_empty: true, allowed: RUNTIME_PLATFORMS)
     validate_required_executables(runtime["required_executables"], "#{location}.required_executables")
     string_sequence(runtime["capabilities"], "#{location}.capabilities", non_empty: true)
@@ -236,7 +236,7 @@ class FrameworkValidator
     end
   end
 
-  def validate_runtime_artefacts(value, location, distribution)
+  def validate_runtime_artefacts(value, location, distribution, configuration_type)
     return unless sequence(value, location, non_empty: true)
 
     roles = []
@@ -244,18 +244,32 @@ class FrameworkValidator
       item_location = "#{location}[#{index}]"
       next unless mapping(artefact, item_location)
 
-      expected = distribution == "global-user" ? %w[role source_path] : %w[role source_path target_path]
-      next unless controlled_mapping(artefact, item_location, expected)
+      valid_shape =
+        if distribution == "global-user"
+          controlled_mapping(artefact, item_location, %w[role source_path])
+        else
+          controlled_mapping_with_optional(artefact, item_location, %w[role source_path], %w[target_path])
+        end
+      next unless valid_shape
 
       string(artefact["role"], "#{item_location}.role")
       string(artefact["source_path"], "#{item_location}.source_path")
-      string(artefact["target_path"], "#{item_location}.target_path") if expected.include?("target_path")
+      string(artefact["target_path"], "#{item_location}.target_path") if artefact.key?("target_path")
       if artefact["role"].is_a?(String) && !RUNTIME_ARTEFACT_ROLES.include?(artefact["role"])
         error("#{item_location}.role", "unsupported artefact role: #{artefact['role'].inspect}; expected one of: #{RUNTIME_ARTEFACT_ROLES.join(', ')}")
       end
       roles << [artefact["role"], "#{item_location}.role"]
     end
     validate_unique(roles, label: "role")
+    role_values = roles.map(&:first)
+    error(location, "supported runtime requires exactly one launcher artefact") unless role_values.count("launcher") == 1
+    if configuration_type == "claude-explore"
+      %w[installer policy].each do |role|
+        error(location, "claude-explore requires exactly one #{role} artefact") unless role_values.count(role) == 1
+      end
+    elsif configuration_type == "codex"
+      error(location, "codex requires exactly one prompt artefact") unless role_values.count("prompt") == 1
+    end
   end
 
   def validate_required_executables(value, location)

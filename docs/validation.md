@@ -50,7 +50,7 @@ YAML parse failures stop validation because later diagnostics would not be relia
 
 ## Source, target, and root paths
 
-A concrete `source_path` identifies an artefact inside this framework source repository. It must be a safe, relative, repository-contained path and must resolve to the expected file or directory type. A concrete `target_path` identifies where the artefact is intended to land in an adopted repository. It receives relative-path syntax validation but is never required to exist here. Repository-distributed runtime artefacts require target paths; global-user runtime artefacts prohibit them.
+A concrete `source_path` identifies an artefact inside this framework source repository. It must be a safe, relative, repository-contained path and must resolve to the expected file or directory type. A concrete `target_path` identifies where the artefact is intended to land in an adopted repository. It receives relative-path syntax validation but is never required to exist here. Repository-distributed runtime artefacts may declare target paths where applicable; global-user runtime artefacts prohibit them.
 
 Only metadata fields explicitly defined as concrete paths are resolved. Descriptive values under `path_conventions`, adapter taxonomy patterns, convention command strings, and other prose-like path concepts are not treated as repository files.
 
@@ -62,7 +62,7 @@ The root self-hosted harness and the distributable baseline are separate layers:
 
 The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts.
 
-Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported runtime source artefacts must exist; planned runtimes declare identity and description only.
+Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported runtime source artefacts must exist and every supported runtime has exactly one launcher. Claude Explore additionally has exactly one installer and policy; Codex retains its single prompt relationship. Planned runtimes declare identity and description only.
 
 ## Extending validation
 

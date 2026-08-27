@@ -112,6 +112,28 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     refute File.exist?(marker), "generated guard must not load BASH_ENV"
   end
 
+  def test_exported_bash_functions_cannot_shadow_installer_runtime_or_guard_commands
+    marker = File.join(@harness.root, "exported-function-ran")
+    hostile = "() { /usr/bin/touch '#{marker}'; return 99; }"
+    hostile_env = {
+      "BASH_FUNC_mkdir%%" => hostile,
+      "BASH_FUNC_dirname%%" => hostile,
+      "BASH_FUNC_git%%" => hostile
+    }
+
+    _stdout, stderr, status = @harness.install(extra_env: hostile_env)
+    assert status.success?, stderr
+    refute File.exist?(marker)
+
+    _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info", extra_env: hostile_env)
+    assert status.success?, stderr
+    refute File.exist?(marker)
+
+    _stdout, stderr, status = @harness.runtime(extra_env: hostile_env.merge("FAKE_INNER_SCENARIO" => "git-allowed"))
+    assert status.success?, stderr
+    refute File.exist?(marker), "guard execution must remain authoritative"
+  end
+
   def test_environment_native_settings_mcp_browser_and_guidance_are_forced
     install!
     extra = {
@@ -157,6 +179,43 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes argv, "--mcp-config\n"
     assert_includes argv, "--no-chrome\n"
     assert_includes argv, "CLAUDE_EXPLORE_BLOCKED results are intentional"
+
+    native = policy_assignments
+    assert_equal native.fetch("CLAUDE_EXPLORE_SANDBOX_ENABLED") == "true", settings.dig("sandbox", "enabled")
+    assert_equal native.fetch("CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE") == "true", settings.dig("sandbox", "failIfUnavailable")
+    assert_equal native.fetch("CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS") == "true", settings.dig("sandbox", "allowUnsandboxedCommands")
+    assert_equal native.fetch("CLAUDE_EXPLORE_DISABLE_ALL_HOOKS") == "true", settings["disableAllHooks"]
+    assert_equal native.fetch("CLAUDE_EXPLORE_DISABLE_ARTIFACT") == "true", settings["disableArtifact"]
+  end
+
+  def test_generated_settings_json_escapes_permitted_path_characters
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(prefix: "claude-quote-\"-backslash-\\-")
+    install!
+
+    _stdout, stderr, status = @harness.runtime
+    assert status.success?, stderr
+    settings = JSON.parse(@harness.read(@harness.env.fetch("FAKE_SETTINGS_COPY")))
+    assert_includes settings.dig("sandbox", "filesystem", "denyWrite"), File.realpath(@harness.data_root)
+    assert_includes settings.dig("sandbox", "filesystem", "denyWrite"), @harness.installed_launcher
+  end
+
+  def test_settings_and_mcp_write_failures_abort_before_claude_starts
+    {
+      "SETTINGS_FILE=$SESSION_DIR/settings.json" => "SETTINGS_FILE=$SESSION_DIR",
+      "MCP_FILE=$SESSION_DIR/mcp.json" => "MCP_FILE=$SESSION_DIR"
+    }.each do |before, after|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      install!
+      @harness.replace_installed_runtime_text("lib/claude_explore_runtime.sh", before, after)
+      FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+
+      _stdout, stderr, status = @harness.runtime
+      assert_equal 1, status.exitstatus, stderr
+      assert_includes stderr, "could not create private session state"
+      refute File.exist?(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+    end
   end
 
   def test_allowed_and_blocked_claude_startup_arguments
@@ -230,6 +289,19 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "git-push"})
     assert_equal 126, status.exitstatus
     refute File.exist?(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+
+    FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+    _stdout, stderr, status = @harness.runtime(extra_env: {
+      "FAKE_INNER_SCENARIO" => "git-env",
+      "GIT_CONFIG_PARAMETERS" => "'alias.status=!marker-command'",
+      "GIT_CONFIG_GLOBAL" => "/tmp/unsafe-git-config"
+    })
+    assert status.success?, stderr
+    delegate = @harness.read(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+    assert_includes delegate, "GIT_CONFIG_COUNT=unset"
+    assert_includes delegate, "GIT_CONFIG_KEY_0=unset"
+    assert_includes delegate, "GIT_CONFIG_VALUE_0=unset"
+    refute File.exist?(@harness.env.fetch("FAKE_GIT_INJECTION_MARKER"))
   end
 
   def test_postgresql_policy_regressions_and_final_environment_scrub
@@ -250,7 +322,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
     _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "psql-db"})
     assert status.success?, stderr
-    assert_includes @harness.read(@harness.env.fetch("FAKE_DELEGATE_LOG")), "psql <-d> <mydb>"
+    assert_includes @harness.read(@harness.env.fetch("FAKE_DELEGATE_LOG")), "psql <-X> <-d> <mydb>"
     FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
     _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "psql-env", "PGHOST" => "remote.example"})
     assert status.success?, stderr
@@ -259,6 +331,43 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     _stdout, _stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "psql-query"})
     assert_equal 126, status.exitstatus
     refute File.exist?(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+
+    [["psql", "-d", "mydb", "-c", "\\connect postgresql://remote.example/db"],
+     ["psql", "-d", "mydb", "--command=\\! id"],
+     ["psql", "-d", "mydb", "-f", "commands.sql"]].each do |argv|
+      assert_classification(argv, 126, "CLAUDE_EXPLORE_BLOCKED")
+    end
+
+    File.write(File.join(@harness.home, ".psqlrc"), "\\connect postgresql://remote.example/db\n")
+    File.write(File.join(@harness.home, ".pgpass"), "remote.example:5432:*:*:secret\n")
+    File.chmod(0o600, File.join(@harness.home, ".pgpass"))
+    %w[psql-command psql-stdin].each do |scenario|
+      FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+      _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => scenario})
+      assert status.success?, stderr
+      delegate = @harness.read(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+      assert_includes delegate, "psql <-X>"
+      assert_match(/PGPASSFILE=.*claude-explore\..*\/pgpass/, delegate)
+      refute File.exist?(@harness.env.fetch("FAKE_PSQLRC_MARKER"))
+      refute File.exist?(@harness.env.fetch("FAKE_PGPASS_MARKER"))
+      refute File.exist?(@harness.env.fetch("FAKE_PSQL_STDIN_MARKER"))
+    end
+
+    %w[psql-meta psql-file].each do |scenario|
+      FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+      _stdout, _stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => scenario})
+      assert_equal 126, status.exitstatus
+      refute File.exist?(@harness.env.fetch("FAKE_DELEGATE_LOG"))
+    end
+  end
+
+  def test_privilege_and_postgresql_companion_guards_are_policy_driven
+    install!
+    %w[sudo pg_dump pg_restore createdb pg_isready].each do |command|
+      assert_includes policy_lines("CLAUDE_EXPLORE_BLOCKED_EXECUTABLES"), command
+      assert_classification([command], 126, "CLAUDE_EXPLORE_BLOCKED")
+    end
+    assert_classification(["sqlite3", ":memory:"], 0, "allowed")
   end
 
   def test_policy_override_environment_has_no_authority
@@ -305,7 +414,104 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     File.chmod(0o622, File.join(@harness.current_runtime, "policy.sh"))
     _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info")
     refute status.success?
-    assert_includes stderr, "installed runtime file is missing or unsafe"
+    assert_includes stderr, "installed runtime content is missing or unsafe"
+  end
+
+  def test_installed_runtime_integrity_rejects_nonexecutable_writable_and_external_content
+    [
+      ["lib/claude_explore_guard.sh", 0o600, "installed runtime content is missing or unsafe"],
+      ["lib/claude_explore_runtime.sh", 0o722, "installed runtime content is missing or unsafe"],
+      ["policy.sh", 0o700, "installed runtime content is missing or unsafe"]
+    ].each do |relative, mode, diagnostic|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      install!
+      File.chmod(mode, File.join(@harness.current_runtime, relative))
+      FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+      _stdout, stderr, status = @harness.runtime
+      refute status.success?
+      assert_includes stderr, diagnostic
+      refute File.exist?(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+    end
+
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new
+    install!
+    external = File.join(@harness.root, "external-guard")
+    @harness.write_executable(external, "#!/bin/sh\nexit 0\n")
+    guard = File.join(@harness.current_runtime, "lib/claude_explore_guard.sh")
+    FileUtils.rm(guard)
+    File.symlink(external, guard)
+    _stdout, stderr, status = @harness.runtime
+    refute status.success?
+    assert_includes stderr, "installed runtime content is missing or unsafe"
+  end
+
+  def test_claude_launcher_path_hierarchy_and_relative_xdg_fail_closed
+    unsafe_parent = File.join(@harness.root, "unsafe-parent")
+    FileUtils.mkdir_p(unsafe_parent)
+    File.chmod(0o777, unsafe_parent)
+    unsafe_target = File.join(unsafe_parent, "claude-target")
+    @harness.write_executable(unsafe_target, "#!/bin/sh\necho 'Claude Code 2.1.224'\n")
+    unsafe_launcher = File.join(unsafe_parent, "claude")
+    File.symlink(unsafe_target, unsafe_launcher)
+    _stdout, stderr, status = @harness.install(claude: unsafe_launcher)
+    refute status.success?
+    assert_includes stderr, "path hierarchy is unsafe"
+
+    _stdout, stderr, status = @harness.install(claude: "/bin/echo")
+    refute status.success?
+    refute_includes stderr, "path hierarchy is unsafe"
+
+    _stdout, stderr, status = @harness.install(extra_env: {"XDG_DATA_HOME" => "relative-data"})
+    refute status.success?
+    assert_includes stderr, "XDG_DATA_HOME must be absolute"
+
+    install!
+    _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info", extra_env: {"XDG_DATA_HOME" => "relative-data"})
+    refute status.success?
+    assert_includes stderr, "XDG_DATA_HOME must be absolute"
+    _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info", extra_env: {"XDG_CONFIG_HOME" => "relative-config"})
+    refute status.success?
+    assert_includes stderr, "XDG_CONFIG_HOME must be absolute"
+  end
+
+  def test_cross_version_upgrade_and_injected_failure_are_atomic
+    install!
+    source_v2 = @harness.copy_runtime_source(version: 2)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v2, "install.sh"), "upgrade")
+    assert status.success?, stderr
+    assert_match(%r{/versions/2\z}, File.realpath(File.join(@harness.data_root, "current")))
+    assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_includes @harness.read(@harness.metadata), "runtime_version=2"
+    assert_empty activation_transaction_artifacts
+
+    active_before = File.realpath(File.join(@harness.data_root, "current"))
+    metadata_before = @harness.read(@harness.metadata)
+    source_v3 = @harness.copy_runtime_source(version: 3, fail_metadata_activation: true)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v3, "install.sh"), "upgrade")
+    refute status.success?
+    assert_includes stderr, "injected metadata activation failure"
+    assert_equal active_before, File.realpath(File.join(@harness.data_root, "current"))
+    assert_equal metadata_before, @harness.read(@harness.metadata)
+    assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_empty activation_transaction_artifacts
+  end
+
+  def activation_transaction_artifacts
+    Dir.glob(File.join(@harness.data_root, ".{previous,current}.*"), File::FNM_DOTMATCH) +
+      Dir.glob(File.join(File.dirname(@harness.metadata), ".{previous,install.meta.tmp}.*"), File::FNM_DOTMATCH) +
+      Dir.glob(File.join(File.dirname(@harness.installed_launcher), ".{previous,claude-explore}.*"), File::FNM_DOTMATCH)
+  end
+
+  def test_reserved_runtime_diagnostic_does_not_echo_secret_argument
+    install!
+    secret = "--claude-explore-api-key=secret-review-value"
+    _stdout, stderr, status = @harness.runtime(secret)
+    assert_equal 2, status.exitstatus
+    assert_includes stderr, "reserved runtime argument is not accepted"
+    refute_includes stderr, secret
+    refute_includes stderr, "secret-review-value"
   end
 
   def test_non_framework_launcher_collision_is_not_overwritten
@@ -365,11 +571,29 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def policy_lines(variable)
-    raise "unsupported policy test variable" unless variable == "CLAUDE_EXPLORE_BLOCKED_EXECUTABLES"
+    allowed = %w[
+      CLAUDE_EXPLORE_BLOCKED_EXECUTABLES CLAUDE_EXPLORE_ENV_UNSET
+      CLAUDE_EXPLORE_CREDENTIAL_PATHS CLAUDE_EXPLORE_PG_ENV
+    ]
+    raise "unsupported policy test variable" unless allowed.include?(variable)
 
-    script = '. "$1"; printf \'%s\\n\' "$CLAUDE_EXPLORE_BLOCKED_EXECUTABLES"'
-    stdout, stderr, status = Open3.capture3("/bin/bash", "--noprofile", "--norc", "-c", script, "test", POLICY)
+    script = '. "$1"; name=$2; printf \'%s\\n\' "${!name}"'
+    stdout, stderr, status = Open3.capture3("/bin/bash", "--noprofile", "--norc", "-p", "-c", script, "test", POLICY, variable)
     assert status.success?, stderr
     stdout.lines(chomp: true).reject(&:empty?)
+  end
+
+  def policy_assignments
+    names = %w[
+      CLAUDE_EXPLORE_SANDBOX_ENABLED
+      CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE
+      CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS
+      CLAUDE_EXPLORE_DISABLE_ALL_HOOKS
+      CLAUDE_EXPLORE_DISABLE_ARTIFACT
+    ]
+    script = '. "$1"; shift; for name in "$@"; do printf \'%s=%s\\n\' "$name" "${!name}"; done'
+    stdout, stderr, status = Open3.capture3("/bin/bash", "--noprofile", "--norc", "-p", "-c", script, "test", POLICY, *names)
+    assert status.success?, stderr
+    stdout.lines(chomp: true).to_h { |line| line.split("=", 2) }
   end
 end

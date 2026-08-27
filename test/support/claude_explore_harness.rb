@@ -11,8 +11,8 @@ class ClaudeExploreHarness
 
   attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target
 
-  def initialize
-    @root = Dir.mktmpdir("claude-explore-test-")
+  def initialize(prefix: "claude-explore-test-")
+    @root = Dir.mktmpdir(prefix)
     @home = File.join(root, "home")
     @fake_bin = File.join(root, "fake-bin")
     FileUtils.mkdir_p([home, fake_bin])
@@ -31,7 +31,11 @@ class ClaudeExploreHarness
       "FAKE_DELEGATE_LOG" => File.join(root, "delegate.log"),
       "FAKE_SETTINGS_COPY" => File.join(root, "settings.json"),
       "FAKE_MCP_COPY" => File.join(root, "mcp.json"),
-      "FAKE_ENV_LOG" => File.join(root, "environment.log")
+      "FAKE_ENV_LOG" => File.join(root, "environment.log"),
+      "FAKE_GIT_INJECTION_MARKER" => File.join(root, "git-injection"),
+      "FAKE_PSQLRC_MARKER" => File.join(root, "psqlrc-ran"),
+      "FAKE_PGPASS_MARKER" => File.join(root, "pgpass-used"),
+      "FAKE_PSQL_STDIN_MARKER" => File.join(root, "psql-stdin-used")
     }
     FileUtils.mkdir_p(env.fetch("XDG_RUNTIME_DIR"))
   end
@@ -41,7 +45,11 @@ class ClaudeExploreHarness
   end
 
   def install(operation = "install", claude: claude_launcher, extra_env: {})
-    arguments = ["/bin/sh", INSTALLER, operation]
+    install_from(INSTALLER, operation, claude:, extra_env:)
+  end
+
+  def install_from(installer, operation = "install", claude: claude_launcher, extra_env: {})
+    arguments = ["/bin/sh", installer, operation]
     arguments.concat(["--claude-bin", claude]) if claude
     run(arguments, extra_env: extra_env)
   end
@@ -76,6 +84,41 @@ class ClaudeExploreHarness
     FileUtils.rm(claude_launcher)
     File.symlink(replacement, claude_launcher)
     replacement
+  end
+
+  def runtime_source_path(name)
+    File.join(current_runtime, "lib", name)
+  end
+
+  def copy_runtime_source(version: nil, fail_metadata_activation: false)
+    source = File.join(REPOSITORY_ROOT, "agent-runtimes", "claude-explore")
+    destination = File.join(root, "source-#{version || "copy"}")
+    FileUtils.cp_r(source, destination, preserve: true)
+    if version
+      policy = File.join(destination, "policy.sh")
+      contents = File.read(policy).sub("CLAUDE_EXPLORE_RUNTIME_VERSION=1", "CLAUDE_EXPLORE_RUNTIME_VERSION=#{version}")
+      File.write(policy, contents)
+      File.chmod(0o600, policy)
+    end
+    if fail_metadata_activation
+      installer = File.join(destination, "lib/claude_explore_installer.sh")
+      contents = File.read(installer).sub(
+        'mv "$STAGED_METADATA" "$METADATA_FILE" || activation_fail "cannot activate installation metadata"',
+        'false || activation_fail "injected metadata activation failure"'
+      )
+      File.write(installer, contents)
+      File.chmod(0o700, installer)
+    end
+    destination
+  end
+
+  def replace_installed_runtime_text(file, before, after)
+    path = File.join(current_runtime, file)
+    contents = File.read(path)
+    raise "test replacement was not found" unless contents.include?(before)
+
+    File.write(path, contents.sub(before, after))
+    File.chmod(0o700, path)
   end
 
   def replace_claude_with_signal_runtime
@@ -130,8 +173,13 @@ class ClaudeExploreHarness
       case "\${FAKE_INNER_SCENARIO:-}" in
         blocked) "\$FAKE_COMMAND" ; exit \$? ;;
         git-allowed) git status ; exit \$? ;;
+        git-env) GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.status GIT_CONFIG_VALUE_0='!marker-command' git status ; exit \$? ;;
         git-push) git push origin main ; exit \$? ;;
         psql-db) psql -d mydb ; exit \$? ;;
+        psql-command) psql -d mydb -c 'select 1' ; exit \$? ;;
+        psql-meta) psql -d mydb -c '\\connect postgresql://remote.example/db' ; exit \$? ;;
+        psql-file) psql -d mydb -f commands.sql ; exit \$? ;;
+        psql-stdin) printf '\\connect postgresql://remote.example/db\n' | psql -d mydb ; exit \$? ;;
         psql-env) PGHOST=remote.example psql ; exit \$? ;;
         psql-query) psql 'postgresql://localhost/db?host=remote.example' ; exit \$? ;;
       esac
@@ -148,9 +196,20 @@ class ClaudeExploreHarness
   def fake_delegate(name)
     <<~SH
       #!/bin/sh
+      if [ "#{name}" = git ] && [ "\${GIT_CONFIG_COUNT-unset}" != unset ]; then
+        : > "\$FAKE_GIT_INJECTION_MARKER"
+      fi
+      if [ "#{name}" = psql ]; then
+        case " \$* " in *" -X "*) ;; *) [ -z "\${FAKE_PSQLRC_MARKER:-}" ] || : > "\$FAKE_PSQLRC_MARKER" ;; esac
+        if [ -z "\${PGPASSFILE:-}" ] || [ "\$PGPASSFILE" = "\$HOME/.pgpass" ]; then
+          [ -z "\${FAKE_PGPASS_MARKER:-}" ] || : > "\$FAKE_PGPASS_MARKER"
+        fi
+        if IFS= read -r ignored; then [ -z "\${FAKE_PSQL_STDIN_MARKER:-}" ] || : > "\$FAKE_PSQL_STDIN_MARKER"; fi
+      fi
       printf '#{name}' >> "$FAKE_DELEGATE_LOG"
       for argument in "\$@"; do printf ' <%s>' "\$argument" >> "$FAKE_DELEGATE_LOG"; done
-      printf ' PGHOST=%s\n' "\${PGHOST-unset}" >> "$FAKE_DELEGATE_LOG"
+      printf ' PGHOST=%s GIT_CONFIG_COUNT=%s GIT_CONFIG_KEY_0=%s GIT_CONFIG_VALUE_0=%s PGPASSFILE=%s\n' \
+        "\${PGHOST-unset}" "\${GIT_CONFIG_COUNT-unset}" "\${GIT_CONFIG_KEY_0-unset}" "\${GIT_CONFIG_VALUE_0-unset}" "\${PGPASSFILE-unset}" >> "$FAKE_DELEGATE_LOG"
       exit 0
     SH
   end

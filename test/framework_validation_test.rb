@@ -210,6 +210,39 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("artefacts[0].target_path: unknown field", "artefacts[1].target_path: unknown field")
   end
 
+  def test_repository_runtime_target_path_is_optional
+    mutate do |metadata|
+      metadata["agent_runtimes"]["supported"].first["artefacts"].last.delete("target_path")
+    end
+
+    assert_passes("repository runtime artefact without target_path")
+  end
+
+  def test_supported_runtime_requires_exactly_one_launcher
+    mutate do |metadata|
+      metadata["agent_runtimes"]["supported"].first["artefacts"].reject! { |artefact| artefact["role"] == "launcher" }
+    end
+
+    assert_fails("supported runtime requires exactly one launcher artefact")
+  end
+
+  def test_claude_runtime_requires_installer_and_policy
+    mutate do |metadata|
+      runtime = metadata["agent_runtimes"]["supported"].first
+      runtime["distribution"] = "global-user"
+      runtime["artefacts"] = [
+        {"role" => "launcher", "source_path" => "baseline/scripts/run_codex.sh"}
+      ]
+      runtime["configuration"] = {
+        "type" => "claude-explore",
+        "policy_schema_version" => 1,
+        "minimum_client_version" => "2.1.224"
+      }
+    end
+
+    assert_fails("claude-explore requires exactly one installer artefact", "claude-explore requires exactly one policy artefact")
+  end
+
   def test_duplicate_runtime_artefact_roles_fail
     mutate do |metadata|
       metadata["agent_runtimes"]["supported"].first["artefacts"][1]["role"] = "launcher"

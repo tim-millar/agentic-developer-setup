@@ -27,13 +27,15 @@ agent-runtimes/claude-explore/install.sh upgrade
 agent-runtimes/claude-explore/install.sh uninstall
 ```
 
-Installation is user-level. The stable command is `~/.local/bin/claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required. Uninstall removes only ownership-proven framework resources and preserves Claude, Claude settings and sessions, repositories, and unrelated user files.
+Installation is user-level. The stable command is `~/.local/bin/claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Explicit `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values must be absolute; relative roots fail rather than creating state under the caller's working directory. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required. Uninstall removes only ownership-proven framework resources and preserves Claude, Claude settings and sessions, repositories, and unrelated user files.
 
-The metadata records Claude's stable launcher path, not only its current binary target. Every invocation re-resolves that launcher and validates the current target and version. A normal Claude updater symlink change therefore takes effect without reinstalling `claude-explore`; a missing, recursive, unsafe, unparseable, or too-old target fails rather than triggering a `PATH` search.
+The metadata records Claude's stable launcher path, not only its current binary target. Installation and every invocation validate the launcher and resolved target path hierarchy: root-owned or current-user-owned, non-group/world-writable components are accepted, as are normal root-owned sticky temporary roots. A normal Claude updater symlink change therefore takes effect without reinstalling `claude-explore`; a missing, recursive, replaceable through an unsafe ancestor, unparseable, or too-old target fails rather than triggering a `PATH` search.
+
+Activation stages the version directory, `current` link, stable launcher, and metadata before replacing any live path. Link replacement does not follow an existing symlink-to-directory, and prior links, metadata, and same-version content remain available until every activation step succeeds. A failed upgrade rolls those resources back and removes transaction artefacts.
 
 ## Runtime controls
 
-Small `/bin/sh` entrypoints remove shell-startup control variables before invoking `/bin/bash --noprofile --norc`. Trusted runtime logic remains Bash 3.2-compatible and keeps argv as arrays. Each session creates a unique mode-0700 control directory outside the repository and removes only its own directory at exit.
+Small `/bin/sh` entrypoints remove shell-startup control variables before invoking `/bin/bash --noprofile --norc -p`. Privileged Bash startup prevents exported `BASH_FUNC_*` definitions from becoming trusted installer/runtime/guard functions; function definitions are also removed before Claude is launched. Each bootstrap validates the expected executable runtime files and non-executable policy before handing off. Trusted runtime logic remains Bash 3.2-compatible and keeps argv as arrays. Each session creates a unique mode-0700 control directory outside the repository and removes only its own directory at exit.
 
 The generated Claude settings require the native sandbox, fail when it is unavailable, retain filesystem isolation, and prohibit unsandboxed command retries. They disable all hooks and Artifact, deny writes to installed/session controls, protect the policy credential-file list through sandbox credentials plus `Read` denies, and reinforce runtime writes through `Edit` denies. The runtime also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and `CLAUDE_CODE_DISABLE_ARTIFACT=1`.
 
@@ -43,11 +45,13 @@ MCP is empty in v1: the launcher supplies an empty per-session MCP file with str
 
 The runtime preserves ordinary project `PATH`, locale, terminal/editor, and language-manager settings. It strips the policy's source-control, cloud, infrastructure, deployment, container, database, and package credentials; points `GH_CONFIG_DIR` at an empty private directory; disables Git credential prompting; and installs a refusing askpass helper. Claude's own supported authentication state is intentionally preserved.
 
-A private guard directory precedes the original `PATH`. Publication, GitHub, cloud, infrastructure, deployment, SSH, Docker/Podman, and non-PostgreSQL direct database CLIs declared by policy always return 126 without delegation. The fixed list is inspectable in `policy.sh`.
+A private guard directory precedes the original `PATH`. Publication, GitHub, cloud, infrastructure, deployment, SSH, Docker/Podman, common privilege wrappers, remote-capable database clients, and PostgreSQL client/admin companions declared by policy always return 126 without delegation. The fixed list is inspectable in `policy.sh`. Local file-backed embedded database tools are not prohibited solely because they are database clients.
 
-Git permits the policy's local subcommands and safe global options. Push, fetch, pull, clone, credential helpers, network mail operations, global execution/configuration overrides, submodules, unknown subcommands, upstream mutation, remote mutation, config writes, and tag mutation are blocked. Local staging, commits, branches, diffs, history, merges, rebases, stashes, resets, and worktrees remain usable under the declared classifier.
+Git permits the policy's local subcommands and safe global options. Push, fetch, pull, clone, credential helpers, network mail operations, global execution/configuration overrides, submodules, unknown subcommands, upstream mutation, remote mutation, config writes, and tag mutation are blocked. Git configuration/execution environment variables, including indexed `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` forms, are removed both before Claude starts and immediately before Git delegation. Local staging, commits, branches, diffs, history, merges, rebases, stashes, resets, and worktrees remain usable under the declared classifier.
 
-`psql` is the only direct database client permitted. With PostgreSQL variables removed, an omitted host and a plain database name are local. Explicit hosts must be `localhost`, `127.0.0.1`, `::1`, or an absolute Unix-socket path. PostgreSQL URIs must use one of those loopback hosts. Service/key-value, multi-host, ambiguous, fragment, and every query-string form are blocked. All `PG*` connection variables are removed again immediately before real `psql` delegation.
+`psql` is the only permitted network-capable direct database client. With PostgreSQL variables removed, an omitted host and a plain database name are local. Explicit hosts must be `localhost`, `127.0.0.1`, `::1`, or an absolute Unix-socket path. PostgreSQL URIs must use one of those loopback hosts. Service/key-value, multi-host, ambiguous, fragment, and every query-string form are blocked.
+
+Direct psql execution is non-interactive. The guard always injects `-X`, blocks command files and password prompts, rejects backslash/meta-command content in every `-c`/`--command` value, and connects stdin to `/dev/null`. Ordinary SQL supplied with `-c` can run against an already-classified local target; target/help/version-only forms cannot consume interactive commands. Connection-selector variables are removed again immediately before delegation, then `PGPASSFILE` is set to a private, empty mode-0600 session file. Both `~/.psqlrc` and `~/.pgpass` are therefore excluded from delegated execution.
 
 Normal application commands such as `make test`, `bundle exec …`, and `npm test` remain available. The runtime does not prove that application configuration points only at local services, and it does not comprehensively intercept generic HTTP clients or package managers.
 
@@ -66,7 +70,7 @@ Classify a structured command without executing Claude or the command:
 ```sh
 claude-explore --claude-explore-check-command -- git status
 claude-explore --claude-explore-check-command -- git push
-claude-explore --claude-explore-check-command -- psql -d mydb
+claude-explore --claude-explore-check-command -- psql -d mydb -c 'select 1'
 ```
 
 Allowed classifications begin with `CLAUDE_EXPLORE_CLASSIFICATION` and exit 0; blocked classifications use the normal blocked diagnostic and exit 126.
@@ -83,8 +87,8 @@ Use a disposable user/XDG environment and synthetic credentials, then:
 2. enter repositories selecting incompatible Ruby, Node, and Python versions and confirm the wrapper still starts;
 3. start a normal session and inspect `/sandbox` to confirm sandbox/file controls are active;
 4. inspect, edit, and test disposable project files, then stage and create a local commit;
-5. confirm `git push`, `gh`, cloud/infra/deployment CLIs, Docker/Podman, remote `psql`, and query-bearing PostgreSQL URIs return 126;
-6. confirm `psql -d mydb` or another local form reaches a disposable local server where available;
+5. confirm `git push`, `gh`, cloud/infra/deployment CLIs, privilege wrappers, Docker/Podman, PostgreSQL companions, remote `psql`, and query-bearing PostgreSQL URIs return 126;
+6. confirm `psql -d mydb -c 'select 1'` reaches a disposable local server where available, while `-f`, backslash commands, `.psqlrc`, `.pgpass`, and stdin commands do not;
 7. confirm synthetic denied environment variables/files are unavailable;
 8. confirm MCP, Chrome, cloud/remote-control, background, print, and system-prompt override modes are rejected;
 9. exercise dry-run allowed/blocked classification without executing either command;
