@@ -20,3 +20,8 @@ test-claude-runtime:
 check:
 	$(MAKE) test
 	$(MAKE) validate
+
+.PHONY: check-reference-service
+check-reference-service:
+	$(MAKE) -C examples/reference-service setup
+	UV_OFFLINE=1 $(MAKE) -C examples/reference-service verify

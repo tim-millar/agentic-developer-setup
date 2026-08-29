@@ -264,6 +264,10 @@ Typical agent workflows include:
 
 The `prompts/` directory exists to support those workflows.
 
+## Reference fixture
+
+[`examples/reference-service/`](examples/reference-service/) is a small, executable selected greenfield reference adoption. It is independently inspectable and demonstrates how framework artefacts, native tooling, a stable Make interface, tests, CI, and a repository contract fit together. It is a fixture for later adoption work, not a production service or universal project template.
+
 ## Agent Runtime Support
 
 This framework is general-purpose at the repository and workflow level, but agent runtimes are intentionally tool-specific.
