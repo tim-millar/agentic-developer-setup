@@ -10,8 +10,8 @@ agent effectiveness.
 
 ## Prerequisites and setup
 
-Use Python 3.14 and install [uv](https://docs.astral.sh/uv/). The committed
-lockfile defines the development environment.
+Use Python 3.14 and install [uv 0.12.7](https://docs.astral.sh/uv/). The
+committed lockfile defines the development environment.
 
 ```sh
 make setup

@@ -3,8 +3,10 @@
 ## Prerequisites
 
 The fixture targets Python 3.14, as declared by `.python-version` and
-`pyproject.toml`. Install [uv](https://docs.astral.sh/uv/) before using the
-commands below. No credentials, services, database, container runtime, or
+`pyproject.toml`, and uses uv 0.12.7. Both CI workflows pin that uv version;
+the `uv_build==0.12.7` build backend is intentionally aligned with the CLI.
+Install [uv](https://docs.astral.sh/uv/) 0.12.7 before using the commands
+below. No credentials, services, database, container runtime, or
 developer-local configuration is required.
 
 ## Setup
@@ -17,7 +19,7 @@ make setup
 
 This is the native uv bootstrap command, equivalent to `uv sync --locked`.
 It may access the configured package registry to install the exact committed
-lockfile environment.
+lockfile environment. Post-setup verification remains locked and offline.
 
 ## Stable command surface
 
