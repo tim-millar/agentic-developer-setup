@@ -145,6 +145,48 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal "tier-2", assess.dig("tier_recommendation", "outcome")
   end
 
+  def test_context_conflict_is_attributed_to_low_criticality
+    write("README.md", "This is a critical production service.\n")
+    result = assess(@target, context_path: context_file(criticality: "low"))
+
+    assert_equal [["repository.criticality", "low"]], context_conflict_fields(result)
+  end
+
+  def test_context_conflict_is_attributed_to_low_deployment_impact
+    write("README.md", "This is a critical production service.\n")
+    result = assess(@target, context_path: context_file(criticality: "high", deployment_impact: "low"))
+
+    assert_equal [["repository.deployment_impact", "low"]], context_conflict_fields(result)
+  end
+
+  def test_context_conflict_is_attributed_to_low_criticality_when_impact_is_high
+    write("README.md", "This is a critical production service.\n")
+    result = assess(@target, context_path: context_file(criticality: "low", deployment_impact: "high"))
+
+    assert_equal [["repository.criticality", "low"]], context_conflict_fields(result)
+  end
+
+  def test_both_low_context_fields_produce_two_explicit_conflicts
+    write("README.md", "This is a critical production service.\n")
+    result = assess(@target, context_path: context_file(criticality: "low", deployment_impact: "none"))
+
+    assert_equal [["repository.criticality", "low"], ["repository.deployment_impact", "none"]], context_conflict_fields(result)
+  end
+
+  def test_both_high_context_fields_do_not_conflict_with_high_impact_evidence
+    write("README.md", "This is a critical production service.\n")
+    result = assess(@target, context_path: context_file(criticality: "high", deployment_impact: "high"))
+
+    assert_empty result["assessor_context"]["conflicts"]
+  end
+
+  def test_low_context_field_does_not_conflict_without_high_impact_evidence
+    write("README.md", "A small local example service.\n")
+    result = assess(@target, context_path: context_file(criticality: "low"))
+
+    assert_empty result["assessor_context"]["conflicts"]
+  end
+
   def test_ci_secret_risk_contains_resolved_public_evidence_ids
     write(".github/workflows/ci.yml", "jobs:\n  verify:\n    steps:\n      - run: echo ${{ secrets.DEPLOY_TOKEN }}\n")
 
@@ -156,12 +198,51 @@ class AssessmentAssessorTest < Minitest::Test
     assert_schema(result)
   end
 
+  def test_roadmap_uses_component_phase_mapping_and_non_boilerplate_actions
+    write("README.md", "# Service\n")
+    write("pyproject.toml", "[project]\nname = 'sample'\ndependencies = ['pytest']\n")
+    write("Makefile", "verify:\n\t@echo verify\n")
+    write(".github/ISSUE_TEMPLATE/task.md", "Scope. Acceptance criteria. Non-goals. Implementation boundaries.\n")
+
+    result = assess
+    roadmap = result["roadmap"]
+
+    assert_equal 1, roadmap.find { |item| item["component"] == "agent_instructions" }["phase"]
+    assert_equal 1, roadmap.find { |item| item["component"] == "command_interface" }["phase"]
+    assert_equal 2, roadmap.find { |item| item["component"] == "bug_report_issue_template" }["phase"]
+    refute roadmap.any? { |item| item["title"].start_with?("Review and") }
+  end
+
+  def test_blocking_gaps_are_phase_zero
+    result = assess
+    blocking_gap_ids = result["gaps"].select { |gap| gap["severity"] == "blocking" }.map { |gap| gap["id"] }
+
+    refute_empty blocking_gap_ids
+    blocking_gap_ids.each do |gap_id|
+      assert result["roadmap"].any? { |item| item["phase"] == 0 && item["gap_ids"].include?(gap_id) }
+    end
+  end
+
+  def test_native_components_are_not_given_separate_component_boilerplate
+    write("docs/testing-guide.md", "Testing guidance.\n")
+
+    result = assess
+    native = result["framework_adoption"]["detected_components"].find { |item| item["component"] == "testing_strategy" }
+
+    assert_equal "repository_native", native["state"]
+    refute result["roadmap"].any? { |item| item["title"].match?(/testing strategy/i) && item["gap_ids"].empty? }
+  end
+
   private
 
-  def context_file(sensitive_paths: [])
+  def context_file(sensitive_paths: [], criticality: nil, deployment_impact: nil)
     path = File.join(@temporary_root, "context.yml")
+    repository = {}
+    repository["criticality"] = criticality if criticality
+    repository["deployment_impact"] = deployment_impact if deployment_impact
     write_absolute(path, YAML.dump(
       "schema_version" => 1,
+      "repository" => repository,
       "sensitive_paths" => sensitive_paths,
       "approved_agent_runtimes" => [],
       "review_requirements" => [],
@@ -169,5 +250,9 @@ class AssessmentAssessorTest < Minitest::Test
       "notes" => []
     ))
     path
+  end
+
+  def context_conflict_fields(result)
+    result.fetch("assessor_context").fetch("conflicts").map { |item| [item["field"], item["context_value"]] }
   end
 end

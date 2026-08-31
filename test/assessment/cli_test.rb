@@ -24,4 +24,17 @@ class AssessmentCLITest < Minitest::Test
     assert_equal 0, status
     refute invoked
   end
+
+  def test_make_wrapper_passes_paths_with_spaces_and_wildcards_as_one_argument
+    path = File.join(@temporary_root, "target with spaces [literal]*")
+    FileUtils.mkdir_p(path)
+
+    stdout, stderr, status = Open3.capture3(
+      "make", "assess", "REPO=#{path}",
+      chdir: AssessmentTestSupport::ROOT
+    )
+
+    assert status.success?, stderr
+    assert_includes stdout, "schema_version: 1"
+  end
 end

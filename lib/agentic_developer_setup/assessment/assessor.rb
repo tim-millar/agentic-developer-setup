@@ -27,6 +27,25 @@ module AgenticDeveloperSetup
         not_applicable
         already_satisfied_by_repository_native
       ].freeze
+      ROADMAP_COMPONENT_PLAN = {
+        "agent_instructions" => { "phase" => 1, "title" => "Establish repository agent instructions and boundaries" },
+        "development_guide" => { "phase" => 1, "title" => "Document reproducible local development" },
+        "testing_strategy" => { "phase" => 1, "title" => "Document deterministic testing and validation strategy" },
+        "architecture_scaffold" => { "phase" => 1, "title" => "Document architecture boundaries for adoption" },
+        "domain_context" => { "phase" => 1, "title" => "Document domain context for adoption" },
+        "command_interface" => { "phase" => 1, "title" => "Establish a stable repository command interface" },
+        "agent_ready_issue_template" => { "phase" => 2, "title" => "Establish the agent-ready task workflow" },
+        "bug_report_issue_template" => { "phase" => 2, "title" => "Establish the defect-report workflow" },
+        "discovery_or_shaping_issue_template" => { "phase" => 2, "title" => "Establish the discovery and shaping workflow" },
+        "issue_template_config" => { "phase" => 2, "title" => "Configure the issue-template chooser" },
+        "pull_request_template" => { "phase" => 2, "title" => "Establish the human review handoff" },
+        "ci_workflow" => { "phase" => 2, "title" => "Align the CI validation workflow" },
+        "git_hooks" => { "phase" => 2, "title" => "Evaluate repository hooks for justified validation" },
+        "agent_launcher" => { "phase" => 2, "title" => "Evaluate an agent launcher and access boundary" },
+        "github_access_helper" => { "phase" => 2, "title" => "Evaluate scoped GitHub access" },
+        "claude_agent_entrypoint" => { "phase" => 2, "title" => "Evaluate the agent compatibility entrypoint" },
+        "commit_metadata" => { "phase" => 3, "title" => "Operationalise commit authorship and metadata conventions" }
+      }.freeze
 
       def initialize(target, framework_root: default_framework_root, clock: -> { Time.now.utc })
         expanded = Pathname.new(target.to_s).expand_path
@@ -137,10 +156,11 @@ module AgenticDeveloperSetup
         return [] unless context.provided?
 
         conflicts = []
-        criticality = context.values.dig("repository", "criticality").to_s.downcase
-        impact = context.values.dig("repository", "deployment_impact").to_s.downcase
-        low_context = %w[low minimal none].include?(criticality) || %w[low minimal none].include?(impact)
-        return [] unless low_context
+        low_fields = %w[criticality deployment_impact].filter_map do |field|
+          value = context.values.dig("repository", field)
+          [field, value] if %w[low minimal none].include?(value.to_s.downcase)
+        end
+        return [] if low_fields.empty?
 
         @inventory.files.keys.sort.each do |path|
           next unless path.match?(/\A(?:README|CONTRIBUTING|AGENTS|CLAUDE|docs\/).*/i)
@@ -149,14 +169,17 @@ module AgenticDeveloperSetup
           next unless content.match?(/\b(?:production|critical|safety[- ]critical|high[- ]impact)\b/i)
 
           key = @evidence.add(type: "file", path: path, method: "context_conflicting_repository_signal", summary: "Repository documentation describes a potentially high-impact context")
-          conflicts << {
-            "field" => context.values.dig("repository", "criticality") ? "repository.criticality" : "repository.deployment_impact",
-            "context_value" => context.values.dig("repository", "criticality") || context.values.dig("repository", "deployment_impact"),
-            "repository_signal" => "high-impact language in recognised documentation",
-            "evidence_ids" => @evidence.references([key])
-          }
+          low_fields.each do |field, value|
+            conflicts << {
+              "field" => "repository.#{field}",
+              "context_value" => value,
+              "repository_signal" => "high-impact language in recognised documentation",
+              "evidence_ids" => @evidence.references([key])
+            }
+          end
         end
-        conflicts.uniq { |item| [item["field"], item["context_value"], item["repository_signal"]] }
+        conflicts.sort_by { |item| [item["field"], item["context_value"], item["repository_signal"], item["evidence_ids"]] }
+          .uniq { |item| [item["field"], item["context_value"], item["repository_signal"], item["evidence_ids"]] }
       end
 
       def readiness(analysis, context, conflicts)
@@ -622,11 +645,13 @@ module AgenticDeveloperSetup
         recommendations.select { |item| %w[adopt_now specialise_now adopt_after_prerequisite].include?(item["state"]) }.each do |item|
           next if items.any? { |roadmap_item| roadmap_item["component"] == item["component"] }
 
-          phase = item["state"] == "adopt_after_prerequisite" ? 1 : 2
+          plan = ROADMAP_COMPONENT_PLAN[item["component"]]
+          next unless plan
+
           items << {
             "key" => "component:#{item["component"]}",
-            "phase" => phase,
-            "title" => "Review and #{item["state"].tr("_", " ")} #{item["component"]}",
+            "phase" => plan["phase"],
+            "title" => plan["title"],
             "component" => item["component"],
             "prerequisite_ids" => item["prerequisite_gap_ids"],
             "gap_ids" => item["prerequisite_gap_ids"],
@@ -659,6 +684,8 @@ module AgenticDeveloperSetup
           "deterministic_validation" => "testing_strategy",
           "ci_alignment" => "ci_workflow",
           "sensitive_area_guidance" => "agent_instructions",
+          "runtime_access" => "agent_launcher",
+          "review_handoff" => "pull_request_template",
           "local_setup_reproducibility" => "development_guide"
         }.fetch(dimension, "agent_instructions")
       end

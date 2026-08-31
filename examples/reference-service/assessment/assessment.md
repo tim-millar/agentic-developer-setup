@@ -78,62 +78,62 @@ No adoption-specific risks were recorded from the inspected evidence.
 
 ## Phased roadmap
 
-- **Phase 2 — Review and adopt now issue_template_config** (`STEP-001`, component `issue_template_config`)
+- **Phase 1 — Document architecture boundaries for adoption** (`STEP-001`, component `architecture_scaffold`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 1 — Document deterministic testing and validation strategy** (`STEP-002`, component `testing_strategy`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 1 — Document domain context for adoption** (`STEP-003`, component `domain_context`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 1 — Document reproducible local development** (`STEP-004`, component `development_guide`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 1 — Establish a stable repository command interface** (`STEP-005`, component `command_interface`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 1 — Establish repository agent instructions and boundaries** (`STEP-006`, component `agent_instructions`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Align the CI validation workflow** (`STEP-007`, component `ci_workflow`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Configure the issue-template chooser** (`STEP-008`, component `issue_template_config`)
   - Gaps: none
   - Prerequisites: none
   - Current framework content is present; retain it and review its applicability.
 
-- **Phase 2 — Review and specialise now agent_instructions** (`STEP-002`, component `agent_instructions`)
+- **Phase 2 — Establish the agent-ready task workflow** (`STEP-009`, component `agent_ready_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Review and specialise now agent_ready_issue_template** (`STEP-003`, component `agent_ready_issue_template`)
+- **Phase 2 — Establish the defect-report workflow** (`STEP-010`, component `bug_report_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Review and specialise now architecture_scaffold** (`STEP-004`, component `architecture_scaffold`)
+- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-011`, component `discovery_or_shaping_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Review and specialise now bug_report_issue_template** (`STEP-005`, component `bug_report_issue_template`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now ci_workflow** (`STEP-006`, component `ci_workflow`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now command_interface** (`STEP-007`, component `command_interface`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now development_guide** (`STEP-008`, component `development_guide`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now discovery_or_shaping_issue_template** (`STEP-009`, component `discovery_or_shaping_issue_template`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now domain_context** (`STEP-010`, component `domain_context`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now pull_request_template** (`STEP-011`, component `pull_request_template`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Review and specialise now testing_strategy** (`STEP-012`, component `testing_strategy`)
+- **Phase 2 — Establish the human review handoff** (`STEP-012`, component `pull_request_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.

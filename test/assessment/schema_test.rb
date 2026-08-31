@@ -75,6 +75,20 @@ class AssessmentSchemaTest < Minitest::Test
     assert_schema_error(invalid, "array of strings")
   end
 
+  def test_non_mapping_assessor_context_is_rejected
+    invalid = copy(@valid)
+    invalid["assessor_context"] = []
+
+    assert_schema_error(invalid, "assessor_context must be a mapping")
+  end
+
+  def test_string_assessor_context_is_rejected
+    invalid = copy(@valid)
+    invalid["assessor_context"] = "provided"
+
+    assert_schema_error(invalid, "assessor_context must be a mapping")
+  end
+
   private
 
   def copy(value)

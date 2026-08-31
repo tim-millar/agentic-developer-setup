@@ -404,7 +404,10 @@ module AgenticDeveloperSetup
 
       def validate_context
         context = @result["assessor_context"]
-        return unless context.is_a?(Hash)
+        unless context.is_a?(Hash)
+          @errors << "assessor_context must be a mapping"
+          return
+        end
 
         optional = %w[schema_version path evidence_ids conflicts repository sensitive_paths approved_agent_runtimes review_requirements known_setup_constraints notes]
         return unless object(context, "assessor_context", required: ["status"], optional: optional)

@@ -15,8 +15,10 @@ class AssessmentPathSafetyTest < Minitest::Test
     output = File.join(@temporary_root, "output.yml")
     File.write(output, "old\n")
 
-    assert_equal Pathname.new(output).expand_path,
-                 AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(output, @target)
+    destination = AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(output, @target)
+
+    assert_equal Pathname.new(output).expand_path, destination.path
+    assert_equal Pathname.new(output).realpath, destination.resolved
   end
 
   def test_external_symlink_pointing_inside_target_is_rejected
@@ -53,8 +55,10 @@ class AssessmentPathSafetyTest < Minitest::Test
     link = File.join(@temporary_root, "outside-link.yml")
     File.symlink(File.join(outside, "assessment.yml"), link)
 
-    assert_equal Pathname.new(link).expand_path,
-                 AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(link, @target)
+    destination = AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(link, @target)
+
+    assert_equal Pathname.new(link).expand_path, destination.path
+    assert_equal Pathname.new(File.join(outside, "assessment.yml")).realpath, destination.resolved
   end
 
   def test_rejected_destinations_leave_target_unchanged
@@ -67,5 +71,79 @@ class AssessmentPathSafetyTest < Minitest::Test
 
     after = Dir.glob(File.join(@target, "**", "*"), File::FNM_DOTMATCH).sort.map { |path| [path, File.lstat(path).ftype] }
     assert_equal before, after
+  end
+
+  def test_output_and_report_same_lexical_destination_is_rejected
+    output = File.join(@temporary_root, "assessment.yml")
+    status = cli_status("--output", output, "--report", output)
+
+    assert_equal 1, status
+    refute File.exist?(output)
+  end
+
+  def test_output_and_report_path_aliases_are_rejected
+    output = File.join(@temporary_root, "nested", "..", "assessment.yml")
+    report = File.join(@temporary_root, "assessment.yml")
+
+    assert_equal 1, cli_status("--output", output, "--report", report)
+  end
+
+  def test_output_and_report_symlink_aliases_are_rejected
+    destination = File.join(@temporary_root, "future", "assessment.yml")
+    first = File.join(@temporary_root, "first.yml")
+    second = File.join(@temporary_root, "second.yml")
+    File.symlink(destination, first)
+    File.symlink(destination, second)
+
+    assert_equal 1, cli_status("--output", first, "--report", second)
+    refute File.exist?(File.join(@target, "future", "assessment.yml"))
+  end
+
+  def test_distinct_external_destinations_are_accepted
+    output = File.join(@temporary_root, "assessment.yml")
+    report = File.join(@temporary_root, "assessment.md")
+
+    assert_equal 0, cli_status("--output", output, "--report", report)
+    assert_includes File.read(output), "schema_version"
+    assert_includes File.read(report), "# Repository assessment"
+  end
+
+  def test_hard_linked_external_output_is_replaced_without_mutating_target
+    target_file = File.join(@target, "README.md")
+    original = "target bytes must remain unchanged\n"
+    File.write(target_file, original)
+    outside_link = File.join(@temporary_root, "result.yml")
+    File.link(target_file, outside_link)
+    target_inode = File.stat(target_file).ino
+
+    assert_equal 0, cli_status("--output", outside_link)
+
+    assert_equal original, File.read(target_file)
+    assert_includes File.read(outside_link), "schema_version"
+    refute_equal target_inode, File.stat(outside_link).ino
+  end
+
+  def test_safe_external_symlink_is_replaced_at_the_requested_entry
+    outside = File.join(@temporary_root, "outside")
+    FileUtils.mkdir_p(outside)
+    linked_target = File.join(outside, "linked-result.yml")
+    File.write(linked_target, "external bytes\n")
+    link = File.join(@temporary_root, "result.yml")
+    File.symlink(linked_target, link)
+
+    assert_equal 0, cli_status("--output", link)
+
+    assert File.file?(link)
+    assert_equal "external bytes\n", File.read(linked_target)
+  end
+
+  private
+
+  def cli_status(*arguments)
+    AgenticDeveloperSetup::Assessment::CLI.run(
+      [@target, *arguments],
+      stdout: StringIO.new,
+      stderr: StringIO.new
+    )
   end
 end

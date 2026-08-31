@@ -27,7 +27,8 @@ check:
 
 .PHONY: assess
 assess:
-	ruby scripts/assess_repository.rb $(REPO)
+	@test -n "$(REPO)" || { echo "REPO is required" >&2; exit 2; }
+	ruby scripts/assess_repository.rb "$(REPO)"
 
 .PHONY: check-reference-service
 check-reference-service:

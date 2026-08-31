@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "optparse"
+require "tempfile"
 require "yaml"
 
 module AgenticDeveloperSetup
@@ -13,9 +14,9 @@ module AgenticDeveloperSetup
         raise InvocationError, "unexpected arguments: #{argv.join(' ')}" unless argv.empty?
         raise InvocationError, "--report cannot be combined with --no-report" if options[:report] && options[:no_report]
 
-        PathSafety.validate_output!(options[:output], target) if options[:output]
-        PathSafety.validate_output!(options[:report], target) if options[:report]
-        if options[:output] && options[:report] && Pathname.new(options[:output]).expand_path == Pathname.new(options[:report]).expand_path
+        output_destination = options[:output] && PathSafety.validate_output!(options[:output], target)
+        report_destination = options[:report] && PathSafety.validate_output!(options[:report], target)
+        if output_destination && report_destination && output_destination.identity == report_destination.identity
           raise InvocationError, "--output and --report must be different paths"
         end
 
@@ -24,9 +25,9 @@ module AgenticDeveloperSetup
         report = if options[:report] && !options[:no_report]
                    MarkdownRenderer.render(result)
                  end
-        write(options[:output], yaml) if options[:output]
+        write(output_destination, yaml, target) if output_destination
         stdout.write(yaml) unless options[:output]
-        write(options[:report], report) if report
+        write(report_destination, report, target) if report
         0
       rescue OptionParser::ParseError, Error => e
         stderr.puts "ERROR: #{e.message}"
@@ -49,8 +50,29 @@ module AgenticDeveloperSetup
         options
       end
 
-      def self.write(path, content)
-        File.binwrite(path, content)
+      def self.write(destination, content, target_root)
+        validated = PathSafety.validate_output!(destination.path, target_root)
+        unless validated.identity == destination.identity
+          raise InvocationError, "output destination changed after validation"
+        end
+
+        mode = existing_mode(validated.path)
+        Tempfile.create([".assessment-", ".tmp"], validated.resolved.dirname.to_s) do |temporary|
+          temporary.binmode
+          temporary.write(content)
+          temporary.flush
+          temporary.fsync
+          temporary.chmod(mode) if mode
+          temporary.close
+          File.rename(temporary.path, validated.path.to_s)
+        end
+      end
+
+      def self.existing_mode(path)
+        stat = File.lstat(path.to_s)
+        stat.mode & 0o7777 if stat.file? && !stat.symlink?
+      rescue Errno::ENOENT
+        nil
       end
 
       def self.deep_copy(value)
@@ -64,7 +86,7 @@ module AgenticDeveloperSetup
         end
       end
 
-      private_class_method :parse_options, :write, :deep_copy
+      private_class_method :parse_options, :write, :existing_mode, :deep_copy
     end
   end
 end

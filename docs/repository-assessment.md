@@ -26,7 +26,15 @@ and `--no-report`. YAML is written to stdout when `--output` is omitted. A
 Markdown report is written only when `--report` is supplied; this keeps the
 default stdout stream machine-readable. Explicit YAML and report paths inside
 the assessed repository are rejected. Output destinations must already have
-an appropriate parent directory.
+an appropriate parent directory. Output and report destinations are compared
+by their resolved destination identity, including symlink and dangling-symlink
+aliases, before assessment or writing begins. Each write creates the complete
+content in a new temporary file in the resolved external destination directory
+and atomically replaces the requested final directory entry. Existing regular
+file modes are retained; a final safe symlink is replaced rather than followed.
+The destination is revalidated immediately before replacement. This protects
+normal operation from hard links and unsafe aliases, but is not a hostile
+multi-process filesystem-containment guarantee.
 
 The assessor never installs dependencies, runs project commands, invokes
 tests, builds, linters, formatters, migrations, deployments, agents, LLMs, or
@@ -103,9 +111,12 @@ raw arbitrary file bodies or secret-bearing values are emitted.
 Confidence is exactly one of:
 
 * `high` — direct machine-readable, exact-path, Git, command, CI, or exact
-  framework evidence;
+  framework evidence. A single manifest, lockfile, explicit package-manager
+  declaration, tool configuration, dependency declaration, or tool-bearing
+  package script is sufficient for high confidence when it is not conflicting;
 * `medium` — corroborated weaker signals or a documented command supported by
-  compatible configuration;
+  compatible configuration. The npm manager inferred from a bare `package.json`
+  with no package-manager declaration or lockfile remains medium confidence;
 * `low` — one weak structural signal or an ambiguous conventional signal.
 
 Conflicting repository and context evidence remains visible and cannot yield a
@@ -234,11 +245,20 @@ impact, and mitigation. They do not constitute a vulnerability scan or code
 quality judgement.
 
 Roadmap items use deterministic `STEP-###` IDs and phases 0–3. Phase 0
-clarifies or unblocks; Phase 1 establishes repository contract and validation;
-Phase 2 adds justified workflow/runtime controls; Phase 3 is reserved for
-future operationalisation after the Issue #9 metadata and Issue #10 tooling
-work. Items and prerequisites are generated from actual gaps and component
-recommendations, so empty phases may be omitted from Markdown.
+clarifies or unblocks; Phase 1 establishes repository contract, context,
+command, and validation foundations; Phase 2 adds justified task/review,
+CI, hook, runtime, and access controls; Phase 3 is reserved for later
+operationalisation. The current component mapping places
+`agent_instructions`, `development_guide`, `testing_strategy`,
+`architecture_scaffold`, `domain_context`, and `command_interface` in Phase 1.
+Issue/review templates, `ci_workflow`, `git_hooks`, `agent_launcher`, and
+`github_access_helper` are Phase 2 actions. Deferred operational work is only
+emitted in Phase 3 when the current recommendation logic supplies a roadmap
+item. Blocking gaps remain Phase 0. Component recommendations that are
+already satisfied by repository-native mechanisms, optional evaluations, or
+deferred items do not receive redundant generic roadmap steps; roadmap actions
+use capability-specific titles and are skipped when an existing gap step
+already provides the sequencing action.
 
 ## Assessor context
 

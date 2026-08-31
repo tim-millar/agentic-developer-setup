@@ -38,37 +38,37 @@ tooling:
   package_managers:
   - name: uv
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E065
   test_frameworks:
   - name: pytest
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E061
   linters:
   - name: Ruff
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E063
   formatters:
   - name: Ruff format
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E064
   type_checkers:
   - name: mypy
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E059
   task_runners:
   - name: Make
     status: detected
-    confidence: medium
+    confidence: high
     evidence_ids:
     - E041
   command_surface:
@@ -212,21 +212,16 @@ validation:
       signals:
       - documented_command_detected
       evidence_ids:
-      - E004
       - E005
-      - E006
       - E007
       - E008
       - E009
-      - E010
       - E011
       - E012
       - E013
       - E014
       - E015
       - E016
-      - E017
-      - E018
       - E019
       - E020
       - E021
@@ -520,21 +515,16 @@ readiness:
     - E001
     - E002
     - E003
-    - E004
     - E005
-    - E006
     - E007
     - E008
     - E009
-    - E010
     - E011
     - E012
     - E013
     - E014
     - E015
     - E016
-    - E017
-    - E018
     - E019
     - E020
     - E021
@@ -608,13 +598,11 @@ tier_recommendation:
   - E001
   - E002
   - E003
-  - E004
   - E005
   - E006
   - E007
   - E008
   - E009
-  - E010
   - E011
   - E012
   - E013
@@ -622,7 +610,6 @@ tier_recommendation:
   - E015
   - E016
   - E017
-  - E018
   - E019
   - E020
   - E021
@@ -801,96 +788,96 @@ gaps: []
 risks: []
 roadmap:
 - id: STEP-001
-  phase: 2
-  title: Review and adopt now issue_template_config
-  component: issue_template_config
-  prerequisite_ids: []
-  gap_ids: []
-  rationale: Current framework content is present; retain it and review its applicability.
-- id: STEP-002
-  phase: 2
-  title: Review and specialise now agent_instructions
-  component: agent_instructions
-  prerequisite_ids: []
-  gap_ids: []
-  rationale: A framework-like artefact is present; confirm provenance and specialise
-    it to repository evidence.
-- id: STEP-003
-  phase: 2
-  title: Review and specialise now agent_ready_issue_template
-  component: agent_ready_issue_template
-  prerequisite_ids: []
-  gap_ids: []
-  rationale: A framework-like artefact is present; confirm provenance and specialise
-    it to repository evidence.
-- id: STEP-004
-  phase: 2
-  title: Review and specialise now architecture_scaffold
+  phase: 1
+  title: Document architecture boundaries for adoption
   component: architecture_scaffold
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
+- id: STEP-002
+  phase: 1
+  title: Document deterministic testing and validation strategy
+  component: testing_strategy
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-003
+  phase: 1
+  title: Document domain context for adoption
+  component: domain_context
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-004
+  phase: 1
+  title: Document reproducible local development
+  component: development_guide
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
 - id: STEP-005
-  phase: 2
-  title: Review and specialise now bug_report_issue_template
-  component: bug_report_issue_template
+  phase: 1
+  title: Establish a stable repository command interface
+  component: command_interface
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-006
-  phase: 2
-  title: Review and specialise now ci_workflow
-  component: ci_workflow
+  phase: 1
+  title: Establish repository agent instructions and boundaries
+  component: agent_instructions
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-007
   phase: 2
-  title: Review and specialise now command_interface
-  component: command_interface
+  title: Align the CI validation workflow
+  component: ci_workflow
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-008
   phase: 2
-  title: Review and specialise now development_guide
-  component: development_guide
+  title: Configure the issue-template chooser
+  component: issue_template_config
   prerequisite_ids: []
   gap_ids: []
-  rationale: A framework-like artefact is present; confirm provenance and specialise
-    it to repository evidence.
+  rationale: Current framework content is present; retain it and review its applicability.
 - id: STEP-009
   phase: 2
-  title: Review and specialise now discovery_or_shaping_issue_template
-  component: discovery_or_shaping_issue_template
+  title: Establish the agent-ready task workflow
+  component: agent_ready_issue_template
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-010
   phase: 2
-  title: Review and specialise now domain_context
-  component: domain_context
+  title: Establish the defect-report workflow
+  component: bug_report_issue_template
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-011
   phase: 2
-  title: Review and specialise now pull_request_template
-  component: pull_request_template
+  title: Establish the discovery and shaping workflow
+  component: discovery_or_shaping_issue_template
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
 - id: STEP-012
   phase: 2
-  title: Review and specialise now testing_strategy
-  component: testing_strategy
+  title: Establish the human review handoff
+  component: pull_request_template
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise

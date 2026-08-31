@@ -7,6 +7,12 @@ module AgenticDeveloperSetup
     module PathSafety
       module_function
 
+      Destination = Struct.new(:path, :resolved, keyword_init: true) do
+        def identity
+          resolved.to_s
+        end
+      end
+
       def validate_output!(path, target_root)
         candidate = Pathname.new(path.to_s).expand_path
         target = Pathname.new(target_root).realpath
@@ -14,7 +20,7 @@ module AgenticDeveloperSetup
 
         resolved = resolve_without_following_unsafe_symlinks(candidate)
         reject! if inside?(resolved, target)
-        candidate
+        Destination.new(path: candidate, resolved: resolved)
       rescue Errno::EACCES, Errno::ELOOP, Errno::EINVAL, Errno::ENOTDIR => e
         raise InvocationError, "output destination cannot be resolved: #{e.message}"
       end

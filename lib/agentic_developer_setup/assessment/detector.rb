@@ -9,6 +9,15 @@ module AgenticDeveloperSetup
       SUPPORTED_ECOSYSTEMS = %w[node typescript python].freeze
       DOCUMENT_COMMAND_PATTERN = /\b(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|uv\s+run\s+[^\s`]+|(?:pytest|ruff|mypy|tsc)\b)/
       CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run|pytest|ruff|mypy|tsc)\b)/
+      DIRECT_EVIDENCE_METHODS = %w[
+        package_json_project_metadata package_manager_lockfile package_json_manager
+        pyproject_project_metadata requirements_project_metadata requirements_file uv_lockfile
+        typescript_configuration typescript_dependency typescript_package_script
+        pytest_configuration ruff_configuration ruff_formatter_configuration mypy_configuration
+        eslint_dependency eslint_configuration prettier_dependency prettier_configuration
+        package_script_test_framework package_script_type_checker package_scripts
+        make_command_surface make_target
+      ].freeze
 
       def initialize(inventory, catalogue, evidence)
         @inventory = inventory
@@ -106,7 +115,7 @@ module AgenticDeveloperSetup
           name: name,
           evidence: evidence_keys,
           paths: paths,
-          confidence: evidence_keys.length > 1 ? "high" : "medium",
+          confidence: confidence_for(evidence_keys),
           signals: [summary]
         }
       end
@@ -140,6 +149,14 @@ module AgenticDeveloperSetup
           keys << file("package.json", "typescript_dependency", "TypeScript package dependency detected")
         end
         keys
+      end
+
+      def typescript_script_evidence
+        package_scripts.filter_map do |name, command|
+          next unless command.to_s.match?(/\btsc(?:\s|\z)/)
+
+          file("package.json", "package_script_type_checker", "Package script #{name} invokes the TypeScript compiler")
+        end
       end
 
       def tooling
@@ -186,7 +203,13 @@ module AgenticDeveloperSetup
           {
             "name" => name,
             "status" => conflict && %w[npm yarn pnpm].include?(name) ? "conflicting" : "detected",
-            "confidence" => conflict ? "low" : (keys.length > 1 ? "high" : "medium"),
+            "confidence" => if conflict
+                              "low"
+                            elsif name == "npm" && declared.nil? && lockfiles.empty?
+                              "medium"
+                            else
+                              confidence_for(keys)
+                            end,
             "evidence_ids" => @evidence.ids_for(keys),
             "_evidence_keys" => keys
           }
@@ -242,8 +265,9 @@ module AgenticDeveloperSetup
           keys << file("mypy.ini", "mypy_configuration", "mypy configuration detected") if @inventory.exists?("mypy.ini")
           entries << tool_entry_with_keys("mypy", "Python static type checker detected", keys)
         end
-        if typescript_evidence.any? || package_scripts.values.any? { |command| command.to_s.match?(/\btsc\b/) }
-          entries << tool_entry_with_keys("TypeScript compiler", "TypeScript compiler detected", typescript_evidence)
+        typescript_keys = typescript_evidence + typescript_script_evidence
+        if typescript_keys.any?
+          entries << tool_entry_with_keys("TypeScript compiler", "TypeScript compiler detected", typescript_keys)
         end
         entries.sort_by { |entry| entry["name"] }
       end
@@ -465,7 +489,7 @@ module AgenticDeveloperSetup
       end
 
       def documentation_evidence_for(name)
-        return docs_commands.flat_map { |entry| entry[:keys] } if name == "validation"
+        return docs_commands.select { |entry| validation_command?(entry[:command]) }.flat_map { |entry| entry[:keys] } if name == "validation"
 
         []
       end
@@ -473,14 +497,7 @@ module AgenticDeveloperSetup
       def documented_signals_for(name)
         return [] unless name == "tests" || name == "linting" || name == "formatting" || name == "static_type_checking"
 
-        command = docs_commands.map { |entry| entry[:command] }.join(" ")
-        case name
-        when "tests" then command.match?(/pytest|npm run test|yarn test|pnpm test|make test/) ? ["documented_command_detected"] : []
-        when "linting" then command.match?(/ruff|eslint|make lint/) ? ["documented_command_detected"] : []
-        when "formatting" then command.match?(/prettier|ruff|format/) ? ["documented_command_detected"] : []
-        when "static_type_checking" then command.match?(/mypy|tsc|typecheck/) ? ["documented_command_detected"] : []
-        else []
-        end
+        docs_commands.any? { |entry| documented_command_matches?(name, entry[:command]) } ? ["documented_command_detected"] : []
       end
 
       def ci_signals_for(name)
@@ -491,6 +508,28 @@ module AgenticDeveloperSetup
       def ci_evidence_for(name)
         token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
         token ? @ci[:invocations].filter_map { |entry| entry[:key] if entry[:command].match?(token) } : []
+      end
+
+      def validation_command?(command)
+        identity = command_identity(command)
+        identity.match?(/\A(?:make|package):(?:test|check|verify|lint|format|format-check|typecheck|build|compile)\z/) ||
+          %w[tool:pytest tool:ruff tool:mypy tool:tsc].include?(identity)
+      end
+
+      def documented_command_matches?(name, command)
+        identity = command_identity(command)
+        case name
+        when "tests"
+          identity.match?(/\A(?:make|package):test\z/) || identity == "tool:pytest"
+        when "linting"
+          identity.match?(/\A(?:make|package):lint\z/) || identity == "tool:ruff" || command.to_s.match?(/\A(?:npm|yarn|pnpm)\s+(?:run\s+)?lint\z/i)
+        when "formatting"
+          identity.match?(/\A(?:make|package):format(?:-check)?\z/) || identity == "tool:ruff" || identity == "package:prettier"
+        when "static_type_checking"
+          identity.match?(/\A(?:make|package):typecheck\z/) || %w[tool:mypy tool:tsc].include?(identity)
+        else
+          false
+        end
       end
 
       def package_scripts
@@ -671,10 +710,16 @@ module AgenticDeveloperSetup
         {
           "name" => name,
           "status" => "detected",
-          "confidence" => keys.length > 1 ? "high" : "medium",
+          "confidence" => confidence_for(keys),
           "evidence_ids" => @evidence.ids_for(keys),
           "_evidence_keys" => keys
         }
+      end
+
+      def confidence_for(keys, fallback: "medium")
+        return fallback if keys.empty?
+
+        keys.any? { |key| DIRECT_EVIDENCE_METHODS.include?(@evidence.item_for(key)&.fetch("method", nil)) } ? "high" : fallback
       end
 
       def evidence_path(key)

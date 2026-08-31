@@ -120,6 +120,8 @@ module AgenticDeveloperSetup
           child_path = @root.join(child_relative)
           if excluded_directory_name?(child)
             add_excluded(child_relative) if directory_or_symlink?(child_path)
+          elsif symlink?(child_path)
+            record_symlink_boundary(child_relative, child_path)
           elsif regular_directory?(child_path)
             Dir.children(child_path).sort.each do |filename|
               add_if_known(File.join(child_relative, filename))
