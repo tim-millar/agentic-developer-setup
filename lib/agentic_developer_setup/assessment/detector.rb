@@ -1,0 +1,600 @@
+# frozen_string_literal: true
+
+require "json"
+
+module AgenticDeveloperSetup
+  module Assessment
+    class Detector
+      SUPPORTED_ECOSYSTEMS = %w[node typescript python].freeze
+      DOCUMENT_COMMAND_PATTERN = /\b(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|uv\s+run\s+[^\s`]+|(?:pytest|ruff|mypy|tsc)\b)/
+      CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run|pytest|ruff|mypy|tsc)\b)/
+
+      def initialize(inventory, catalogue, evidence)
+        @inventory = inventory
+        @catalogue = catalogue
+        @evidence = evidence
+      end
+
+      def analyze
+        @package = parse_json("package.json")
+        @pyproject = text("pyproject.toml")
+        @make_targets = make_targets
+        @documentation = documentation
+        @ci = ci_findings
+        @local_commands = local_commands
+        {
+          scope: scope,
+          ecosystem: ecosystems,
+          tooling: tooling,
+          validation: validation,
+          documentation: @documentation,
+          facts: facts
+        }
+      end
+
+      private
+
+      def facts
+        {
+          make_targets: @make_targets,
+          package_scripts: package_scripts.keys.sort,
+          local_commands: @local_commands,
+          ci_commands: @ci[:commands].sort,
+          ci_present: !@ci[:paths].empty?,
+          ci_invocations: @ci[:invocation_keys],
+          ecosystems: ecosystem_facts,
+          framework_paths: @inventory.files.keys.sort
+        }
+      end
+
+      def scope
+        roots = @inventory.candidate_project_files.map { |path| File.dirname(path).sub(%r{\A\./}, "") }
+        roots = roots.map { |root| root.empty? ? "." : root }.uniq.sort
+        {
+          "type" => "repository",
+          "project_roots" => roots,
+          "shape" => if roots.empty?
+                       "unknown"
+                     elsif roots.length == 1
+                       "single_project"
+                     else
+                       "multiple_projects"
+                     end,
+          "excluded_paths" => @inventory.excluded_paths.sort,
+          "ignored_paths" => @inventory.ignored_paths.sort,
+          "symlink_boundaries" => @inventory.symlink_boundaries.sort
+        }
+      end
+
+      def ecosystem_facts
+        facts = []
+        add_ecosystem_fact(facts, "python", python_evidence, "Python project metadata detected")
+        add_ecosystem_fact(facts, "node", node_evidence, "Node.js project metadata detected")
+        add_ecosystem_fact(facts, "typescript", typescript_evidence, "TypeScript configuration or package detected")
+
+        unsupported = %w[Cargo.toml go.mod Gemfile composer.json pom.xml mix.exs].select { |path| @inventory.exists?(path) }
+        unless unsupported.empty?
+          keys = unsupported.map { |path| file(path, "unsupported_ecosystem_marker", "Unsupported ecosystem marker detected") }
+          facts << { name: "unsupported", evidence: keys, paths: unsupported.sort, confidence: "low" }
+        end
+        facts.sort_by { |entry| entry[:name] }
+      end
+
+      def ecosystems
+        facts = ecosystem_facts
+        ordered = facts.sort_by { |entry| [entry[:paths].first.to_s, entry[:name]] }
+        ordered.each_with_index.map do |entry, index|
+          {
+            "name" => entry[:name],
+            "role" => index.zero? ? "primary" : "secondary",
+            "status" => "detected",
+            "confidence" => entry[:confidence],
+            "paths" => entry[:paths].sort,
+            "evidence_ids" => @evidence.ids_for(entry[:evidence]),
+            "signals" => entry[:signals] || []
+          }
+        end
+      end
+
+      def add_ecosystem_fact(collection, name, evidence_keys, summary)
+        return if evidence_keys.empty?
+
+        paths = evidence_keys.filter_map { |key| evidence_path(key) }.uniq
+        collection << {
+          name: name,
+          evidence: evidence_keys,
+          paths: paths,
+          confidence: evidence_keys.length > 1 ? "high" : "medium",
+          signals: [summary]
+        }
+      end
+
+      def python_evidence
+        keys = []
+        pyprojects = @inventory.files.keys.select { |path| File.basename(path).casecmp("pyproject.toml").zero? }
+        pyprojects.each { |path| keys << file(path, "pyproject_project_metadata", "Python project metadata detected") }
+        requirements = @inventory.files.keys.select { |path| File.basename(path).match?(/\Arequirements[^\/]*\.txt\z/i) }
+        requirements.each { |path| keys << file(path, "requirements_project_metadata", "Requirements-based Python project metadata detected") }
+        @inventory.files.keys.select { |path| File.basename(path) == "uv.lock" }.each { |path| keys << file(path, "uv_lockfile", "uv lockfile detected") }
+        keys
+      end
+
+      def node_evidence
+        keys = []
+        @inventory.files.keys.select { |path| File.basename(path) == "package.json" }.each do |path|
+          keys << file(path, "package_json_project_metadata", "Node.js package manifest detected")
+        end
+        @inventory.files.keys.select { |path| %w[package-lock.json yarn.lock pnpm-lock.yaml].include?(File.basename(path)) }.each do |path|
+          keys << file(path, "package_manager_lockfile", "Node.js package-manager lockfile detected")
+        end
+        keys
+      end
+
+      def typescript_evidence
+        keys = @inventory.files.keys.select { |path| File.basename(path).match?(/\At sconfig[^\/]*\.json\z/ix) }.map do |path|
+          file(path, "typescript_configuration", "TypeScript configuration detected")
+        end
+        if package_dependencies.keys.any? { |name| name == "typescript" }
+          keys << file("package.json", "typescript_dependency", "TypeScript package dependency detected")
+        end
+        keys
+      end
+
+      def tooling
+        clean_internal({
+          "package_managers" => package_managers,
+          "test_frameworks" => test_frameworks,
+          "linters" => linters,
+          "formatters" => formatters,
+          "type_checkers" => type_checkers,
+          "task_runners" => task_runners,
+          "command_surface" => command_surface,
+          "ci" => ci_tooling,
+          "hooks" => hooks,
+          "workspace" => workspace_tooling,
+          "containerisation" => containerisation
+        })
+      end
+
+      def package_managers
+        managers = []
+        if @inventory.exists?("package.json")
+          manager = @package && @package["packageManager"].to_s.split("@").first
+          if %w[npm yarn pnpm].include?(manager)
+            managers << tool_entry(manager, "package_json_manager", "Package manager declared in package manifest", "package.json")
+          end
+          managers << tool_entry("npm", "package_json_default_manager", "npm-compatible package manifest detected", "package.json") if manager.nil? || manager.empty?
+        end
+        { "package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm" }.each do |path, manager|
+          managers << tool_entry(manager, "package_manager_lockfile", "#{manager} lockfile detected", path) if @inventory.exists?(path)
+        end
+        if @inventory.exists?("uv.lock")
+          managers << tool_entry("uv", "uv_lockfile", "uv lockfile detected", "uv.lock")
+        end
+        if @inventory.files.keys.any? { |path| path.match?(/\Arequirements[^\/]*\.txt\z/i) }
+          path = @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).first
+          managers << tool_entry("pip", "requirements_file", "pip-compatible requirements file detected", path)
+        end
+        names = managers.map { |entry| entry["name"] }
+        conflict = names.uniq.length > 1 && names.any? { |name| %w[npm yarn pnpm].include?(name) }
+        managers.map { |entry| entry.merge("status" => conflict ? "conflicting" : "detected") }.sort_by { |entry| entry["name"] }
+      end
+
+      def test_frameworks
+        entries = []
+        if python_configuration_mentions?(/pytest/i) || @inventory.directory?("tests") || @inventory.directory?("test")
+          keys = []
+          keys.concat(python_dependency_evidence(/pytest/i, "pytest_configuration", "pytest configuration or dependency detected"))
+          keys << directory("tests", "test_directory", "Test directory detected") if @inventory.directory?("tests")
+          keys << directory("test", "test_directory", "Test directory detected") if @inventory.directory?("test")
+          entries << tool_entry_with_keys("pytest", "Python test framework detected", keys)
+        end
+        package_scripts.each do |name, command|
+          next unless command.to_s.match?(/\b(?:jest|vitest|mocha)\b/i)
+
+          entries << tool_entry_with_keys(command[/\b(?:jest|vitest|mocha)\b/i].downcase, "Node test framework referenced by package script", [file("package.json", "package_script_test_framework", "Node test framework referenced by package script")])
+        end
+        entries.sort_by { |entry| entry["name"] }
+      end
+
+      def linters
+        entries = []
+        if python_configuration_mentions?(/\[tool\.ruff\]|\bruff\b/i) || @inventory.exists?("ruff.toml") || @inventory.exists?(".ruff.toml")
+          keys = python_dependency_evidence(/\[tool\.ruff\]|\bruff\b/i, "ruff_configuration", "Ruff configuration or dependency detected")
+          %w[ruff.toml .ruff.toml].each { |path| keys << file(path, "ruff_configuration", "Ruff configuration detected") if @inventory.exists?(path) }
+          entries << tool_entry_with_keys("Ruff", "Python linting tool detected", keys)
+        end
+        if package_dependencies.keys.any? { |name| name == "eslint" } || eslint_config_path
+          keys = [file("package.json", "eslint_dependency", "ESLint package detected")].compact
+          keys << file(eslint_config_path, "eslint_configuration", "ESLint configuration detected") if eslint_config_path
+          entries << tool_entry_with_keys("ESLint", "Node linting tool detected", keys)
+        end
+        entries.sort_by { |entry| entry["name"] }
+      end
+
+      def formatters
+        entries = []
+        if python_configuration_mentions?(/\[tool\.ruff\.format\]|\bruff\b/i)
+          entries << tool_entry_with_keys("Ruff format", "Python formatter detected", python_dependency_evidence(/\[tool\.ruff\.format\]|\bruff\b/i, "ruff_formatter_configuration", "Ruff formatter configuration or dependency detected"))
+        end
+        if package_dependencies.keys.any? { |name| name == "prettier" } || prettier_config_path
+          keys = [file("package.json", "prettier_dependency", "Prettier package detected")].compact
+          keys << file(prettier_config_path, "prettier_configuration", "Prettier configuration detected") if prettier_config_path
+          entries << tool_entry_with_keys("Prettier", "Node formatter detected", keys)
+        end
+        entries.sort_by { |entry| entry["name"] }
+      end
+
+      def type_checkers
+        entries = []
+        if python_configuration_mentions?(/\[tool\.mypy\]|\bmypy\b/i) || @inventory.exists?("mypy.ini")
+          keys = python_dependency_evidence(/\[tool\.mypy\]|\bmypy\b/i, "mypy_configuration", "mypy configuration or dependency detected")
+          keys << file("mypy.ini", "mypy_configuration", "mypy configuration detected") if @inventory.exists?("mypy.ini")
+          entries << tool_entry_with_keys("mypy", "Python static type checker detected", keys)
+        end
+        if typescript_evidence.any? || package_scripts.values.any? { |command| command.to_s.match?(/\btsc\b/) }
+          entries << tool_entry_with_keys("TypeScript compiler", "TypeScript compiler detected", typescript_evidence)
+        end
+        entries.sort_by { |entry| entry["name"] }
+      end
+
+      def task_runners
+        entries = []
+        entries << tool_entry_with_keys("Make", "Make command interface detected", [file("Makefile", "make_command_surface", "Makefile command interface detected")]) if @inventory.exists?("Makefile")
+        entries << tool_entry_with_keys("package.json scripts", "Package scripts command interface detected", [file("package.json", "package_scripts", "package scripts detected")]) if package_scripts.any?
+        entries.sort_by { |entry| entry["name"] }
+      end
+
+      def command_surface
+        commands = []
+        @make_targets.each do |target|
+          commands << { "name" => "make #{target}", "source" => "Makefile", "evidence_ids" => @evidence.ids_for([file("Makefile", "make_target", "Make target #{target} declared")]) }
+        end
+        package_scripts.keys.sort.each do |name|
+          commands << { "name" => "package script #{name}", "source" => "package.json", "evidence_ids" => @evidence.ids_for([file("package.json", "package_script", "Package script #{name} declared")]) }
+        end
+        docs_commands.each do |command, key|
+          commands << { "name" => command, "source" => "documentation", "evidence_ids" => @evidence.ids_for([key]) }
+        end
+        commands = commands.uniq { |entry| entry["name"] }.sort_by { |entry| entry["name"] }
+        {
+          "status" => commands.empty? ? "not_detected" : "detected",
+          "commands" => commands
+        }
+      end
+
+      def ci_tooling
+        {
+          "provider" => @ci[:paths].empty? ? "none_detected" : "github_actions",
+          "workflow_paths" => @ci[:paths].sort,
+          "invocations" => @ci[:commands].sort,
+          "evidence_ids" => @evidence.ids_for(@ci[:file_keys] + @ci[:invocation_keys])
+        }
+      end
+
+      def hooks
+        paths = @inventory.files.keys.select do |path|
+          path.match?(%r{\A(?:\.pre-commit-config\.ya?ml|lefthook\.ya?ml|\.husky/)}i)
+        end
+        {
+          "status" => paths.empty? ? "not_detected" : "detected",
+          "paths" => paths.sort,
+          "evidence_ids" => @evidence.ids_for(paths.map { |path| file(path, "hook_configuration", "Hook configuration detected") })
+        }
+      end
+
+      def workspace_tooling
+        workspaces = @package && @package["workspaces"]
+        detected = workspaces.is_a?(Array) || workspaces.is_a?(Hash) || @inventory.exists?("pnpm-workspace.yaml")
+        {
+          "status" => detected ? "detected" : "not_detected",
+          "evidence_ids" => detected ? @evidence.ids_for([file("package.json", "workspace_configuration", "Workspace configuration detected"), file("pnpm-workspace.yaml", "workspace_configuration", "pnpm workspace configuration detected")]) : []
+        }
+      end
+
+      def containerisation
+        paths = @inventory.files.keys.grep(/\ADockerfile[^\/]*\z/i)
+        {
+          "status" => paths.empty? ? "not_detected" : "detected",
+          "paths" => paths.sort,
+          "evidence_ids" => @evidence.ids_for(paths.map { |path| file(path, "containerisation_marker", "Containerisation metadata detected") })
+        }
+      end
+
+      def validation
+        {
+          "capabilities" => {
+            "tests" => capability("tests", test_frameworks.any? || @inventory.directory?("tests") || @inventory.directory?("test"), test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "linting" => capability("linting", linters.any?, linters.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "formatting" => capability("formatting", formatters.any?, formatters.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "static_type_checking" => capability("static_type_checking", type_checkers.any?, type_checkers.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "build_compile" => build_capability,
+            "standard_local_verification" => standard_verification,
+            "ci_execution" => ci_execution,
+            "local_hooks" => hooks,
+            "validation_documentation" => validation_documentation
+          },
+          "ci_alignment" => ci_alignment,
+          "local_commands" => @local_commands,
+          "ci_commands" => @ci[:commands].sort
+        }
+      end
+
+      def capability(_name, implementation, keys)
+        signals = []
+        signals << "implementation_detected" if implementation
+        signals << "configuration_detected" unless keys.empty?
+        signals.concat(documented_signals_for(_name))
+        signals.concat(ci_signals_for(_name))
+        {
+          "status" => signals.first || "not_detected",
+          "signals" => signals.uniq,
+          "evidence_ids" => @evidence.ids_for(keys + documentation_evidence_for(_name) + ci_evidence_for(_name))
+        }
+      end
+
+      def build_capability
+        keys = []
+        implementation = package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) } || @pyproject&.match?(/\[build-system\]/)
+        keys << file("package.json", "package_build_script", "Package build script detected") if package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) }
+        keys << file("pyproject.toml", "python_build_configuration", "Python build configuration detected") if @pyproject&.match?(/\[build-system\]/)
+        capability("build_compile", implementation, keys.compact)
+      end
+
+      def standard_verification
+        candidates = @make_targets.select { |target| %w[check verify test lint typecheck format-check].include?(target) }
+        candidates += package_scripts.keys.select { |name| name.match?(/\A(?:check|verify|test|lint|typecheck|format-check)\z/) }
+        keys = []
+        keys << file("Makefile", "verification_command", "Standard verification Make target detected") if @make_targets.any? { |target| %w[check verify].include?(target) }
+        keys << file("package.json", "verification_script", "Standard verification package script detected") if package_scripts.keys.any? { |name| %w[check verify].include?(name) }
+        {
+          "status" => candidates.empty? ? "not_detected" : "documented_command_detected",
+          "commands" => candidates.sort,
+          "evidence_ids" => @evidence.ids_for(keys.compact)
+        }
+      end
+
+      def ci_execution
+        {
+          "status" => @ci[:paths].empty? ? "not_detected" : (@ci[:commands].empty? ? "configuration_detected" : "ci_invocation_detected"),
+          "evidence_ids" => @evidence.ids_for(@ci[:file_keys] + @ci[:invocation_keys])
+        }
+      end
+
+      def validation_documentation
+        keys = documentation_evidence_for("validation")
+        {
+          "status" => keys.empty? ? "not_detected" : "documented_command_detected",
+          "evidence_ids" => @evidence.ids_for(keys)
+        }
+      end
+
+      def ci_alignment
+        return { "status" => "not_applicable", "confidence" => "high", "evidence_ids" => [] } if @ci[:paths].empty?
+
+        overlap = @local_commands.any? { |command| @ci[:commands].any? { |ci_command| ci_command.include?(command) || command.include?(ci_command) } }
+        keys = @ci[:file_keys] + @ci[:invocation_keys]
+        {
+          "status" => overlap ? "ready" : "partial",
+          "confidence" => @ci[:invocation_keys].empty? ? "medium" : "high",
+          "evidence_ids" => @evidence.ids_for(keys),
+          "local_commands" => @local_commands.sort,
+          "ci_commands" => @ci[:commands].sort
+        }
+      end
+
+      def documentation
+        {
+          "root_readme" => doc_entry(root_paths(/\AREADME/i), "README documentation detected"),
+          "development_guide" => doc_entry(paths_for(/\A(?:CONTRIBUTING|docs\/DEVELOPMENT)/i), "Development guidance detected"),
+          "architecture" => doc_entry(paths_for(/\A(?:docs\/)?ARCHITECTURE/i), "Architecture documentation detected"),
+          "domain" => doc_entry(paths_for(/\Adocs\/DOMAIN/i), "Domain documentation detected"),
+          "testing" => doc_entry(paths_for(/\A(?:docs\/TESTING|testing)/i), "Testing guidance detected"),
+          "security" => doc_entry(paths_for(/\A(?:SECURITY|docs\/SECURITY)/i), "Security guidance detected"),
+          "deployment_operations" => doc_entry(paths_for(/\A(?:docs\/)?(?:DEPLOY|OPERATIONS)/i), "Deployment or operations guidance detected"),
+          "adrs" => doc_entry(paths_for(%r{\Adocs/(?:adr|adrs)/}i), "Architecture decision records detected", ambiguous: false),
+          "agent_instructions" => doc_entry(root_paths(/\A(?:AGENTS|CLAUDE)\.md\z/i), "Repository agent instructions detected"),
+          "issue_templates" => doc_entry(@inventory.files.keys.grep(%r{\A\.github/ISSUE_TEMPLATE/}i), "Issue templates detected", ambiguous: false),
+          "pull_request_template" => doc_entry(@inventory.files.keys.grep(%r{\A\.github/PULL_REQUEST_TEMPLATE(?:/.*)?\.md\z}i), "Pull request template detected", ambiguous: false),
+          "ownership" => doc_entry(@inventory.files.keys.grep(%r{\A(?:CODEOWNERS|\.github/CODEOWNERS)\z}i), "Ownership metadata detected")
+        }
+      end
+
+      def doc_entry(paths, summary, ambiguous: paths.length > 1)
+        paths = paths.sort
+        keys = paths.map { |path| file(path, "documentation_presence", summary) }
+        {
+          "status" => paths.empty? ? "not_detected" : "present",
+          "paths" => paths,
+          "discoverability" => paths.empty? ? "unknown" : "obvious",
+          "ambiguity" => ambiguous,
+          "evidence_ids" => @evidence.ids_for(keys)
+        }
+      end
+
+      def docs_commands
+        @docs_commands ||= @inventory.files.keys.sort.filter_map do |path|
+          next unless path.start_with?("docs/") || path.match?(/\AREADME|\ACONTRIBUTING/i)
+
+          content = text(path).to_s
+          match = content.match(DOCUMENT_COMMAND_PATTERN)
+          next unless match
+
+          [match[0], documented_command(path)]
+        end.uniq { |command, _key| command }
+      end
+
+      def documentation_evidence_for(name)
+        return docs_commands.map(&:last) if name == "validation"
+
+        []
+      end
+
+      def documented_signals_for(name)
+        return [] unless name == "tests" || name == "linting" || name == "formatting" || name == "static_type_checking"
+
+        command = docs_commands.map(&:first).join(" ")
+        case name
+        when "tests" then command.match?(/pytest|npm run test|yarn test|pnpm test|make test/) ? ["documented_command_detected"] : []
+        when "linting" then command.match?(/ruff|eslint|make lint/) ? ["documented_command_detected"] : []
+        when "formatting" then command.match?(/prettier|ruff|format/) ? ["documented_command_detected"] : []
+        when "static_type_checking" then command.match?(/mypy|tsc|typecheck/) ? ["documented_command_detected"] : []
+        else []
+        end
+      end
+
+      def ci_signals_for(name)
+        token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
+        token && @ci[:commands].any? { |command| command.match?(token) } ? ["ci_invocation_detected"] : []
+      end
+
+      def ci_evidence_for(name)
+        token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
+        token ? @ci[:invocation_keys].select { |key| evidence_summary(key).match?(token) } : []
+      end
+
+      def package_scripts
+        scripts = @package.is_a?(Hash) ? @package["scripts"] : {}
+        scripts.is_a?(Hash) ? scripts.transform_keys(&:to_s) : {}
+      end
+
+      def package_dependencies
+        return {} unless @package.is_a?(Hash)
+
+        %w[dependencies devDependencies peerDependencies].each_with_object({}) do |group, result|
+          values = @package[group]
+          result.merge!(values) if values.is_a?(Hash)
+        end
+      end
+
+      def eslint_config_path
+        @inventory.files.keys.find { |path| File.basename(path).match?(/\A(?:eslint\.config\..*|\.eslintrc(?:\..*)?)\z/i) }
+      end
+
+      def prettier_config_path
+        @inventory.files.keys.find { |path| File.basename(path).match?(/\A(?:prettier\.config\..*|\.prettierrc(?:\..*)?)\z/i) }
+      end
+
+      def local_commands
+        commands = @make_targets.map { |target| "make #{target}" }
+        commands.concat(package_scripts.keys.map { |name| "package script #{name}" })
+        commands.concat(docs_commands.map(&:first))
+        commands.uniq.sort
+      end
+
+      def make_targets
+        content = text("Makefile")
+        return [] unless content
+
+        content.lines.filter_map do |line|
+          match = line.match(/^([A-Za-z0-9_.-]+)\s*:(?!=)/)
+          match && match[1] unless match && %w[.PHONY .DEFAULT_GOAL].include?(match[1])
+        end.uniq.sort
+      end
+
+      def ci_findings
+        paths = @inventory.files.keys.grep(%r{\A\.github/workflows/.*\.(?:yml|yaml)\z}i).sort
+        file_keys = paths.map { |path| file(path, "github_actions_workflow", "GitHub Actions workflow detected") }
+        invocation_keys = []
+        commands = []
+        paths.each do |path|
+          text(path).to_s.scan(CI_COMMAND_PATTERN).each do |command|
+            commands << command
+            invocation_keys << file(path, "ci_invocation", "GitHub Actions invokes a recognised repository command", type: "ci_invocation")
+          end
+        end
+        { paths: paths, file_keys: file_keys, invocation_keys: invocation_keys, commands: commands.uniq }
+      end
+
+      def parse_json(path)
+        content = text(path)
+        return nil unless content
+
+        JSON.parse(content)
+      rescue JSON::ParserError
+        nil
+      end
+
+      def python_configuration_mentions?(pattern)
+        [@pyproject, *@inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).map { |path| text(path) }].compact.any? { |content| content.match?(pattern) }
+      end
+
+      def python_dependency_evidence(pattern, method, summary)
+        keys = []
+        keys << file("pyproject.toml", method, summary) if @pyproject&.match?(pattern)
+        @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).each do |path|
+          keys << file(path, method, summary) if text(path).to_s.match?(pattern)
+        end
+        keys.compact
+      end
+
+      def text(path)
+        @inventory.read(path)
+      end
+
+      def root_paths(pattern)
+        @inventory.files.keys.select { |path| !path.include?("/") && File.basename(path).match?(pattern) }
+      end
+
+      def paths_for(pattern)
+        @inventory.files.keys.select { |path| path.match?(pattern) }
+      end
+
+      def documented_command(path)
+        return nil unless path && @inventory.exists?(path)
+
+        @evidence.add(type: "documented_command", path: path, method: "documented_command", summary: "Repository command documented")
+      end
+
+      def file(path, method, summary, type: "file")
+        return nil unless path && @inventory.exists?(path)
+
+        @evidence.add(type: type, path: path, method: method, summary: summary)
+      end
+
+      def directory(path, method, summary)
+        return nil unless @inventory.directory?(path)
+
+        @evidence.add(type: "directory", path: path, method: method, summary: summary)
+      end
+
+      def tool_entry(name, method, summary, path)
+        keys = [file(path, method, summary)].compact
+        tool_entry_with_keys(name, summary, keys)
+      end
+
+      def tool_entry_with_keys(name, summary, keys)
+        {
+          "name" => name,
+          "status" => "detected",
+          "confidence" => keys.length > 1 ? "high" : "medium",
+          "evidence_ids" => @evidence.ids_for(keys),
+          "_evidence_keys" => keys
+        }
+      end
+
+      def evidence_path(key)
+        @evidence.materialize.find { |item| @evidence.id_for(key) == item["id"] }&.fetch("path", nil)
+      end
+
+      def evidence_summary(key)
+        @evidence.materialize.find { |item| @evidence.id_for(key) == item["id"] }.to_h.fetch("summary", "")
+      end
+
+      def clean_internal(value)
+        case value
+        when Hash
+          value.each_with_object({}) do |(key, item), result|
+            next if key == "_evidence_keys"
+
+            result[key] = clean_internal(item)
+          end
+        when Array
+          value.map { |item| clean_internal(item) }
+        else
+          value
+        end
+      end
+    end
+  end
+end

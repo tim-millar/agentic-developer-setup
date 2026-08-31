@@ -16,10 +16,18 @@ test-launcher:
 test-claude-runtime:
 	ruby -Itest test/claude_explore_runtime_test.rb
 
+.PHONY: test-assessment
+test-assessment:
+	ruby -Itest test/assessment_test.rb
+
 .PHONY: check
 check:
 	$(MAKE) test
 	$(MAKE) validate
+
+.PHONY: assess
+assess:
+	ruby scripts/assess_repository.rb $(REPO)
 
 .PHONY: check-reference-service
 check-reference-service:
