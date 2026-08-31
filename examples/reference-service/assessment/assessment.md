@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-- Recommended adoption outcome: **tier-3** (high confidence).
+- Recommended adoption outcome: **tier-2** (high confidence).
 - Readiness findings are capability-specific; this report does not assign an aggregate score.
 - Gaps: 0; risks requiring review: 0.
 
@@ -20,53 +20,53 @@ An assessment recommends an adoption strategy. It does not authorise repository 
 
 - `python` (primary, high confidence): `pyproject.toml`, `uv.lock`
 - Package managers: uv
-- Command surface: make lint, make test, make typecheck, make verify
+- Command surface: make format, make format-check, make lint, make setup, make test, make typecheck, make verify, mypy, pytest, ruff, uv run --locked
 
 ## Readiness overview
 
 | Dimension | Status | Confidence | Consequence |
 | --- | --- | --- | --- |
-| `repository_context` | `ready` | `high` | Repository purpose, roots, and context are discoverable. |
-| `task_boundary` | `ready` | `high` | Task and review templates expose useful boundaries. |
-| `command_surface` | `ready` | `high` | Stable Make commands are discoverable. |
-| `deterministic_validation` | `ready` | `high` | Tests and static checks provide deterministic review evidence. |
-| `ci_alignment` | `ready` | `high` | CI invokes the documented validation surface. |
-| `sensitive_area_guidance` | `ready` | `medium` | Repository instructions provide visible boundaries. |
-| `runtime_access` | `not_applicable` | `high` | No runtime requirement is established. |
-| `review_handoff` | `ready` | `high` | Human review has visible templates. |
-| `local_setup_reproducibility` | `ready` | `high` | Setup and locked dependencies are discoverable. |
+| `repository_context` | `ready` | `high` | Agents need discoverable repository purpose, roots, and development context. |
+| `task_boundary` | `ready` | `high` | Explicit scope, acceptance criteria, and non-goals make agent work reviewable. |
+| `command_surface` | `ready` | `high` | A stable command surface bounds how humans and agents discover local work. |
+| `deterministic_validation` | `ready` | `high` | Static validation evidence helps constrain agent changes without executing project tools. |
+| `ci_alignment` | `ready` | `high` | CI should provide merge-time evidence conceptually aligned with local validation. |
+| `sensitive_area_guidance` | `ready` | `medium` | Recognised repository guidance provides evidence of sensitive-area boundaries. |
+| `runtime_access` | `not_applicable` | `high` | No agent runtime requirement is established by static repository evidence. |
+| `review_handoff` | `ready` | `high` | Human review needs a visible place for scope and validation evidence. |
+| `local_setup_reproducibility` | `ready` | `high` | Agents need reproducible prerequisites without relying on undocumented local state. |
 
 ## Adoption-tier recommendation
 
-Outcome: **tier-3** (high confidence).
+Outcome: **tier-2** (high confidence).
 
 Blocking gaps: none
 
 Alternative conditions:
-- None recorded.
+- Tier 3 requires discoverable architecture, domain, testing, and repository conventions that can be specialised without invention.
 
 ## Component recommendations
 
 | Component | State | Confidence | Rationale |
 | --- | --- | --- | --- |
-| `agent_instructions` | `specialise_now` | `medium` | Specialise the framework-like repository contract. |
-| `agent_launcher` | `evaluate_later` | `low` | Optional runtime component deliberately omitted from this fixture. |
-| `agent_prompt` | `defer` | `low` | Session prompt is not required by this fixture's repository scope. |
-| `agent_ready_issue_template` | `specialise_now` | `medium` | Specialise the framework-like task template. |
-| `architecture_scaffold` | `specialise_now` | `medium` | Specialise the architecture document with repository facts. |
-| `bug_report_issue_template` | `specialise_now` | `medium` | Retain and specialise the native defect workflow. |
-| `ci_workflow` | `specialise_now` | `medium` | Preserve the native workflow while reviewing its repository bindings. |
-| `claude_agent_entrypoint` | `evaluate_later` | `low` | No current evidence establishes a need for this optional entrypoint. |
-| `command_interface` | `specialise_now` | `medium` | Preserve the native Make surface and its repository bindings. |
-| `commit_metadata` | `defer` | `low` | Commit guidance is deliberately unnecessary for this compact fixture. |
-| `development_guide` | `specialise_now` | `medium` | Specialise setup and development guidance. |
-| `discovery_or_shaping_issue_template` | `specialise_now` | `medium` | Retain the native discovery workflow. |
-| `domain_context` | `specialise_now` | `medium` | Specialise domain context with repository facts. |
-| `git_hooks` | `evaluate_later` | `low` | Hooks are deliberately omitted because they add no material value here. |
-| `github_access_helper` | `evaluate_later` | `low` | No repository credential requirement is established. |
-| `issue_template_config` | `adopt_now` | `high` | Exact current-framework content is present. |
-| `pull_request_template` | `specialise_now` | `medium` | Specialise the review handoff for the fixture. |
-| `testing_strategy` | `specialise_now` | `medium` | Specialise the deterministic testing guidance. |
+| `agent_instructions` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `agent_launcher` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
+| `agent_prompt` | `defer` | `low` | The current repository does not establish a need for this source-repository session artefact. |
+| `agent_ready_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `architecture_scaffold` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `bug_report_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `ci_workflow` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `claude_agent_entrypoint` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
+| `command_interface` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `commit_metadata` | `defer` | `low` | The current repository does not establish a need for this source-repository session artefact. |
+| `development_guide` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `discovery_or_shaping_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `domain_context` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `git_hooks` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
+| `github_access_helper` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
+| `issue_template_config` | `adopt_now` | `high` | Current framework content is present; retain it and review its applicability. |
+| `pull_request_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `testing_strategy` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 
 ## Key gaps
 
@@ -78,45 +78,147 @@ No adoption-specific risks were recorded from the inspected evidence.
 
 ## Phased roadmap
 
-- **Phase 1 — Review repository contract and validation bindings** (`STEP-001`, component `agent_instructions`)
+- **Phase 2 — Review and adopt now issue_template_config** (`STEP-001`, component `issue_template_config`)
   - Gaps: none
   - Prerequisites: none
-  - Review the specialised contract against the fixture's documented boundaries.
+  - Current framework content is present; retain it and review its applicability.
 
-- **Phase 1 — Retain the native Python validation surface** (`STEP-002`, component `testing_strategy`)
+- **Phase 2 — Review and specialise now agent_instructions** (`STEP-002`, component `agent_instructions`)
   - Gaps: none
   - Prerequisites: none
-  - Keep uv, pytest, Ruff, mypy, Make, and CI conceptually aligned.
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Evaluate optional runtime and hook controls** (`STEP-003`, component `agent_launcher`)
+- **Phase 2 — Review and specialise now agent_ready_issue_template** (`STEP-003`, component `agent_ready_issue_template`)
   - Gaps: none
   - Prerequisites: none
-  - Deliberate omissions should be revisited only if repository scope changes.
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now architecture_scaffold** (`STEP-004`, component `architecture_scaffold`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now bug_report_issue_template** (`STEP-005`, component `bug_report_issue_template`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now ci_workflow** (`STEP-006`, component `ci_workflow`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now command_interface** (`STEP-007`, component `command_interface`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now development_guide** (`STEP-008`, component `development_guide`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now discovery_or_shaping_issue_template** (`STEP-009`, component `discovery_or_shaping_issue_template`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now domain_context** (`STEP-010`, component `domain_context`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now pull_request_template** (`STEP-011`, component `pull_request_template`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Review and specialise now testing_strategy** (`STEP-012`, component `testing_strategy`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
 ## Assumptions
 
-- Static inspection is limited to recognised metadata and documentation.
-- Existing native mechanisms are capability evidence, not framework provenance.
+- Static inspection is limited to recognised repository metadata and documentation; arbitrary source code is not analysed.
+- Existing repository-native mechanisms are treated as capability evidence, not as framework provenance.
 
 ## Unknowns
 
-- Static evidence cannot prove that commands succeed.
+- Static evidence cannot prove that a documented command succeeds or that an unobserved area does not exist.
 - Repository semantics, ownership, security posture, and operational suitability require human review.
-- Optional runtime and hook requirements are not established by this fixture.
+- The assessment does not recursively assess each project root in a multi-project repository.
+- No assessor context was supplied for facts that are not discoverable from repository files.
 
 ## Evidence appendix
 
-- `E001` — file/documentation_presence (`README.md`): README documentation detected
-- `E002` — file/documentation_presence (`AGENTS.md`): Repository agent instructions detected
-- `E003` — file/pyproject_project_metadata (`pyproject.toml`): Python project metadata and validation configuration detected
-- `E004` — file/uv_lockfile (`uv.lock`): uv lockfile detected
-- `E005` — directory/test_directory (`tests`): Test directory detected
-- `E006` — file/make_command_surface (`Makefile`): Make command surface and verification targets detected
-- `E007` — file/ci_invocation (`.github/workflows/ci.yml`): GitHub Actions invokes the repository verification command
-- `E008` — file/task_template (`.github/ISSUE_TEMPLATE/agent-ready-implementation.md`): Agent-ready task template detected
-- `E009` — file/review_handoff_template (`.github/PULL_REQUEST_TEMPLATE.md`): Pull request review handoff detected
-- `E010` — file/documentation_presence (`docs/ARCHITECTURE.md`): Architecture documentation detected
-- `E011` — file/documentation_presence (`docs/DEVELOPMENT.md`): Development guidance detected
-- `E012` — file/documentation_presence (`docs/DOMAIN.md`): Domain documentation detected
-- `E013` — file/documentation_presence (`docs/TESTING.md`): Testing guidance detected
-- `E014` — file/framework_exact_content_match (`.github/ISSUE_TEMPLATE/config.yml`): Current framework issue-template configuration content matches
+- `E001` — ci_invocation/ci_invocation (`.github/workflows/ci.yml`): GitHub Actions invokes make setup
+- `E002` — ci_invocation/ci_invocation (`.github/workflows/ci.yml`): GitHub Actions invokes make verify
+- `E003` — directory/test_directory (`tests`): Generic test directory detected
+- `E004` — documented_command/documented_command (`README.md`): Repository command documented: make setup
+- `E005` — documented_command/documented_command (`README.md`): Repository command documented: make verify
+- `E006` — documented_command/documented_command (`README.md`): Repository command documented: uv run --locked
+- `E007` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make format
+- `E008` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make format-check
+- `E009` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make lint
+- `E010` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make setup
+- `E011` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make test
+- `E012` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make typecheck
+- `E013` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: make verify
+- `E014` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: mypy
+- `E015` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: pytest
+- `E016` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: ruff
+- `E017` — documented_command/documented_command (`docs/DEVELOPMENT.md`): Repository command documented: uv run --locked
+- `E018` — documented_command/documented_command (`docs/FRAMEWORK_ADOPTION.md`): Repository command documented: make setup
+- `E019` — documented_command/documented_command (`docs/FRAMEWORK_ADOPTION.md`): Repository command documented: mypy
+- `E020` — documented_command/documented_command (`docs/FRAMEWORK_ADOPTION.md`): Repository command documented: pytest
+- `E021` — documented_command/documented_command (`docs/TESTING.md`): Repository command documented: make format
+- `E022` — documented_command/documented_command (`docs/TESTING.md`): Repository command documented: make test
+- `E023` — documented_command/documented_command (`docs/TESTING.md`): Repository command documented: make verify
+- `E024` — documented_command/documented_command (`docs/TESTING.md`): Repository command documented: mypy
+- `E025` — documented_command/documented_command (`docs/TESTING.md`): Repository command documented: pytest
+- `E026` — file/documentation_presence (`.github/ISSUE_TEMPLATE/agent-ready-implementation.md`): Issue templates detected
+- `E027` — file/framework_like_path (`.github/ISSUE_TEMPLATE/agent-ready-implementation.md`): Recognised framework-style artefact path detected for agent_ready_issue_template
+- `E028` — file/documentation_presence (`.github/ISSUE_TEMPLATE/bug-report.md`): Issue templates detected
+- `E029` — file/framework_like_path (`.github/ISSUE_TEMPLATE/bug-report.md`): Recognised framework-style artefact path detected for bug_report_issue_template
+- `E030` — file/documentation_presence (`.github/ISSUE_TEMPLATE/config.yml`): Issue templates detected
+- `E031` — file/framework_exact_content_match (`.github/ISSUE_TEMPLATE/config.yml`): Current framework artefact content matches issue_template_config
+- `E032` — file/documentation_presence (`.github/ISSUE_TEMPLATE/discovery-or-shaping.md`): Issue templates detected
+- `E033` — file/framework_like_path (`.github/ISSUE_TEMPLATE/discovery-or-shaping.md`): Recognised framework-style artefact path detected for discovery_or_shaping_issue_template
+- `E034` — file/documentation_presence (`.github/PULL_REQUEST_TEMPLATE.md`): Pull request template detected
+- `E035` — file/framework_like_path (`.github/PULL_REQUEST_TEMPLATE.md`): Recognised framework-style artefact path detected for pull_request_template
+- `E036` — file/framework_like_path (`.github/workflows/ci.yml`): Recognised framework-style artefact path detected for ci_workflow
+- `E037` — file/github_actions_workflow (`.github/workflows/ci.yml`): GitHub Actions workflow detected
+- `E038` — file/documentation_presence (`AGENTS.md`): Repository agent instructions detected
+- `E039` — file/framework_like_path (`AGENTS.md`): Recognised framework-style artefact path detected for agent_instructions
+- `E040` — file/framework_like_path (`Makefile`): Recognised framework-style artefact path detected for command_interface
+- `E041` — file/make_command_surface (`Makefile`): Makefile command interface detected
+- `E042` — file/make_target (`Makefile`): Make target format declared
+- `E043` — file/make_target (`Makefile`): Make target format-check declared
+- `E044` — file/make_target (`Makefile`): Make target lint declared
+- `E045` — file/make_target (`Makefile`): Make target setup declared
+- `E046` — file/make_target (`Makefile`): Make target test declared
+- `E047` — file/make_target (`Makefile`): Make target typecheck declared
+- `E048` — file/make_target (`Makefile`): Make target verify declared
+- `E049` — file/verification_command (`Makefile`): Standard verification Make target detected
+- `E050` — file/documentation_presence (`README.md`): README documentation detected
+- `E051` — file/documentation_presence (`docs/ARCHITECTURE.md`): Architecture documentation detected
+- `E052` — file/framework_like_path (`docs/ARCHITECTURE.md`): Recognised framework-style artefact path detected for architecture_scaffold
+- `E053` — file/documentation_presence (`docs/DEVELOPMENT.md`): Development guidance detected
+- `E054` — file/framework_like_path (`docs/DEVELOPMENT.md`): Recognised framework-style artefact path detected for development_guide
+- `E055` — file/documentation_presence (`docs/DOMAIN.md`): Domain documentation detected
+- `E056` — file/framework_like_path (`docs/DOMAIN.md`): Recognised framework-style artefact path detected for domain_context
+- `E057` — file/documentation_presence (`docs/TESTING.md`): Testing guidance detected
+- `E058` — file/framework_like_path (`docs/TESTING.md`): Recognised framework-style artefact path detected for testing_strategy
+- `E059` — file/mypy_configuration (`pyproject.toml`): mypy configuration or dependency detected
+- `E060` — file/pyproject_project_metadata (`pyproject.toml`): Python project metadata detected
+- `E061` — file/pytest_configuration (`pyproject.toml`): pytest configuration or dependency detected
+- `E062` — file/python_build_configuration (`pyproject.toml`): Python build configuration detected
+- `E063` — file/ruff_configuration (`pyproject.toml`): Ruff configuration or dependency detected
+- `E064` — file/ruff_formatter_configuration (`pyproject.toml`): Ruff formatter configuration or dependency detected
+- `E065` — file/uv_lockfile (`uv.lock`): uv lockfile detected
+- `E066` — framework_metadata/framework_catalogue (`framework.yml`): Current framework catalogue and metadata detected
+- `E067` — git/git_branch: Current Git branch detected
+- `E068` — git/git_commit: Current Git commit detected
+- `E069` — git/git_repository_detection: Git repository detection completed
+- `E070` — git/git_working_tree: Git working-tree state detected

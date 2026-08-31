@@ -32,7 +32,16 @@ The assessor never installs dependencies, runs project commands, invokes
 tests, builds, linters, formatters, migrations, deployments, agents, LLMs, or
 network services. It does not create branches, change Git configuration, or
 write target files. Git commands are limited to read-only identity, status,
-tracked-file, and ignore inspection.
+tracked-file, and ignore inspection. Each Git subprocess disables optional
+locks and fsmonitor execution locally (`GIT_OPTIONAL_LOCKS=0` and
+`core.fsmonitor=false`); persistent Git configuration is not changed.
+
+`--no-report` suppresses Markdown rendering as well as report writing. When an
+explicit output or report path is supplied, every existing and not-yet-created
+path component is checked with `lstat`/`readlink`. Direct paths, symlinked
+parents, existing symlinks, and dangling symlinks that resolve into the target
+are rejected. A symlink resolving wholly outside the target is permitted by
+the current policy, and output parent directories are not created.
 
 ## What is inspected
 
@@ -65,11 +74,28 @@ For a repository with multiple candidate roots, the result lists
 `scope.project_roots` and assesses shared surfaces. It does not recursively
 run independent assessments for each workspace.
 
+Package-manager evidence uses this precedence: an explicit supported
+`packageManager` declaration, then a recognised lockfile, then npm as the
+fallback for a bare `package.json`. A declaration that disagrees with a
+lockfile is retained as a conflict. Multiple supported lockfiles are also
+reported as a conflict; no manager is silently preferred.
+
+GitHub Actions command evidence comes only from scalar or multiline `run`
+values under job steps. Comments, step names, `env`, `with`, and arbitrary
+workflow text do not establish an invocation. Local and CI commands are
+compared using normalized command identity (for example, `make test` matches
+`make test`, but not `make test-destructive`; package script syntax may be
+normalized across npm, Yarn, and pnpm when the script identity is the same).
+
 ## Evidence and confidence
 
 Every non-trivial finding points to the top-level `evidence` collection.
 Evidence has a stable `E###` ID, type, detection method, summary, and a
-relative path where applicable. Supported types are `git`, `file`, `directory`,
+relative path where applicable. Evidence collection uses internal keys while
+the result is assembled. After collection is complete, one deterministic
+sorted evidence order is frozen, `E###` IDs are assigned, and every reference
+is resolved in one pass. Internal keys never appear in YAML or Markdown.
+Supported types are `git`, `file`, `directory`,
 `configuration`, `documented_command`, `ci_invocation`, `assessor_context`,
 and `framework_metadata`. IDs are assigned after deterministic sorting; no
 raw arbitrary file bodies or secret-bearing values are emitted.
@@ -119,11 +145,16 @@ unknowns: []
 evidence: []
 ```
 
-The Ruby schema validator checks required fields, types, closed status values,
-safe relative paths, stable IDs, unique IDs, evidence references, gap and
-roadmap prerequisites, and internal consistency. Schema/type checks are kept
-separate from semantic checks. YAML and Markdown are rendered from the same
-in-memory result.
+The Ruby schema validator checks the complete emitted v1 structures: ecosystem
+entries; all tooling sections and nested command entries; validation
+capabilities, command collections, and CI alignment; every documentation
+category; and the adoption, readiness, recommendation, gap, risk, roadmap,
+context, and evidence objects. Stable objects are closed to unknown nested
+fields. It also checks required fields, types, closed status values, safe
+relative paths, stable IDs, unique IDs, evidence references, gap and roadmap
+prerequisites, and internal consistency. Schema/type checks are kept separate
+from semantic checks. YAML and Markdown are rendered from the same in-memory
+result.
 
 ## Readiness dimensions
 
@@ -165,9 +196,11 @@ from `framework.yml`:
 * Tier 2 / `tier-2` / agent-operable: Tier 1 is supportable and a clear
   executable command and validation surface exists, with no unresolved
   runtime, CI, hook, or access blocker for selected Tier-2 components;
-* Tier 3 / `tier-3` / agent-optimised: lower-tier capability exists and
-  architecture, domain, testing, and repository conventions can be
-  specialised from evidence without inventing semantics.
+* Tier 3 / `tier-3` / agent-optimised: lower-tier capability exists and the
+  current catalogue's architecture, domain, testing, and commit-convention
+  components can be specialised from evidence without inventing semantics.
+  The assessor reads these Tier 3 component memberships from `framework.yml`;
+  repository-native equivalents are valid evidence.
 
 `manual_review_required` is returned when root/scope is materially ambiguous,
 important evidence conflicts, safety-sensitive context cannot be established,
@@ -239,7 +272,10 @@ the target or invent additional findings.
 
 Volatile `assessment.generated_at`, repository root, and live Git branch/tree
 state are normalised or injected in tests. Substantive ordering and IDs remain
-stable for equivalent repository state and context.
+stable for equivalent repository state and context. The committed reference
+fixture is regenerated by the real assessor with a fixed clock; its test
+normalizes only the volatile identity fields and compares the complete YAML
+and the Markdown projection exactly.
 
 ## Current framework metadata boundary
 

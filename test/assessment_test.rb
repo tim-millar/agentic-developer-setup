@@ -24,7 +24,7 @@ class AssessmentTest < Minitest::Test
     FileUtils.remove_entry_secure(@temporary_root) if @temporary_root && File.exist?(@temporary_root)
   end
 
-  def test_reference_fixture_produces_supported_profile_and_tier_three
+  def test_reference_fixture_produces_supported_profile_and_tier_two
     result = assess(FIXTURE)
 
     assert_equal 1, result["schema_version"]
@@ -35,7 +35,7 @@ class AssessmentTest < Minitest::Test
     assert_includes result.dig("tooling", "test_frameworks").map { |item| item["name"] }, "pytest"
     assert_includes result.dig("tooling", "linters").map { |item| item["name"] }, "Ruff"
     assert_includes result.dig("tooling", "type_checkers").map { |item| item["name"] }, "mypy"
-    assert_equal "tier-3", result.dig("tier_recommendation", "outcome")
+    assert_equal "tier-2", result.dig("tier_recommendation", "outcome")
     assert_equal %w[repository_context task_boundary command_surface deterministic_validation ci_alignment sensitive_area_guidance runtime_access review_handoff local_setup_reproducibility], result["readiness"].keys
     assert result["component_recommendations"].any? { |item| item["state"] == "evaluate_later" && item["component"] == "agent_launcher" }
     assert result["framework_adoption"]["detected_components"].any? { |item| item["state"] == "framework_like" }
@@ -235,7 +235,11 @@ class AssessmentTest < Minitest::Test
 
   def test_assessment_does_not_execute_scripts_read_ignored_secrets_or_follow_external_symlinks
     sentinel = File.join(@temporary_root, "executed")
-    write("package.json", JSON.generate("scripts" => { "test" => "touch #{sentinel}" }))
+    network_sentinel = File.join(@temporary_root, "network-used")
+    write("package.json", JSON.generate("scripts" => {
+      "test" => "touch #{sentinel}",
+      "network" => "touch #{network_sentinel}"
+    }))
     write(".env", "TOP_SECRET=do-not-leak\n")
     write("ignored-sentinel.txt", "IGNORED_SECRET=do-not-leak\n")
     write(".gitignore", ".env\nignored-sentinel.txt\n")
@@ -251,6 +255,7 @@ class AssessmentTest < Minitest::Test
     report = AgenticDeveloperSetup::Assessment::MarkdownRenderer.render(result)
 
     refute File.exist?(sentinel)
+    refute File.exist?(network_sentinel)
     refute_includes yaml, "do-not-leak"
     refute_includes report, "do-not-leak"
     assert_includes result.dig("scope", "excluded_paths"), "node_modules"

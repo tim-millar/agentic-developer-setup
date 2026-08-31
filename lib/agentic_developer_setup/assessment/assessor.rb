@@ -47,9 +47,9 @@ module AgenticDeveloperSetup
 
       def assess(context_path: nil)
         context = Context.load(context_path, @evidence)
-        framework_key = @evidence.add(type: "framework_metadata", path: "framework.yml", method: "framework_catalogue", summary: "Current framework catalogue and metadata detected")
+        @evidence.add(type: "framework_metadata", path: "framework.yml", method: "framework_catalogue", summary: "Current framework catalogue and metadata detected")
         git_info = @git.info
-        git_keys = git_evidence(git_info)
+        git_evidence(git_info)
         analysis = Detector.new(@inventory, @catalogue, @evidence).analyze
         context_conflicts = detect_context_conflicts(context)
         readiness = readiness(analysis, context, context_conflicts)
@@ -90,8 +90,10 @@ module AgenticDeveloperSetup
           "assessor_context" => context_output(context, context_conflicts),
           "assumptions" => assumptions(analysis, context),
           "unknowns" => unknowns(analysis, context),
-          "evidence" => @evidence.materialize
-        }
+            "evidence" => []
+          }
+        @evidence.resolve_references!(result)
+        result["evidence"] = @evidence.materialize
         Schema.validate!(result)
         result
       rescue SchemaError
@@ -126,7 +128,7 @@ module AgenticDeveloperSetup
         context.values.merge(
           "status" => "provided",
           "path" => context.path,
-          "evidence_ids" => @evidence.ids_for(context.evidence_keys),
+          "evidence_ids" => @evidence.references(context.evidence_keys),
           "conflicts" => conflicts
         )
       end
@@ -151,7 +153,7 @@ module AgenticDeveloperSetup
             "field" => context.values.dig("repository", "criticality") ? "repository.criticality" : "repository.deployment_impact",
             "context_value" => context.values.dig("repository", "criticality") || context.values.dig("repository", "deployment_impact"),
             "repository_signal" => "high-impact language in recognised documentation",
-            "evidence_ids" => @evidence.ids_for([key])
+            "evidence_ids" => @evidence.references([key])
           }
         end
         conflicts.uniq { |item| [item["field"], item["context_value"], item["repository_signal"]] }
@@ -165,7 +167,7 @@ module AgenticDeveloperSetup
         task_paths = docs["issue_templates"]["paths"] + docs["pull_request_template"]["paths"]
         task_evidence = docs["issue_templates"]["evidence_ids"] + docs["pull_request_template"]["evidence_ids"]
         architecture_evidence = docs["architecture"]["evidence_ids"] + docs["development_guide"]["evidence_ids"]
-        context_evidence = context.provided? ? @evidence.ids_for(context.evidence_keys) : []
+        context_evidence = context.provided? ? @evidence.references(context.evidence_keys) : []
         guidance = sensitive_guidance(docs)
         {
           "repository_context" => readiness_entry(
@@ -182,7 +184,7 @@ module AgenticDeveloperSetup
             "Document repository purpose, project roots, and material boundaries."
           ),
           "task_boundary" => readiness_entry(
-            if task_paths.any? && task_templates_show_boundaries(task_paths)
+            if task_paths.any? && task_templates_show_boundaries(task_paths).values.all?
               "ready"
             elsif task_paths.any? || docs["development_guide"]["status"] == "present"
               "partial"
@@ -226,7 +228,7 @@ module AgenticDeveloperSetup
         {
           "status" => status,
           "confidence" => confidence,
-          "evidence_ids" => evidence_ids.uniq.sort_by { |id| id.delete_prefix("E").to_i },
+            "evidence_ids" => @evidence.references(evidence_ids),
           "consequence" => consequence,
           "recommended_action" => action
         }
@@ -258,8 +260,9 @@ module AgenticDeveloperSetup
 
       def sensitive_readiness(guidance, context, context_evidence)
         if context.values.fetch("sensitive_paths", []).any?
-          status = guidance.any? ? "ready" : "missing"
-          return readiness_entry(status, guidance.any? ? "high" : "medium", guidance + context_evidence, "Sensitive paths need explicit handling boundaries before agent access is expanded.", "Document sensitive areas, permitted operations, and review requirements.")
+          supported = guidance_mentions_sensitive?
+          status = supported ? "ready" : "missing"
+          return readiness_entry(status, supported ? "high" : "medium", guidance + context_evidence, "Sensitive paths need explicit handling boundaries before agent access is expanded.", "Document sensitive areas, permitted operations, and review requirements.")
         end
         return readiness_entry("ready", "medium", guidance, "Recognised repository guidance provides evidence of sensitive-area boundaries.", "Keep sensitive-area guidance current.") if guidance.any? && guidance_mentions_sensitive?
 
@@ -270,7 +273,9 @@ module AgenticDeveloperSetup
         @inventory.files.keys.any? do |path|
           next false unless path.match?(/\A(?:SECURITY|AGENTS|CLAUDE|docs\/).*/i)
 
-          @inventory.read(path).to_s.match?(/\b(?:sensitive|secret|credential|security|restricted)\b/i)
+          content = @inventory.read(path).to_s
+          content.match?(/\b(?:sensitive|secret|credential|security[- ]critical|restricted)\b/i) &&
+            content.match?(/\b(?:path|area|file|directory|access|operation|review|handling|boundary|must|do not|never)\b/i)
         end
       end
 
@@ -312,9 +317,13 @@ module AgenticDeveloperSetup
       end
 
       def task_templates_show_boundaries(paths)
-        paths.any? do |path|
-          @inventory.read(path).to_s.match?(/acceptance|non[- ]goals?|scope|boundary/i)
-        end
+        contents = paths.map { |path| @inventory.read(path).to_s }.join("\n")
+        {
+          "scope" => contents.match?(/\b(?:scope|in scope|out of scope)\b/i),
+          "acceptance" => contents.match?(/\b(?:acceptance criteria|acceptance|success criteria|definition of done)\b/i),
+          "non_goals" => contents.match?(/\b(?:non[- ]goals?|out of scope|explicit non-goals?)\b/i),
+          "implementation_boundary" => contents.match?(/\b(?:implementation boundaries?|implementation constraints?|architecture boundaries?|repository boundaries?|constraints?)\b/i)
+        }
       end
 
       def gap_specs(analysis, readiness, context, conflicts)
@@ -462,16 +471,17 @@ module AgenticDeveloperSetup
       def native_paths_for(name, analysis)
         docs = analysis[:documentation]
         case name
-        when "command_interface" then @inventory.exists?("package.json") && !@inventory.exists?("Makefile") ? ["package.json"] : []
+        when "command_interface" then analysis[:facts][:package_scripts].any? && !@inventory.exists?("Makefile") ? ["package.json"] : []
         when "development_guide" then docs["development_guide"]["paths"]
-        when "testing_strategy" then docs["testing"]["paths"].empty? ? (analysis[:validation]["capabilities"]["tests"]["evidence_ids"].any? ? ["tests"] : []) : docs["testing"]["paths"]
+        when "testing_strategy" then docs["testing"]["paths"]
         when "architecture_scaffold" then docs["architecture"]["paths"]
         when "domain_context" then docs["domain"]["paths"]
-        when "commit_metadata" then @inventory.exists?(".gitignore") ? [".gitignore"] : []
+        when "commit_metadata" then []
         when "pull_request_template" then docs["pull_request_template"]["paths"]
         when "ci_workflow" then analysis[:tooling]["ci"]["workflow_paths"]
         when "git_hooks" then analysis[:tooling]["hooks"]["paths"]
-        when "agent_ready_issue_template", "bug_report_issue_template", "discovery_or_shaping_issue_template", "issue_template_config" then docs["issue_templates"]["paths"]
+        when "agent_ready_issue_template", "bug_report_issue_template", "discovery_or_shaping_issue_template", "issue_template_config"
+          analysis[:facts][:issue_template_components].fetch(name, [])
         else []
         end
       end
@@ -489,7 +499,8 @@ module AgenticDeveloperSetup
         manual = conflicts.any? || readiness["repository_context"]["status"] == "blocked" || readiness["sensitive_area_guidance"]["status"] == "missing" || %w[missing unknown].include?(readiness["repository_context"]["status"])
         tier1 = !manual && %w[ready partial].include?(readiness["repository_context"]["status"]) && %w[ready partial].include?(readiness["task_boundary"]["status"])
         tier2 = tier1 && readiness["command_surface"]["status"] == "ready" && readiness["deterministic_validation"]["status"] == "ready" && readiness["ci_alignment"]["status"] != "partial" && readiness["ci_alignment"]["status"] != "blocked"
-        tier3 = tier2 && readiness["repository_context"]["status"] == "ready" && readiness["deterministic_validation"]["status"] == "ready" && %w[ready partial].include?(readiness["review_handoff"]["status"])
+        tier3_components = tier_components("tier-3")
+        tier3 = tier2 && tier3_components.all? { |name| tier_component_supported?(name, analysis) }
         outcome = if manual || !tier1
                     "manual_review_required"
                   elsif tier3
@@ -523,8 +534,23 @@ module AgenticDeveloperSetup
 
         conditions = []
         conditions << "Tier 2 becomes supportable when a stable command surface and deterministic validation are documented." unless readiness["command_surface"]["status"] == "ready" && readiness["deterministic_validation"]["status"] == "ready"
-        conditions << "Tier 3 requires discoverable architecture, testing, and repository conventions that can be specialised without invention." unless outcome == "tier-3"
+        conditions << "Tier 3 requires discoverable architecture, domain, testing, and repository conventions that can be specialised without invention." unless outcome == "tier-3"
         conditions
+      end
+
+      def tier_components(tier_id)
+        tier = @catalogue.tiers.find { |item| item["id"] == tier_id }
+        return [] unless tier
+
+        tier.fetch("includes", []).filter_map do |target_path|
+          @catalogue.components.find { |component| component["target_path"] == target_path }&.fetch("name")
+        end
+      end
+
+      def tier_component_supported?(name, analysis)
+        framework_states(analysis).any? do |item|
+          item["component"] == name && %w[framework_exact framework_like repository_native].include?(item["state"])
+        end
       end
 
       def component_recommendations(states, analysis, gap_ids, tier)

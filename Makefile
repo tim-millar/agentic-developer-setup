@@ -6,7 +6,7 @@ validate:
 
 .PHONY: test
 test:
-	ruby -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
+	ruby -Ilib -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
 
 .PHONY: test-launcher
 test-launcher:
@@ -18,7 +18,7 @@ test-claude-runtime:
 
 .PHONY: test-assessment
 test-assessment:
-	ruby -Itest test/assessment_test.rb
+	ruby -Ilib -Itest -e 'files = ["test/assessment_test.rb", *Dir["test/assessment/**/*_test.rb"]].sort; files.each { |file| require File.expand_path(file) }'
 
 .PHONY: check
 check:

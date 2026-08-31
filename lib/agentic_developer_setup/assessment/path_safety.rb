@@ -12,19 +12,10 @@ module AgenticDeveloperSetup
         target = Pathname.new(target_root).realpath
         reject! if inside?(candidate, target)
 
-        existing = candidate
-        until existing.exist?
-          parent = existing.parent
-          break if parent == existing
-
-          existing = parent
-        end
-        resolved_parent = existing.realpath
-        unresolved = candidate.to_s.delete_prefix(existing.to_s).sub(%r{\A/}, "")
-        resolved = unresolved.empty? ? resolved_parent : resolved_parent.join(unresolved)
+        resolved = resolve_without_following_unsafe_symlinks(candidate)
         reject! if inside?(resolved, target)
         candidate
-      rescue Errno::EACCES, Errno::ENOENT => e
+      rescue Errno::EACCES, Errno::ELOOP, Errno::EINVAL, Errno::ENOTDIR => e
         raise InvocationError, "output destination cannot be resolved: #{e.message}"
       end
 
@@ -35,6 +26,50 @@ module AgenticDeveloperSetup
       def inside?(path, root)
         path == root || path.to_s.start_with?("#{root}#{File::SEPARATOR}")
       end
+
+      def resolve_without_following_unsafe_symlinks(path)
+        pending = path.to_s.split(File::SEPARATOR).reject(&:empty?)
+        resolved = Pathname.new(File::SEPARATOR)
+        symlink_depth = 0
+
+        until pending.empty?
+          component = pending.shift
+          next if component == "."
+          if component == ".."
+            resolved = resolved.parent
+            next
+          end
+
+          candidate = resolved.join(component)
+          stat = begin
+            candidate.lstat
+          rescue Errno::ENOENT
+            # Missing regular path components are safe to append. Existing
+            # symlinks have already been resolved without following them.
+            resolved = resolved.join(component)
+            next
+          rescue Errno::ENOTDIR
+            raise Errno::ENOTDIR
+          end
+          if stat.symlink?
+            symlink_depth += 1
+            raise Errno::ELOOP if symlink_depth > 40
+
+            link = File.readlink(candidate.to_s)
+            target = if link.start_with?(File::SEPARATOR)
+                       Pathname.new(link).expand_path
+                     else
+                       candidate.parent.join(link).expand_path
+                     end
+            pending = target.to_s.split(File::SEPARATOR).reject(&:empty?) + pending
+            resolved = Pathname.new(File::SEPARATOR)
+          else
+            resolved = candidate
+          end
+        end
+        resolved.cleanpath
+      end
+
       private_class_method :inside?
     end
   end

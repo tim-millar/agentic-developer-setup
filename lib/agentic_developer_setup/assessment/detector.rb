@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "yaml"
 
 module AgenticDeveloperSetup
   module Assessment
@@ -42,6 +43,7 @@ module AgenticDeveloperSetup
           ci_commands: @ci[:commands].sort,
           ci_present: !@ci[:paths].empty?,
           ci_invocations: @ci[:invocation_keys],
+          issue_template_components: issue_template_components,
           ecosystems: ecosystem_facts,
           framework_paths: @inventory.files.keys.sort
         }
@@ -131,7 +133,7 @@ module AgenticDeveloperSetup
       end
 
       def typescript_evidence
-        keys = @inventory.files.keys.select { |path| File.basename(path).match?(/\At sconfig[^\/]*\.json\z/ix) }.map do |path|
+        keys = @inventory.files.keys.select { |path| File.basename(path).match?(/\Atsconfig[^\/]*\.json\z/i) }.map do |path|
           file(path, "typescript_configuration", "TypeScript configuration detected")
         end
         if package_dependencies.keys.any? { |name| name == "typescript" }
@@ -157,37 +159,45 @@ module AgenticDeveloperSetup
       end
 
       def package_managers
-        managers = []
-        if @inventory.exists?("package.json")
-          manager = @package && @package["packageManager"].to_s.split("@").first
-          if %w[npm yarn pnpm].include?(manager)
-            managers << tool_entry(manager, "package_json_manager", "Package manager declared in package manifest", "package.json")
-          end
-          managers << tool_entry("npm", "package_json_default_manager", "npm-compatible package manifest detected", "package.json") if manager.nil? || manager.empty?
+        managers = Hash.new { |hash, key| hash[key] = [] }
+        declared = declared_package_manager
+        lockfiles = { "package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm" }.filter_map do |path, manager|
+          [manager, path] if @inventory.exists?(path)
         end
-        { "package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm" }.each do |path, manager|
-          managers << tool_entry(manager, "package_manager_lockfile", "#{manager} lockfile detected", path) if @inventory.exists?(path)
+
+        if declared
+          managers[declared] << file("package.json", "package_json_manager", "Package manager declared in package manifest")
+        elsif lockfiles.empty? && @inventory.exists?("package.json")
+          managers["npm"] << file("package.json", "package_json_default_manager", "npm-compatible package manifest detected")
         end
-        if @inventory.exists?("uv.lock")
-          managers << tool_entry("uv", "uv_lockfile", "uv lockfile detected", "uv.lock")
+        lockfiles.each do |manager, path|
+          managers[manager] << file(path, "package_manager_lockfile", "#{manager} lockfile detected")
         end
+        managers["uv"] << file("uv.lock", "uv_lockfile", "uv lockfile detected") if @inventory.exists?("uv.lock")
         if @inventory.files.keys.any? { |path| path.match?(/\Arequirements[^\/]*\.txt\z/i) }
           path = @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).first
-          managers << tool_entry("pip", "requirements_file", "pip-compatible requirements file detected", path)
+          managers["pip"] << file(path, "requirements_file", "pip-compatible requirements file detected")
         end
-        names = managers.map { |entry| entry["name"] }
-        conflict = names.uniq.length > 1 && names.any? { |name| %w[npm yarn pnpm].include?(name) }
-        managers.map { |entry| entry.merge("status" => conflict ? "conflicting" : "detected") }.sort_by { |entry| entry["name"] }
+
+        node_names = managers.keys.select { |name| %w[npm yarn pnpm].include?(name) }
+        conflict = node_names.length > 1
+        managers.keys.sort.map do |name|
+          keys = managers.fetch(name).compact
+          {
+            "name" => name,
+            "status" => conflict && %w[npm yarn pnpm].include?(name) ? "conflicting" : "detected",
+            "confidence" => conflict ? "low" : (keys.length > 1 ? "high" : "medium"),
+            "evidence_ids" => @evidence.ids_for(keys),
+            "_evidence_keys" => keys
+          }
+        end
       end
 
       def test_frameworks
         entries = []
-        if python_configuration_mentions?(/pytest/i) || @inventory.directory?("tests") || @inventory.directory?("test")
-          keys = []
-          keys.concat(python_dependency_evidence(/pytest/i, "pytest_configuration", "pytest configuration or dependency detected"))
-          keys << directory("tests", "test_directory", "Test directory detected") if @inventory.directory?("tests")
-          keys << directory("test", "test_directory", "Test directory detected") if @inventory.directory?("test")
-          entries << tool_entry_with_keys("pytest", "Python test framework detected", keys)
+        pytest_keys = python_dependency_evidence(/pytest/i, "pytest_configuration", "pytest configuration or dependency detected")
+        if pytest_keys.any?
+          entries << tool_entry_with_keys("pytest", "Python test framework detected", pytest_keys)
         end
         package_scripts.each do |name, command|
           next unless command.to_s.match?(/\b(?:jest|vitest|mocha)\b/i)
@@ -253,8 +263,8 @@ module AgenticDeveloperSetup
         package_scripts.keys.sort.each do |name|
           commands << { "name" => "package script #{name}", "source" => "package.json", "evidence_ids" => @evidence.ids_for([file("package.json", "package_script", "Package script #{name} declared")]) }
         end
-        docs_commands.each do |command, key|
-          commands << { "name" => command, "source" => "documentation", "evidence_ids" => @evidence.ids_for([key]) }
+        docs_commands.each do |entry|
+          commands << { "name" => entry[:command], "source" => "documentation", "evidence_ids" => @evidence.ids_for(entry[:keys]) }
         end
         commands = commands.uniq { |entry| entry["name"] }.sort_by { |entry| entry["name"] }
         {
@@ -304,7 +314,7 @@ module AgenticDeveloperSetup
       def validation
         {
           "capabilities" => {
-            "tests" => capability("tests", test_frameworks.any? || @inventory.directory?("tests") || @inventory.directory?("test"), test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "tests" => capability("tests", test_frameworks.any? || @inventory.directory?("tests") || @inventory.directory?("test"), test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] } + test_directory_evidence),
             "linting" => capability("linting", linters.any?, linters.flat_map { |entry| entry["_evidence_keys"] || [] }),
             "formatting" => capability("formatting", formatters.any?, formatters.flat_map { |entry| entry["_evidence_keys"] || [] }),
             "static_type_checking" => capability("static_type_checking", type_checkers.any?, type_checkers.flat_map { |entry| entry["_evidence_keys"] || [] }),
@@ -365,14 +375,25 @@ module AgenticDeveloperSetup
         keys = documentation_evidence_for("validation")
         {
           "status" => keys.empty? ? "not_detected" : "documented_command_detected",
+          "signals" => keys.empty? ? [] : ["documented_command_detected"],
           "evidence_ids" => @evidence.ids_for(keys)
         }
       end
 
       def ci_alignment
-        return { "status" => "not_applicable", "confidence" => "high", "evidence_ids" => [] } if @ci[:paths].empty?
+        if @ci[:paths].empty?
+          return {
+            "status" => "not_applicable",
+            "confidence" => "high",
+            "evidence_ids" => [],
+            "local_commands" => @local_commands,
+            "ci_commands" => []
+          }
+        end
 
-        overlap = @local_commands.any? { |command| @ci[:commands].any? { |ci_command| ci_command.include?(command) || command.include?(ci_command) } }
+        local_identities = @local_commands.map { |command| command_identity(command) }.uniq
+        ci_identities = @ci[:commands].map { |command| command_identity(command) }.uniq
+        overlap = local_identities.any? { |identity| ci_identities.include?(identity) }
         keys = @ci[:file_keys] + @ci[:invocation_keys]
         {
           "status" => overlap ? "ready" : "partial",
@@ -400,6 +421,20 @@ module AgenticDeveloperSetup
         }
       end
 
+      def issue_template_components
+        paths = @inventory.files.keys.grep(%r{\A\.github/ISSUE_TEMPLATE/}i).sort
+        {
+          "agent_ready_issue_template" => paths.select { |path| issue_template_signal?(path, /agent[-_ ]?ready|implementation|acceptance criteria|non[- ]goals?|implementation boundaries?/i) },
+          "bug_report_issue_template" => paths.select { |path| issue_template_signal?(path, /bug|defect|steps to reproduce|expected behavior|actual behavior/i) },
+          "discovery_or_shaping_issue_template" => paths.select { |path| issue_template_signal?(path, /discovery|shaping|problem statement|open questions|unknowns/i) },
+          "issue_template_config" => paths.select { |path| File.basename(path).match?(/\Aconfig\.ya?ml\z/i) || text(path).to_s.match?(/blank_issues_enabled|contact_links/i) }
+        }
+      end
+
+      def issue_template_signal?(path, pattern)
+        File.basename(path).match?(pattern) || text(path).to_s.match?(pattern)
+      end
+
       def doc_entry(paths, summary, ambiguous: paths.length > 1)
         paths = paths.sort
         keys = paths.map { |path| file(path, "documentation_presence", summary) }
@@ -413,19 +448,24 @@ module AgenticDeveloperSetup
       end
 
       def docs_commands
-        @docs_commands ||= @inventory.files.keys.sort.filter_map do |path|
-          next unless path.start_with?("docs/") || path.match?(/\AREADME|\ACONTRIBUTING/i)
+        @docs_commands ||= begin
+          entries = @inventory.files.keys.sort.flat_map do |path|
+            next unless path.start_with?("docs/") || path.match?(/\AREADME|\ACONTRIBUTING/i)
 
-          content = text(path).to_s
-          match = content.match(DOCUMENT_COMMAND_PATTERN)
-          next unless match
-
-          [match[0], documented_command(path)]
-        end.uniq { |command, _key| command }
+            content = text(path).to_s
+            extract_commands(content, DOCUMENT_COMMAND_PATTERN).map do |command|
+              { command: command, key: documented_command(path, command) }
+            end
+          end.compact
+          entries.group_by { |entry| command_identity(entry[:command]) }.values.map do |group|
+            representative = group.map { |entry| entry[:command] }.min
+            { command: representative, keys: group.map { |entry| entry[:key] }.compact.uniq }
+          end.sort_by { |entry| [command_identity(entry[:command]), entry[:command]] }
+        end
       end
 
       def documentation_evidence_for(name)
-        return docs_commands.map(&:last) if name == "validation"
+        return docs_commands.flat_map { |entry| entry[:keys] } if name == "validation"
 
         []
       end
@@ -433,7 +473,7 @@ module AgenticDeveloperSetup
       def documented_signals_for(name)
         return [] unless name == "tests" || name == "linting" || name == "formatting" || name == "static_type_checking"
 
-        command = docs_commands.map(&:first).join(" ")
+        command = docs_commands.map { |entry| entry[:command] }.join(" ")
         case name
         when "tests" then command.match?(/pytest|npm run test|yarn test|pnpm test|make test/) ? ["documented_command_detected"] : []
         when "linting" then command.match?(/ruff|eslint|make lint/) ? ["documented_command_detected"] : []
@@ -450,12 +490,28 @@ module AgenticDeveloperSetup
 
       def ci_evidence_for(name)
         token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
-        token ? @ci[:invocation_keys].select { |key| evidence_summary(key).match?(token) } : []
+        token ? @ci[:invocations].filter_map { |entry| entry[:key] if entry[:command].match?(token) } : []
       end
 
       def package_scripts
         scripts = @package.is_a?(Hash) ? @package["scripts"] : {}
         scripts.is_a?(Hash) ? scripts.transform_keys(&:to_s) : {}
+      end
+
+      def declared_package_manager
+        declaration = @package.is_a?(Hash) ? @package["packageManager"].to_s : ""
+        match = declaration.match(/\A(npm|yarn|pnpm)(?:@|\z)/i)
+        match && match[1].downcase
+      end
+
+      def test_directory_evidence
+        directory_keys = %w[test tests].filter_map do |path|
+          directory(path, "test_directory", "Generic test directory detected")
+        end
+        file_keys = @inventory.files.keys.select { |path| path.start_with?("test/") || path.start_with?("tests/") }
+          .map { |path| file(path, "test_directory", "Generic test file detected") }
+          .compact
+        directory_keys + file_keys
       end
 
       def package_dependencies
@@ -478,7 +534,7 @@ module AgenticDeveloperSetup
       def local_commands
         commands = @make_targets.map { |target| "make #{target}" }
         commands.concat(package_scripts.keys.map { |name| "package script #{name}" })
-        commands.concat(docs_commands.map(&:first))
+        commands.concat(docs_commands.map { |entry| entry[:command] })
         commands.uniq.sort
       end
 
@@ -495,15 +551,17 @@ module AgenticDeveloperSetup
       def ci_findings
         paths = @inventory.files.keys.grep(%r{\A\.github/workflows/.*\.(?:yml|yaml)\z}i).sort
         file_keys = paths.map { |path| file(path, "github_actions_workflow", "GitHub Actions workflow detected") }
-        invocation_keys = []
-        commands = []
+        invocations = []
         paths.each do |path|
-          text(path).to_s.scan(CI_COMMAND_PATTERN).each do |command|
-            commands << command
-            invocation_keys << file(path, "ci_invocation", "GitHub Actions invokes a recognised repository command", type: "ci_invocation")
+          github_actions_run_values(text(path)).each do |run_value|
+            extract_commands(run_value, CI_COMMAND_PATTERN).each do |command|
+              key = file(path, "ci_invocation", "GitHub Actions invokes #{command}", type: "ci_invocation")
+              invocations << { command: command, key: key }
+            end
           end
         end
-        { paths: paths, file_keys: file_keys, invocation_keys: invocation_keys, commands: commands.uniq }
+        invocations = invocations.uniq { |entry| [entry[:command], entry[:key]] }
+        { paths: paths, file_keys: file_keys, invocation_keys: invocations.map { |entry| entry[:key] }, invocations: invocations, commands: invocations.map { |entry| entry[:command] }.uniq.sort }
       end
 
       def parse_json(path)
@@ -513,6 +571,51 @@ module AgenticDeveloperSetup
         JSON.parse(content)
       rescue JSON::ParserError
         nil
+      end
+
+      def extract_commands(content, pattern)
+        content.to_s.lines.flat_map do |line|
+          next [] if line.lstrip.start_with?("#")
+
+          line.scan(pattern)
+        end.map(&:strip).reject(&:empty?).uniq
+      end
+
+      def github_actions_run_values(content)
+        parsed = YAML.safe_load(content.to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
+        jobs = parsed.is_a?(Hash) ? parsed["jobs"] : nil
+        return [] unless jobs.is_a?(Hash)
+
+        jobs.keys.sort.flat_map do |job_name|
+          job = jobs[job_name]
+          steps = job.is_a?(Hash) ? job["steps"] : nil
+          next [] unless steps.is_a?(Array)
+
+          steps.filter_map do |step|
+            value = step.is_a?(Hash) ? step["run"] : nil
+            value if value.is_a?(String)
+          end
+        end
+      rescue Psych::Exception
+        []
+      end
+
+      def command_identity(command)
+        normalized = command.to_s.strip.gsub(/\s+/, " ")
+        case normalized
+        when /\Amake\s+([A-Za-z0-9_.-]+)\z/
+          "make:#{$1}"
+        when /\Apackage script\s+([A-Za-z0-9_.:-]+)\z/
+          "package:#{$1}"
+        when /\A(?:npm|yarn|pnpm)\s+(?:run\s+)?([A-Za-z0-9_.:-]+)\z/
+          "package:#{$1}"
+        when /\Auv\s+run\s+(.+)\z/
+          command_identity(Regexp.last_match(1))
+        when /\A(pytest|ruff|mypy|tsc)(?:\s|\z)/
+          "tool:#{$1}"
+        else
+          "raw:#{normalized}"
+        end
       end
 
       def python_configuration_mentions?(pattern)
@@ -540,10 +643,11 @@ module AgenticDeveloperSetup
         @inventory.files.keys.select { |path| path.match?(pattern) }
       end
 
-      def documented_command(path)
+      def documented_command(path, command = nil)
         return nil unless path && @inventory.exists?(path)
 
-        @evidence.add(type: "documented_command", path: path, method: "documented_command", summary: "Repository command documented")
+        summary = command ? "Repository command documented: #{command}" : "Repository command documented"
+        @evidence.add(type: "documented_command", path: path, method: "documented_command", summary: summary)
       end
 
       def file(path, method, summary, type: "file")
@@ -574,11 +678,11 @@ module AgenticDeveloperSetup
       end
 
       def evidence_path(key)
-        @evidence.materialize.find { |item| @evidence.id_for(key) == item["id"] }&.fetch("path", nil)
+        @evidence.item_for(key)&.fetch("path", nil)
       end
 
       def evidence_summary(key)
-        @evidence.materialize.find { |item| @evidence.id_for(key) == item["id"] }.to_h.fetch("summary", "")
+        @evidence.item_for(key).to_h.fetch("summary", "")
       end
 
       def clean_internal(value)

@@ -21,10 +21,12 @@ module AgenticDeveloperSetup
 
         result = Assessor.new(target).assess(context_path: options[:context])
         yaml = YAML.dump(deep_copy(result))
-        report = MarkdownRenderer.render(result)
+        report = if options[:report] && !options[:no_report]
+                   MarkdownRenderer.render(result)
+                 end
         write(options[:output], yaml) if options[:output]
         stdout.write(yaml) unless options[:output]
-        write(options[:report], report) if options[:report] && !options[:no_report]
+        write(options[:report], report) if report
         0
       rescue OptionParser::ParseError, Error => e
         stderr.puts "ERROR: #{e.message}"

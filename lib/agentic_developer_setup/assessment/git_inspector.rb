@@ -62,7 +62,7 @@ module AgenticDeveloperSetup
       def capture(*arguments, stdin_data: nil)
         options = { chdir: @root.to_s }
         options[:stdin_data] = stdin_data if stdin_data
-        stdout, stderr, status = Open3.capture3("git", *arguments, **options)
+        stdout, stderr, status = Open3.capture3({ "GIT_OPTIONAL_LOCKS" => "0" }, "git", "--no-optional-locks", "-c", "core.fsmonitor=false", *arguments, **options)
         Struct.new(:stdout, :stderr, :success?).new(stdout, stderr, status.success?)
       rescue SystemCallError
         Struct.new(:stdout, :stderr, :success?).new("", "", false)

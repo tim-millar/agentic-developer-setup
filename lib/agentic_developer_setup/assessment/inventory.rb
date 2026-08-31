@@ -32,7 +32,7 @@ module AgenticDeveloperSetup
         /\Apackage\.json\z/i,
         /\A(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z/i,
         /\A(?:pyproject\.toml|uv\.lock|requirements[^\/]*\.txt)\z/i,
-        /\At sconfig[^\/]*\.json\z/ix,
+        /\Atsconfig[^\/]*\.json\z/i,
         /\A(?:\.gitignore|CODEOWNERS|Dockerfile[^\/]*)\z/i,
         /\A(?:ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|OPERATIONS|DEPLOY|COMMITS)[^\/]*\.(?:md|markdown|rst|txt)\z/i,
         /\A(?:pytest\.ini|tox\.ini|setup\.cfg|mypy\.ini|ruff\.toml|\.ruff\.toml)\z/i,
