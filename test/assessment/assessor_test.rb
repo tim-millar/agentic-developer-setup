@@ -17,12 +17,36 @@ class AssessmentAssessorTest < Minitest::Test
   end
 
   def test_sensitive_path_with_explicit_handling_guidance_is_supportable
-    write("AGENTS.md", "# Repository instructions\nSensitive paths contain credentials. Do not edit restricted files without human review; access boundaries apply.\n")
+    write("AGENTS.md", "# Repository instructions\nCredentials are restricted and require approval. Sensitive paths contain credentials. Do not edit restricted files without human review; access boundaries apply.\n")
     context = context_file(sensitive_paths: ["config/production"])
 
     result = assess(@target, context_path: context)
 
     assert_equal "ready", result.dig("readiness", "sensitive_area_guidance", "status")
+  end
+
+  def test_denial_style_sensitive_guidance_does_not_support_declared_sensitive_paths
+    write("AGENTS.md", "This area contains no secrets and requires no review.\n")
+    context = context_file(sensitive_paths: ["config/production"])
+
+    result = assess(@target, context_path: context)
+
+    assert_equal "missing", result.dig("readiness", "sensitive_area_guidance", "status")
+  end
+
+  def test_not_sensitive_statement_does_not_support_declared_sensitive_paths
+    write("SECURITY.md", "This path is not sensitive.\n")
+    context = context_file(sensitive_paths: ["config/production"])
+
+    result = assess(@target, context_path: context)
+
+    assert_equal "missing", result.dig("readiness", "sensitive_area_guidance", "status")
+  end
+
+  def test_generic_security_document_without_handling_rule_is_insufficient
+    write("SECURITY.md", "Security considerations are documented here.\n")
+
+    assert_equal "unknown", assess.dig("readiness", "sensitive_area_guidance", "status")
   end
 
   def test_security_guidance_is_assessed_without_supplied_sensitive_paths
@@ -231,6 +255,80 @@ class AssessmentAssessorTest < Minitest::Test
 
     assert_equal "repository_native", native["state"]
     refute result["roadmap"].any? { |item| item["title"].match?(/testing strategy/i) && item["gap_ids"].empty? }
+  end
+
+  def test_tests_only_are_partial_deterministic_validation
+    write("tests/example_test.py", "sentinel\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_hook_configuration_are_still_partial
+    write("tests/example_test.py", "sentinel\n")
+    write("lefthook.yml", "pre-commit: {}\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_validation_documentation_are_still_partial
+    write("tests/example_test.py", "sentinel\n")
+    write("README.md", "make verify\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_documented_lint_command_are_still_partial
+    write("tests/example_test.py", "sentinel\n")
+    write("README.md", "make lint\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_ci_configuration_are_still_partial
+    write("tests/example_test.py", "sentinel\n")
+    write(".github/workflows/ci.yml", "jobs:\n  setup:\n    steps:\n      - run: make setup\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_linting_are_ready_for_deterministic_validation
+    write("tests/example_test.py", "sentinel\n")
+    write("package.json", "{\"devDependencies\":{\"eslint\":\"^9\"}}\n")
+    write(".eslintrc.json", "{}\n")
+
+    assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_type_checking_are_ready_for_deterministic_validation
+    write("tests/example_test.py", "sentinel\n")
+    write("package.json", "{\"scripts\":{\"typecheck\":\"tsc --noEmit\"}}\n")
+
+    assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_tests_and_build_are_ready_for_deterministic_validation
+    write("tests/example_test.py", "sentinel\n")
+    write("package.json", "{\"scripts\":{\"build\":\"tsc\"}}\n")
+
+    assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_standard_verification_command_can_complete_validation_surface
+    write("tests/example_test.py", "sentinel\n")
+    write("Makefile", "verify:\n\t@echo verify\n")
+
+    assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_supporting_surfaces_do_not_unlock_tier_two
+    write("README.md", "# Service\n")
+    write("tests/example_test.py", "sentinel\n")
+    write("Makefile", "test:\n\t@echo test\n")
+    write("lefthook.yml", "pre-commit: {}\n")
+    write(".github/ISSUE_TEMPLATE/task.md", "Scope. Acceptance criteria. Non-goals. Implementation boundaries.\n")
+
+    assert_equal "partial", assess.dig("readiness", "deterministic_validation", "status")
+    assert_equal "tier-1", assess.dig("tier_recommendation", "outcome")
   end
 
   private

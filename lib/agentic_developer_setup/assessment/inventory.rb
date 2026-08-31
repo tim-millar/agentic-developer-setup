@@ -157,6 +157,10 @@ module AgenticDeveloperSetup
 
       def add_if_known(relative_path)
         return unless safe_relative?(relative_path)
+        if excluded_path?(relative_path)
+          add_excluded(excluded_path_prefix(relative_path))
+          return
+        end
 
         path = @root.join(relative_path)
         if symlink?(path)
@@ -201,6 +205,16 @@ module AgenticDeveloperSetup
 
       def excluded_directory_name?(name)
         EXCLUDED_DIRECTORIES.include?(name.downcase)
+      end
+
+      def excluded_path?(relative_path)
+        relative_path.split(File::SEPARATOR).any? { |part| excluded_directory_name?(part) }
+      end
+
+      def excluded_path_prefix(relative_path)
+        components = relative_path.split(File::SEPARATOR)
+        index = components.index { |part| excluded_directory_name?(part) }
+        components[0..index].join(File::SEPARATOR)
       end
 
       def regular_non_symlink?(path)

@@ -27,4 +27,26 @@ class AssessmentInventoryTest < Minitest::Test
     refute_includes result.dig("scope", "project_roots"), "apps/api"
     refute_includes result.dig("evidence").map { |item| item["path"] }, "apps/api/pyproject.toml"
   end
+
+  def test_tracked_excluded_manifests_do_not_enter_inventory
+    init_git
+    write("package.json", "{\"name\":\"root\"}\n")
+    write("vendor/package.json", "{\"name\":\"vendor\"}\n")
+    write("node_modules/pkg/package.json", "{\"name\":\"dependency\"}\n")
+    write("dist/pyproject.toml", "[project]\nname = 'generated'\n")
+    write("build/requirements.txt", "pytest\n")
+    Open3.capture3("git", "-C", @target, "add", "package.json", "vendor", "node_modules", "dist", "build")
+    Open3.capture3("git", "-C", @target, "commit", "-m", "add excluded manifests")
+
+    result = assess
+    paths = result["evidence"].filter_map { |item| item["path"] }
+
+    assert_equal ["node"], result["ecosystem"].map { |item| item["name"] }
+    assert_includes paths, "package.json"
+    refute paths.any? { |path| path.match?(%r{\A(?:vendor|node_modules|dist|build)/}) }
+    assert_includes result.dig("scope", "excluded_paths"), "vendor"
+    assert_includes result.dig("scope", "excluded_paths"), "node_modules"
+    assert_includes result.dig("scope", "excluded_paths"), "dist"
+    assert_includes result.dig("scope", "excluded_paths"), "build"
+  end
 end

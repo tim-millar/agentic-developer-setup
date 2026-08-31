@@ -29,7 +29,7 @@ the assessed repository are rejected. Output destinations must already have
 an appropriate parent directory. Output and report destinations are compared
 by their resolved destination identity, including symlink and dangling-symlink
 aliases, before assessment or writing begins. Each write creates the complete
-content in a new temporary file in the resolved external destination directory
+content in a new temporary file beside the requested external destination entry
 and atomically replaces the requested final directory entry. Existing regular
 file modes are retained; a final safe symlink is replaced rather than followed.
 The destination is revalidated immediately before replacement. This protects
@@ -71,7 +71,9 @@ boundary when it is in a recognised traversal area.
 
 The first detector scope is generic Git, GitHub Actions, Make, Python, and
 Node.js/TypeScript. Python signals include `pyproject.toml`, requirements
-files, uv, pip, pytest, Ruff, and mypy. Node/TypeScript signals include
+files, uv, pip, pytest, Ruff, and mypy. Python tools are detected only from
+recognised dependency/configuration structures; comments, descriptions,
+options, and arbitrary prose do not establish tool evidence. Node/TypeScript signals include
 `package.json`, npm, yarn, pnpm, ESLint, Prettier, the TypeScript compiler,
 and common package scripts. Unsupported ecosystems still receive Git,
 documentation, generic command, recognised CI, framework-capability, gap,
@@ -84,16 +86,21 @@ run independent assessments for each workspace.
 
 Package-manager evidence uses this precedence: an explicit supported
 `packageManager` declaration, then a recognised lockfile, then npm as the
-fallback for a bare `package.json`. A declaration that disagrees with a
-lockfile is retained as a conflict. Multiple supported lockfiles are also
-reported as a conflict; no manager is silently preferred.
+fallback for a bare `package.json`. An explicit unsupported declaration is
+retained as unknown and never falls back to npm; if it also disagrees with a
+recognised lockfile, the ambiguity is retained as a conflict. A supported
+declaration that disagrees with a lockfile is likewise retained as a conflict.
+Multiple supported lockfiles are also reported as a conflict; no manager is
+silently preferred.
 
 GitHub Actions command evidence comes only from scalar or multiline `run`
 values under job steps. Comments, step names, `env`, `with`, and arbitrary
 workflow text do not establish an invocation. Local and CI commands are
-compared using normalized command identity (for example, `make test` matches
-`make test`, but not `make test-destructive`; package script syntax may be
-normalized across npm, Yarn, and pnpm when the script identity is the same).
+filtered to validation commands before comparison using normalized command
+identity (for example, `make test` matches `make test`, but not
+`make test-destructive`; package script syntax may be normalized across npm,
+Yarn, and pnpm when the script identity is the same). Setup, development, and
+operational commands do not establish CI validation alignment.
 
 ## Evidence and confidence
 
@@ -194,6 +201,15 @@ The dimensions mean:
   review;
 * `local_setup_reproducibility`: documented prerequisites and dependency or
   runtime identity.
+
+Deterministic-validation readiness counts substantive local capabilities only:
+tests, linting, static type checking, build/compile checks, and explicit
+standard verification such as `make check` or `make verify`. Supporting
+surfaces such as hooks, CI configuration, and validation documentation add
+evidence to their own findings but do not count as independent executable
+capabilities. Zero substantive capabilities is `missing`, one is `partial`,
+and two or more are `ready`; formatting counts only when it is explicitly a
+validation-oriented check.
 
 ## Tier recommendation
 

@@ -31,7 +31,7 @@ An assessment recommends an adoption strategy. It does not authorise repository 
 | `command_surface` | `ready` | `high` | A stable command surface bounds how humans and agents discover local work. |
 | `deterministic_validation` | `ready` | `high` | Static validation evidence helps constrain agent changes without executing project tools. |
 | `ci_alignment` | `ready` | `high` | CI should provide merge-time evidence conceptually aligned with local validation. |
-| `sensitive_area_guidance` | `ready` | `medium` | Recognised repository guidance provides evidence of sensitive-area boundaries. |
+| `sensitive_area_guidance` | `unknown` | `low` | Static inspection cannot establish whether undocumented restricted areas exist. |
 | `runtime_access` | `not_applicable` | `high` | No agent runtime requirement is established by static repository evidence. |
 | `review_handoff` | `ready` | `high` | Human review needs a visible place for scope and validation evidence. |
 | `local_setup_reproducibility` | `ready` | `high` | Agents need reproducible prerequisites without relying on undocumented local state. |

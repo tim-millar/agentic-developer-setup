@@ -7,6 +7,7 @@ module AgenticDeveloperSetup
   module Assessment
     class Detector
       SUPPORTED_ECOSYSTEMS = %w[node typescript python].freeze
+      NODE_PACKAGE_MANAGERS = %w[npm yarn pnpm].freeze
       DOCUMENT_COMMAND_PATTERN = /\b(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|uv\s+run\s+[^\s`]+|(?:pytest|ruff|mypy|tsc)\b)/
       CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run|pytest|ruff|mypy|tsc)\b)/
       DIRECT_EVIDENCE_METHODS = %w[
@@ -177,13 +178,15 @@ module AgenticDeveloperSetup
 
       def package_managers
         managers = Hash.new { |hash, key| hash[key] = [] }
-        declared = declared_package_manager
+        declaration = package_manager_declaration
         lockfiles = { "package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm" }.filter_map do |path, manager|
           [manager, path] if @inventory.exists?(path)
         end
 
-        if declared
-          managers[declared] << file("package.json", "package_json_manager", "Package manager declared in package manifest")
+        if declaration[:state] == :supported
+          managers[declaration[:name]] << file("package.json", "package_json_manager", "Package manager declared in package manifest")
+        elsif declaration[:state] == :unsupported
+          managers[declaration[:name]] << file("package.json", "unsupported_package_manager_declaration", "Unsupported package manager declared in package manifest")
         elsif lockfiles.empty? && @inventory.exists?("package.json")
           managers["npm"] << file("package.json", "package_json_default_manager", "npm-compatible package manifest detected")
         end
@@ -196,16 +199,25 @@ module AgenticDeveloperSetup
           managers["pip"] << file(path, "requirements_file", "pip-compatible requirements file detected")
         end
 
-        node_names = managers.keys.select { |name| %w[npm yarn pnpm].include?(name) }
-        conflict = node_names.length > 1
+        node_names = managers.keys.select { |name| NODE_PACKAGE_MANAGERS.include?(name) }
+        unsupported_declaration = declaration[:state] == :unsupported
+        conflict = node_names.length > 1 || (unsupported_declaration && lockfiles.any?)
         managers.keys.sort.map do |name|
           keys = managers.fetch(name).compact
           {
             "name" => name,
-            "status" => conflict && %w[npm yarn pnpm].include?(name) ? "conflicting" : "detected",
-            "confidence" => if conflict
+            "status" => if conflict && (NODE_PACKAGE_MANAGERS.include?(name) || name == declaration[:name])
+                           "conflicting"
+                         elsif declaration[:state] == :unsupported && name == declaration[:name]
+                           "unknown"
+                         else
+                           "detected"
+                         end,
+            "confidence" => if conflict && (NODE_PACKAGE_MANAGERS.include?(name) || name == declaration[:name])
                               "low"
-                            elsif name == "npm" && declared.nil? && lockfiles.empty?
+                            elsif declaration[:state] == :unsupported && name == declaration[:name]
+                              "low"
+                            elsif name == "npm" && declaration[:state] == :absent && lockfiles.empty?
                               "medium"
                             else
                               confidence_for(keys)
@@ -218,7 +230,7 @@ module AgenticDeveloperSetup
 
       def test_frameworks
         entries = []
-        pytest_keys = python_dependency_evidence(/pytest/i, "pytest_configuration", "pytest configuration or dependency detected")
+        pytest_keys = python_tool_evidence("pytest", "pytest_configuration", "pytest configuration or dependency detected")
         if pytest_keys.any?
           entries << tool_entry_with_keys("pytest", "Python test framework detected", pytest_keys)
         end
@@ -232,8 +244,8 @@ module AgenticDeveloperSetup
 
       def linters
         entries = []
-        if python_configuration_mentions?(/\[tool\.ruff\]|\bruff\b/i) || @inventory.exists?("ruff.toml") || @inventory.exists?(".ruff.toml")
-          keys = python_dependency_evidence(/\[tool\.ruff\]|\bruff\b/i, "ruff_configuration", "Ruff configuration or dependency detected")
+        if python_tool_evidence("ruff", "ruff_configuration", "Ruff configuration or dependency detected").any? || @inventory.exists?("ruff.toml") || @inventory.exists?(".ruff.toml")
+          keys = python_tool_evidence("ruff", "ruff_configuration", "Ruff configuration or dependency detected")
           %w[ruff.toml .ruff.toml].each { |path| keys << file(path, "ruff_configuration", "Ruff configuration detected") if @inventory.exists?(path) }
           entries << tool_entry_with_keys("Ruff", "Python linting tool detected", keys)
         end
@@ -247,8 +259,9 @@ module AgenticDeveloperSetup
 
       def formatters
         entries = []
-        if python_configuration_mentions?(/\[tool\.ruff\.format\]|\bruff\b/i)
-          entries << tool_entry_with_keys("Ruff format", "Python formatter detected", python_dependency_evidence(/\[tool\.ruff\.format\]|\bruff\b/i, "ruff_formatter_configuration", "Ruff formatter configuration or dependency detected"))
+        ruff_keys = python_tool_evidence("ruff", "ruff_formatter_configuration", "Ruff formatter configuration or dependency detected", section_prefix: "tool.ruff.format")
+        if ruff_keys.any?
+          entries << tool_entry_with_keys("Ruff format", "Python formatter detected", ruff_keys)
         end
         if package_dependencies.keys.any? { |name| name == "prettier" } || prettier_config_path
           keys = [file("package.json", "prettier_dependency", "Prettier package detected")].compact
@@ -260,8 +273,8 @@ module AgenticDeveloperSetup
 
       def type_checkers
         entries = []
-        if python_configuration_mentions?(/\[tool\.mypy\]|\bmypy\b/i) || @inventory.exists?("mypy.ini")
-          keys = python_dependency_evidence(/\[tool\.mypy\]|\bmypy\b/i, "mypy_configuration", "mypy configuration or dependency detected")
+        if python_tool_evidence("mypy", "mypy_configuration", "mypy configuration or dependency detected").any? || @inventory.exists?("mypy.ini")
+          keys = python_tool_evidence("mypy", "mypy_configuration", "mypy configuration or dependency detected")
           keys << file("mypy.ini", "mypy_configuration", "mypy configuration detected") if @inventory.exists?("mypy.ini")
           entries << tool_entry_with_keys("mypy", "Python static type checker detected", keys)
         end
@@ -369,15 +382,15 @@ module AgenticDeveloperSetup
 
       def build_capability
         keys = []
-        implementation = package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) } || @pyproject&.match?(/\[build-system\]/)
+        implementation = package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) } || pyproject_has_section?("build-system")
         keys << file("package.json", "package_build_script", "Package build script detected") if package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) }
-        keys << file("pyproject.toml", "python_build_configuration", "Python build configuration detected") if @pyproject&.match?(/\[build-system\]/)
+        keys << file("pyproject.toml", "python_build_configuration", "Python build configuration detected") if pyproject_has_section?("build-system")
         capability("build_compile", implementation, keys.compact)
       end
 
       def standard_verification
-        candidates = @make_targets.select { |target| %w[check verify test lint typecheck format-check].include?(target) }
-        candidates += package_scripts.keys.select { |name| name.match?(/\A(?:check|verify|test|lint|typecheck|format-check)\z/) }
+        candidates = @make_targets.select { |target| %w[check verify].include?(target) }
+        candidates += package_scripts.keys.select { |name| name.match?(/\A(?:check|verify)\z/) }
         keys = []
         keys << file("Makefile", "verification_command", "Standard verification Make target detected") if @make_targets.any? { |target| %w[check verify].include?(target) }
         keys << file("package.json", "verification_script", "Standard verification package script detected") if package_scripts.keys.any? { |name| %w[check verify].include?(name) }
@@ -415,12 +428,15 @@ module AgenticDeveloperSetup
           }
         end
 
-        local_identities = @local_commands.map { |command| command_identity(command) }.uniq
-        ci_identities = @ci[:commands].map { |command| command_identity(command) }.uniq
-        overlap = local_identities.any? { |identity| ci_identities.include?(identity) }
+        local_identities = @local_commands.select { |command| validation_command?(command) }
+          .map { |command| command_identity(command) }.uniq
+        ci_identities = @ci[:commands].select { |command| validation_command?(command) }
+          .map { |command| command_identity(command) }.uniq
+        complete = !local_identities.empty? && !ci_identities.empty? &&
+          (local_identities == ci_identities || coherent_verification_alignment?(local_identities, ci_identities))
         keys = @ci[:file_keys] + @ci[:invocation_keys]
         {
-          "status" => overlap ? "ready" : "partial",
+          "status" => complete ? "ready" : "partial",
           "confidence" => @ci[:invocation_keys].empty? ? "medium" : "high",
           "evidence_ids" => @evidence.ids_for(keys),
           "local_commands" => @local_commands.sort,
@@ -516,6 +532,11 @@ module AgenticDeveloperSetup
           %w[tool:pytest tool:ruff tool:mypy tool:tsc].include?(identity)
       end
 
+      def coherent_verification_alignment?(local_identities, ci_identities)
+        verification = %w[make:check make:verify package:check package:verify]
+        (local_identities & verification).any? { |identity| ci_identities.include?(identity) }
+      end
+
       def documented_command_matches?(name, command)
         identity = command_identity(command)
         case name
@@ -538,9 +559,17 @@ module AgenticDeveloperSetup
       end
 
       def declared_package_manager
-        declaration = @package.is_a?(Hash) ? @package["packageManager"].to_s : ""
-        match = declaration.match(/\A(npm|yarn|pnpm)(?:@|\z)/i)
-        match && match[1].downcase
+        package_manager_declaration[:name] if package_manager_declaration[:state] == :supported
+      end
+
+      def package_manager_declaration
+        return { state: :absent, name: nil } unless @package.is_a?(Hash) && @package.key?("packageManager")
+
+        declaration = @package["packageManager"].to_s
+        name = declaration[/\A([A-Za-z][A-Za-z0-9_.-]*)/, 1].to_s.downcase
+        name = "unknown" if name.empty?
+        state = NODE_PACKAGE_MANAGERS.include?(name) ? :supported : :unsupported
+        { state: state, name: name }
       end
 
       def test_directory_evidence
@@ -657,17 +686,130 @@ module AgenticDeveloperSetup
         end
       end
 
-      def python_configuration_mentions?(pattern)
-        [@pyproject, *@inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).map { |path| text(path) }].compact.any? { |content| content.match?(pattern) }
+      def python_tool_evidence(tool, method, summary, section_prefix: "tool.%<tool>s")
+        keys = []
+        normalized_tool = normalize_python_name(tool)
+        keys << file("pyproject.toml", method, summary) if pyproject_dependency_names.include?(normalized_tool)
+        section_prefix = format(section_prefix, tool: tool)
+        keys << file("pyproject.toml", method, summary) if pyproject_has_section?(section_prefix)
+        @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).each do |path|
+          keys << file(path, method, summary) if requirements_dependency_names(path).include?(normalized_tool)
+        end
+        keys << file("mypy.ini", method, summary) if tool == "mypy" && @inventory.exists?("mypy.ini")
+        keys
       end
 
-      def python_dependency_evidence(pattern, method, summary)
-        keys = []
-        keys << file("pyproject.toml", method, summary) if @pyproject&.match?(pattern)
-        @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i).each do |path|
-          keys << file(path, method, summary) if text(path).to_s.match?(pattern)
+      def python_dependency_names
+        @python_dependency_names ||= (pyproject_dependency_names + requirements_dependency_names).uniq
+      end
+
+      def pyproject_dependency_names
+        names = []
+        pyproject_sections.each do |section, lines|
+          assignments = pyproject_assignments(lines)
+          if section == "project"
+            assignments.each do |key, value|
+              next unless key == "dependencies"
+
+              names.concat(extract_quoted_values(value).map { |item| python_package_name(item) })
+            end
+          elsif section.start_with?("project.optional-dependencies", "dependency-groups")
+            assignments.each_value { |value| names.concat(extract_quoted_values(value).map { |item| python_package_name(item) }) }
+          elsif section == "tool.poetry.dependencies" || section.match?(/\Atool\.poetry\.group\..+\.dependencies\z/)
+            assignments.each_key { |key| names << normalize_python_name(key) unless key == "python" }
+          end
         end
-        keys.compact
+        names.compact
+      end
+
+      def requirements_dependency_names(path = nil)
+        paths = path ? [path] : @inventory.files.keys.grep(/\Arequirements[^\/]*\.txt\z/i)
+        paths.flat_map do |requirement_path|
+          text(requirement_path).to_s.lines.filter_map do |line|
+            requirement_package_name(line)
+          end
+        end
+      end
+
+      def pyproject_has_section?(prefix)
+        pyproject_sections.keys.any? { |section| section == prefix || section.start_with?("#{prefix}.") }
+      end
+
+      def pyproject_sections
+        @pyproject_sections ||= begin
+          sections = Hash.new { |hash, key| hash[key] = [] }
+          current = nil
+          @pyproject.to_s.lines.each do |line|
+            content = strip_toml_comment(line).strip
+            next if content.empty?
+
+            header = content.match(/\A\[\s*([^\]]+)\s*\]\z/)
+            if header
+              current = header[1].strip
+            elsif current
+              sections[current] << content
+            end
+          end
+          sections
+        end
+      end
+
+      def pyproject_assignments(lines)
+        assignments = {}
+        current_key = nil
+        lines.each do |line|
+          assignment = line.match(/\A([A-Za-z0-9_.-]+)\s*=\s*(.*)\z/)
+          if assignment
+            current_key = assignment[1]
+            assignments[current_key] = assignment[2]
+          elsif current_key
+            assignments[current_key] = "#{assignments[current_key]} #{line.strip}"
+          end
+        end
+        assignments
+      end
+
+      def extract_quoted_values(value)
+        value.to_s.scan(/(['"])(.*?)\1/).map { |_quote, item| item }
+      end
+
+      def python_package_name(value)
+        value.to_s[/\A([A-Za-z0-9][A-Za-z0-9_.-]*)/, 1].then { |name| name && normalize_python_name(name) }
+      end
+
+      def normalize_python_name(name)
+        name.to_s.downcase.tr("-_.", "")
+      end
+
+      def requirement_package_name(line)
+        candidate = line.to_s.strip
+        return nil if candidate.empty? || candidate.start_with?("#", "-", ".", "/", "http:", "https:", "git+")
+
+        candidate = candidate.sub(/\s+#.*\z/, "").strip
+        match = candidate.match(/\A([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?(?:\s*(?:===|==|!=|~=|<=|>=|<|>|@)\s*\S+)?(?:\s*;.*)?\z/)
+        match && normalize_python_name(match[1])
+      end
+
+      def strip_toml_comment(line)
+        quote = nil
+        escaped = false
+        line.each_char.with_index do |character, index|
+          if quote
+            if quote == '"' && character == "\\" && !escaped
+              escaped = true
+              next
+            end
+            if character == quote && !escaped
+              quote = nil
+            end
+            escaped = false
+          elsif character == '"' || character == "'"
+            quote = character
+          elsif character == "#"
+            return line[0...index]
+          end
+        end
+        line
       end
 
       def text(path)

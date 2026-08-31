@@ -142,6 +142,56 @@ class AssessmentDetectorTest < Minitest::Test
     assert managers.all? { |manager| manager["confidence"] == "low" }
   end
 
+  def test_unsupported_explicit_package_manager_does_not_fall_back_to_npm
+    write("package.json", "{\"name\":\"sample\",\"packageManager\":\"bun@1.2.3\"}\n")
+
+    managers = assess.dig("tooling", "package_managers")
+
+    assert_equal ["bun"], managers.map { |manager| manager["name"] }
+    assert_equal "unknown", managers.first["status"]
+    refute_includes managers.map { |manager| manager["name"] }, "npm"
+  end
+
+  def test_unsupported_package_manager_and_lockfile_remain_conflicting
+    write("package.json", "{\"packageManager\":\"bun@1\"}\n")
+    write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+
+    managers = assess.dig("tooling", "package_managers").to_h { |item| [item["name"], item] }
+
+    assert_equal %w[bun pnpm], managers.keys.sort
+    assert_equal "conflicting", managers.fetch("bun")["status"]
+    assert_equal "conflicting", managers.fetch("pnpm")["status"]
+    assert managers.values.all? { |manager| manager["confidence"] == "low" }
+  end
+
+  def test_supported_explicit_package_manager_declarations_are_high_confidence
+    {
+      "npm" => "npm@10",
+      "yarn" => "yarn@4",
+      "pnpm" => "pnpm@9"
+    }.each do |manager_name, declaration|
+      write("package.json", "{\"packageManager\":\"#{declaration}\"}\n")
+
+      manager = assess.dig("tooling", "package_managers").find { |item| item["name"] == manager_name }
+
+      assert_equal "detected", manager["status"]
+      assert_equal "high", manager["confidence"]
+    end
+  end
+
+  def test_node_manager_conflict_does_not_lower_uv_confidence
+    write("package.json", "{\"name\":\"sample\"}\n")
+    write("package-lock.json", "{}\n")
+    write("yarn.lock", "# yarn\n")
+    write("uv.lock", "version = 1\n")
+
+    managers = assess.dig("tooling", "package_managers").to_h { |item| [item["name"], item] }
+
+    assert_equal "low", managers.fetch("npm")["confidence"]
+    assert_equal "low", managers.fetch("yarn")["confidence"]
+    assert_equal "high", managers.fetch("uv")["confidence"]
+  end
+
   def test_setup_documentation_does_not_count_as_validation_documentation
     write("README.md", "make setup\nmake dev\n")
 
@@ -175,6 +225,66 @@ class AssessmentDetectorTest < Minitest::Test
     assert_equal names.uniq, names
   end
 
+  def test_pyproject_prose_and_comments_do_not_detect_python_tools
+    write("pyproject.toml", <<~TOML)
+      [project]
+      name = "sample"
+      description = "this project does not use pytest, ruff, or mypy"
+      # ruff and mypy are intentionally mentioned only in a comment
+      notes = "mypy is not configured here"
+    TOML
+
+    result = assess
+
+    assert_empty result.dig("tooling", "test_frameworks")
+    assert_empty result.dig("tooling", "linters")
+    assert_empty result.dig("tooling", "formatters")
+    assert_empty result.dig("tooling", "type_checkers")
+  end
+
+  def test_pyproject_dependency_and_configuration_structures_detect_tools
+    write("pyproject.toml", <<~TOML)
+      [project]
+      name = "sample"
+      dependencies = ["pytest>=8"]
+
+      [tool.ruff]
+      line-length = 100
+
+      [tool.mypy]
+      strict = true
+    TOML
+
+    result = assess
+
+    assert_includes result.dig("tooling", "test_frameworks").map { |item| item["name"] }, "pytest"
+    assert_includes result.dig("tooling", "linters").map { |item| item["name"] }, "Ruff"
+    assert_includes result.dig("tooling", "type_checkers").map { |item| item["name"] }, "mypy"
+  end
+
+  def test_requirements_parser_ignores_comments_and_options
+    write("requirements.txt", <<~REQUIREMENTS)
+      # this project does not use pytest
+      --extra-index-url https://example.invalid/simple/pytest
+      pytest==8.0
+      ruff>=0.12 # linting
+    REQUIREMENTS
+
+    result = assess
+
+    assert_includes result.dig("tooling", "test_frameworks").map { |item| item["name"] }, "pytest"
+    assert_includes result.dig("tooling", "linters").map { |item| item["name"] }, "Ruff"
+  end
+
+  def test_requirements_comments_and_options_alone_do_not_detect_tools
+    write("requirements.txt", "# pytest and ruff are not used\n--index-url https://example.invalid/ruff\n")
+
+    result = assess
+
+    assert_empty result.dig("tooling", "test_frameworks")
+    assert_empty result.dig("tooling", "linters")
+  end
+
   def test_ci_alignment_uses_exact_make_target_identity
     write("README.md", "make test\n")
     write("Makefile", "verify:\n\t@echo verify\n")
@@ -192,6 +302,33 @@ class AssessmentDetectorTest < Minitest::Test
     result = assess
 
     assert_equal "ready", result.dig("validation", "ci_alignment", "status")
+  end
+
+  def test_ci_alignment_ignores_setup_only_overlap
+    write("README.md", "make setup\n")
+    write(".github/workflows/ci.yml", "jobs:\n  setup:\n    steps:\n      - run: make setup\n")
+
+    assert_equal "partial", assess.dig("validation", "ci_alignment", "status")
+  end
+
+  def test_ci_alignment_is_partial_when_ci_covers_only_one_local_validation_command
+    write("Makefile", "test:\n\t@echo test\nlint:\n\t@echo lint\n")
+    write(".github/workflows/ci.yml", "jobs:\n  lint:\n    steps:\n      - run: make lint\n")
+
+    assert_equal "partial", assess.dig("validation", "ci_alignment", "status")
+  end
+
+  def test_ci_alignment_is_ready_when_all_local_validation_commands_are_invoked
+    write("Makefile", "test:\n\t@echo test\nlint:\n\t@echo lint\n")
+    write(".github/workflows/ci.yml", <<~YAML)
+      jobs:
+        validation:
+          steps:
+            - run: make test
+            - run: make lint
+    YAML
+
+    assert_equal "ready", assess.dig("validation", "ci_alignment", "status")
   end
 
   def test_package_manager_precedence_and_conflicts_are_explicit

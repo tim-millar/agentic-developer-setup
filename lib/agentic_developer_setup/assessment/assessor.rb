@@ -46,6 +46,12 @@ module AgenticDeveloperSetup
         "claude_agent_entrypoint" => { "phase" => 2, "title" => "Evaluate the agent compatibility entrypoint" },
         "commit_metadata" => { "phase" => 3, "title" => "Operationalise commit authorship and metadata conventions" }
       }.freeze
+      SUBSTANTIVE_VALIDATION_CAPABILITIES = %w[
+        tests linting static_type_checking build_compile standard_local_verification
+      ].freeze
+      SENSITIVE_TERMS = /\b(?:sensitive|secret|credential|security[- ]critical|restricted)\b/i
+      SENSITIVE_POLICY = /(?:\bmust(?:\s+not)?\b|\bdo not\b|\bnever\b|\brestricted\b|\bprohibited\b|\bonly\b|\brequires?\s+(?:human\s+)?(?:review|approval|handling|access)\b|\breview\s+required\b|\baccess\s+limited\b|\bhandling\s+requirements?\b|\bpermitted\s+operations\b|\bnot\s+permitted\b)/i
+      SENSITIVE_DENIAL = /(?:\b(?:no|not)\s+(?:secrets?|credentials?|sensitive|review|approval)\b|\b(?:contains?|has|requires?|needs?)\s+no\s+(?:secrets?|credentials?|review|approval)\b|\b(?:no|without)\s+(?:review|approval)\s+(?:required|needed)\b)/i
 
       def initialize(target, framework_root: default_framework_root, clock: -> { Time.now.utc })
         expanded = Pathname.new(target.to_s).expand_path
@@ -251,7 +257,7 @@ module AgenticDeveloperSetup
         {
           "status" => status,
           "confidence" => confidence,
-            "evidence_ids" => @evidence.references(evidence_ids),
+          "evidence_ids" => @evidence.references(evidence_ids),
           "consequence" => consequence,
           "recommended_action" => action
         }
@@ -259,17 +265,32 @@ module AgenticDeveloperSetup
 
       def validation_readiness(validation)
         capabilities = validation["capabilities"]
-        detected = capabilities.values.count { |item| item["status"] != "not_detected" }
-        tests = capabilities["tests"]["status"] != "not_detected"
-        status = if tests && detected >= 2
-                   "ready"
-                 elsif detected.positive?
-                   "partial"
-                 else
-                   "missing"
-                 end
+        substantive = substantive_validation_capabilities(capabilities)
+        status = case substantive.length
+                  when 0 then "missing"
+                  when 1 then "partial"
+                  else "ready"
+                  end
         keys = capabilities.values.flat_map { |item| item["evidence_ids"] }
-        readiness_entry(status, keys.length >= 2 ? "high" : "medium", keys, "Static validation evidence helps constrain agent changes without executing project tools.", "Document and align deterministic tests and validation checks.")
+        readiness_entry(status, validation_confidence(capabilities), keys, "Static validation evidence helps constrain agent changes without executing project tools.", "Document and align deterministic tests and validation checks.")
+      end
+
+      def substantive_validation_capabilities(capabilities)
+        SUBSTANTIVE_VALIDATION_CAPABILITIES.select do |name|
+          capability = capabilities[name]
+          next false unless capability
+
+          if name == "standard_local_verification"
+            capability["status"] == "documented_command_detected" && capability["commands"].any?
+          else
+            %w[implementation_detected configuration_detected].include?(capability["status"])
+          end
+        end
+      end
+
+      def validation_confidence(capabilities)
+        keys = capabilities.values.flat_map { |item| item["evidence_ids"] }
+        keys.length >= 2 ? "high" : "medium"
       end
 
       def ci_readiness(validation)
@@ -297,8 +318,9 @@ module AgenticDeveloperSetup
           next false unless path.match?(/\A(?:SECURITY|AGENTS|CLAUDE|docs\/).*/i)
 
           content = @inventory.read(path).to_s
-          content.match?(/\b(?:sensitive|secret|credential|security[- ]critical|restricted)\b/i) &&
-            content.match?(/\b(?:path|area|file|directory|access|operation|review|handling|boundary|must|do not|never)\b/i)
+          content.split(/(?<=[.!?])\s+|\R/).any? do |sentence|
+            sentence.match?(SENSITIVE_TERMS) && sentence.match?(SENSITIVE_POLICY) && !sentence.match?(SENSITIVE_DENIAL)
+          end
         end
       end
 

@@ -137,6 +137,20 @@ class AssessmentPathSafetyTest < Minitest::Test
     assert_equal "external bytes\n", File.read(linked_target)
   end
 
+  def test_temporary_output_file_is_created_beside_requested_entry
+    outside = File.join(@temporary_root, "outside")
+    FileUtils.mkdir_p(outside)
+    target = File.join(outside, "result.yml")
+    link = File.join(@temporary_root, "result.yml")
+    File.symlink(target, link)
+    destination = AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(link, @target)
+
+    directory = AgenticDeveloperSetup::Assessment::CLI.send(:temporary_directory, destination)
+
+    assert_equal Pathname.new(link).expand_path.dirname.to_s, directory
+    refute_equal destination.resolved.dirname.to_s, directory
+  end
+
   private
 
   def cli_status(*arguments)

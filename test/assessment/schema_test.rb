@@ -89,6 +89,27 @@ class AssessmentSchemaTest < Minitest::Test
     assert_schema_error(invalid, "assessor_context must be a mapping")
   end
 
+  def test_not_provided_context_variant_is_valid_when_it_contains_only_status
+    valid = copy(@valid)
+    valid["assessor_context"] = { "status" => "not_provided" }
+
+    assert_schema(valid)
+  end
+
+  def test_not_provided_context_rejects_additional_fields
+    invalid = copy(@valid)
+    invalid["assessor_context"] = { "status" => "not_provided", "sensitive_paths" => 42 }
+
+    assert_schema_error(invalid, "not_provided")
+  end
+
+  def test_not_provided_context_rejects_unknown_fields
+    invalid = copy(@valid)
+    invalid["assessor_context"] = { "status" => "not_provided", "unexpected" => true }
+
+    assert_schema_error(invalid, "not_provided")
+  end
+
   private
 
   def copy(value)

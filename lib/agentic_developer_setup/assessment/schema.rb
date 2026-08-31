@@ -17,7 +17,7 @@ module AgenticDeveloperSetup
       SEVERITIES = %w[blocking high medium low].freeze
       ECOSYSTEMS = %w[node typescript python unsupported].freeze
       ECOSYSTEM_ROLES = %w[primary secondary].freeze
-      TOOL_STATUSES = %w[detected conflicting not_detected].freeze
+      TOOL_STATUSES = %w[detected conflicting not_detected unknown].freeze
       VALIDATION_STATUSES = %w[implementation_detected configuration_detected documented_command_detected ci_invocation_detected not_detected unknown].freeze
       VALIDATION_ALIGNMENT_STATUSES = %w[ready partial blocked not_applicable unknown].freeze
       DOCUMENTATION_STATUSES = %w[present not_detected].freeze
@@ -413,7 +413,12 @@ module AgenticDeveloperSetup
         return unless object(context, "assessor_context", required: ["status"], optional: optional)
 
         value(context["status"], "assessor_context.status", %w[provided not_provided])
-        return unless context["status"] == "provided"
+        if context["status"] == "not_provided"
+          allowed = ["status"]
+          extra = context.keys - allowed
+          @errors << "assessor_context has unknown fields for not_provided: #{extra.join(', ')}" unless extra.empty?
+          return
+        end
 
         object(context, "assessor_context", required: %w[status schema_version path evidence_ids conflicts], optional: optional - %w[schema_version path evidence_ids conflicts])
         integer(context["schema_version"], "assessor_context.schema_version")

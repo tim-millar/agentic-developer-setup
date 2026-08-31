@@ -57,7 +57,7 @@ module AgenticDeveloperSetup
         end
 
         mode = existing_mode(validated.path)
-        Tempfile.create([".assessment-", ".tmp"], validated.resolved.dirname.to_s) do |temporary|
+        Tempfile.create([".assessment-", ".tmp"], temporary_directory(validated)) do |temporary|
           temporary.binmode
           temporary.write(content)
           temporary.flush
@@ -75,6 +75,10 @@ module AgenticDeveloperSetup
         nil
       end
 
+      def self.temporary_directory(destination)
+        destination.path.dirname.to_s
+      end
+
       def self.deep_copy(value)
         case value
         when Hash
@@ -86,7 +90,7 @@ module AgenticDeveloperSetup
         end
       end
 
-      private_class_method :parse_options, :write, :existing_mode, :deep_copy
+      private_class_method :parse_options, :write, :existing_mode, :temporary_directory, :deep_copy
     end
   end
 end

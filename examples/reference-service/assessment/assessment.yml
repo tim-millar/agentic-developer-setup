@@ -190,10 +190,6 @@ validation:
     standard_local_verification:
       status: documented_command_detected
       commands:
-      - format-check
-      - lint
-      - test
-      - typecheck
       - verify
       evidence_ids:
       - E049
@@ -554,13 +550,13 @@ readiness:
     recommended_action: Align CI invocations with the documented local validation
       surface.
   sensitive_area_guidance:
-    status: ready
-    confidence: medium
+    status: unknown
+    confidence: low
     evidence_ids:
     - E038
-    consequence: Recognised repository guidance provides evidence of sensitive-area
-      boundaries.
-    recommended_action: Keep sensitive-area guidance current.
+    consequence: Static inspection cannot establish whether undocumented restricted
+      areas exist.
+    recommended_action: Ask repository owners to identify sensitive or high-risk areas.
   runtime_access:
     status: not_applicable
     confidence: high
