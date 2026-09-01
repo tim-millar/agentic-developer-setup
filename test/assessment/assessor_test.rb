@@ -227,6 +227,7 @@ class AssessmentAssessorTest < Minitest::Test
     write("docs/TESTING.md", "Testing strategy.\n")
     write("docs/COMMITS.md", "Commit conventions.\n")
     write("pyproject.toml", "[project]\ndependencies = [\"pytest\"]\n")
+    write("tests/example_test.py", "sentinel\n")
     write("Makefile", "verify:\n\t@echo verify\n")
     write(".github/ISSUE_TEMPLATE/task.md", "Scope. Acceptance criteria. Non-goals. Implementation boundaries.\n")
     write(".github/workflows/ci.yml", "jobs:\n  verify:\n    steps:\n      - run: make verify\n")
@@ -238,6 +239,7 @@ class AssessmentAssessorTest < Minitest::Test
     write("README.md", "# Service\n")
     write("docs/ARCHITECTURE.md", "Architecture boundaries.\n")
     write("pyproject.toml", "[project]\ndependencies = [\"pytest\"]\n")
+    write("tests/example_test.py", "sentinel\n")
     write("Makefile", "verify:\n\t@echo verify\n")
     write(".github/ISSUE_TEMPLATE/task.md", "Scope. Acceptance criteria. Non-goals. Implementation boundaries.\n")
     write(".github/workflows/ci.yml", "jobs:\n  verify:\n    steps:\n      - run: make verify\n")
@@ -373,6 +375,31 @@ class AssessmentAssessorTest < Minitest::Test
     write(".eslintrc.json", "{}\n")
 
     assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_pytest_configuration_plus_actual_lint_without_tests_is_only_partial_validation
+    write("pyproject.toml", "[project]\nname = \"sample\"\ndependencies = [\"pytest\"]\n")
+    write("package.json", "{\"scripts\":{\"lint\":\"eslint .\"},\"devDependencies\":{\"eslint\":\"^9\"}}\n")
+
+    result = assess
+
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "tests", "status")
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "linting", "status")
+    assert_equal "partial", result.dig("readiness", "deterministic_validation", "status")
+    assert_equal "tier-1", result.dig("tier_recommendation", "outcome")
+  end
+
+  def test_actual_test_surface_and_lint_preserve_ready_validation_and_tier_two
+    write("README.md", "# Service\n")
+    write("tests/example_test.py", "sentinel\n")
+    write("pyproject.toml", "[project]\nname = \"sample\"\ndependencies = [\"pytest\"]\n")
+    write("package.json", "{\"scripts\":{\"lint\":\"eslint .\"},\"devDependencies\":{\"eslint\":\"^9\"}}\n")
+
+    result = assess
+
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "tests", "status")
+    assert_equal "ready", result.dig("readiness", "deterministic_validation", "status")
+    assert_equal "tier-2", result.dig("tier_recommendation", "outcome")
   end
 
   def test_dependency_only_lint_and_type_tools_do_not_unlock_validation

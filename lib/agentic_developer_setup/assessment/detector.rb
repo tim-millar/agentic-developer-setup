@@ -351,7 +351,8 @@ module AgenticDeveloperSetup
       end
 
       def validation
-        test_keys = test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] } + test_directory_evidence
+        test_tool_keys = test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] }
+        test_structure_keys = test_directory_evidence
         test_command_keys = package_test_command_evidence + make_test_command_evidence
         lint_keys = linters.flat_map { |entry| entry["_evidence_keys"] || [] }
         lint_invocation_keys = validation_tool_invocation_evidence("linting")
@@ -359,7 +360,7 @@ module AgenticDeveloperSetup
         type_invocation_keys = validation_tool_invocation_evidence("static_type_checking")
         {
           "capabilities" => {
-            "tests" => capability("tests", test_keys.any? || test_command_keys.any?, test_keys + test_command_keys),
+            "tests" => capability("tests", test_structure_keys.any? || test_command_keys.any?, test_tool_keys + test_structure_keys + test_command_keys),
             "linting" => capability("linting", lint_invocation_keys.any?, lint_keys + lint_invocation_keys),
             "formatting" => capability("formatting", formatters.any?, formatters.flat_map { |entry| entry["_evidence_keys"] || [] }),
             "static_type_checking" => capability("static_type_checking", type_invocation_keys.any?, type_keys + type_invocation_keys),

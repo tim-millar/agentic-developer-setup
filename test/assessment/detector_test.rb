@@ -34,16 +34,39 @@ class AssessmentDetectorTest < Minitest::Test
 
     assert_includes result.dig("tooling", "test_frameworks").map { |item| item["name"] }, "pytest"
     assert_equal "high", result.dig("tooling", "test_frameworks").find { |item| item["name"] == "pytest" }["confidence"]
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "tests", "status")
   end
 
-  def test_single_direct_python_configuration_has_high_ecosystem_and_tool_confidence
+  def test_pytest_dependency_without_test_surface_is_not_an_implemented_test_capability
+    write("pyproject.toml", "[project]\nname = \"sample\"\ndependencies = [\"pytest\"]\n")
+
+    result = assess
+    pytest = result.dig("tooling", "test_frameworks").find { |item| item["name"] == "pytest" }
+
+    assert_equal "high", pytest["confidence"]
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "tests", "status")
+    assert_equal "missing", result.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_single_direct_python_configuration_has_high_confidence_but_is_not_implemented
     write("pyproject.toml", "[project]\nname = \"sample\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
 
     result = assess
 
     assert_equal "high", result["ecosystem"].find { |item| item["name"] == "python" }["confidence"]
     assert_equal "high", result.dig("tooling", "test_frameworks").find { |item| item["name"] == "pytest" }["confidence"]
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "tests", "status")
+    assert_equal "missing", result.dig("readiness", "deterministic_validation", "status")
     assert_equal "high", result.dig("readiness", "deterministic_validation", "confidence")
+  end
+
+  def test_pytest_configuration_and_local_test_command_is_an_implemented_test_capability
+    write("pyproject.toml", "[project]\nname = \"sample\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+    write("Makefile", "test:\n\t@pytest\n")
+
+    result = assess
+
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "tests", "status")
   end
 
   def test_typescript_compiler_script_has_package_script_evidence
