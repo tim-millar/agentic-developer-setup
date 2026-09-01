@@ -83,12 +83,18 @@ The fixture intentionally omits the following optional or later-stage concerns:
 - `docs/COMMITS.md`, because commit-guidance adoption is unnecessary for this compact example.
 - `lefthook.yml`, because hooks would add a host prerequisite without materially improving this fixture.
 - GitHub App runtime/helper artefacts, because this example requires no repository credentials or agent runtime access.
-- formal adoption metadata such as `.agent-framework.yml`, component digests, or framework version/adoption metadata; no such schema is created here.
-- repository assessment output such as `assessment.yml`, assessment reports, adoption plans, or result records, because those belong to later repository-adoption work.
+- formal adoption metadata, component digests, or framework ownership/version metadata; no such schema is created here.
+- adoption plans or result records, because safe adoption/update mutation belongs to later repository-adoption work.
 - automatic update metadata or adoption/update tooling, because safe automated adoption belongs to later repository-adoption work.
 - evaluation/run metadata, because evaluation telemetry is outside this reference application.
 
-These omissions are deliberate and are not defects in the selected adoption.
+The committed `assessment/assessment.yml` and `assessment/assessment.md` are
+read-only outputs of Issue #8's assessor. They describe this fixture and its
+deliberate optional runtime and hook omissions; they are not adopted-repository
+ownership metadata and are not used to authorise changes.
+
+The remaining omissions are deliberate and are not defects in the selected
+adoption.
 
 ## 8. Greenfield decisions
 
@@ -108,11 +114,11 @@ smallest safe change.
 
 ## 10. Relationship to #8–#10
 
-Future work may assess this fixture, add reviewed formal ownership and version
-relationships for adopted components, and exercise safe plan/apply/update
-workflows. Those are the subjects of issues #8, #9, and #10. This fixture does
-not create their assessment outputs, adoption plans, ownership/version
-metadata, or automatic update behaviour.
+Issue #8 assesses this fixture and commits a normalised example result. Future
+work may add reviewed formal ownership and version relationships for adopted
+components and exercise safe plan/apply/update workflows. Those are the
+subjects of issues #9 and #10. This fixture does not create ownership/version
+metadata, adoption plans, or automatic update behaviour.
 
 ## 11. Limitations
 

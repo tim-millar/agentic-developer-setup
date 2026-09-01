@@ -123,6 +123,27 @@ Typical flow:
 4. standardise commands and validation incrementally
 5. tighten documentation and automation over time
 
+### Deterministic repository assessment
+
+For an unfamiliar repository, use the read-only assessment workflow before
+planning adoption:
+
+```sh
+ruby scripts/assess_repository.rb /path/to/repository \
+  --output assessment.yml \
+  --report assessment.md
+```
+
+The equivalent repository command is `make assess REPO=/path/to/repository`.
+The assessor produces YAML and an optional Markdown projection from one
+evidence-backed result. It does not execute project commands, inspect arbitrary
+source code, access the network, install dependencies, or modify the target.
+It supports generic Git, GitHub Actions, Make, Python, and Node.js/TypeScript
+signals and falls back gracefully for unsupported ecosystems. Read
+[`docs/repository-assessment.md`](docs/repository-assessment.md) for the
+schema, confidence and readiness semantics, safety boundary, tier algorithm,
+context file, and Issue #9/#10 boundaries.
+
 ### 3. Legacy repo safe enablement
 
 Use the framework as a safety and clarity overlay for a legacy codebase.
@@ -310,6 +331,7 @@ See also:
 - [`docs/public-evidence.md`](docs/public-evidence.md) for public claim and disclosure boundaries
 - `framework.yml` for machine-readable framework metadata
 - `docs/validation.md` for framework self-validation
+- [`docs/repository-assessment.md`](docs/repository-assessment.md) for the read-only adoption assessment workflow
 - `docs/launcher-testing.md` for the offline baseline launcher test architecture
 - [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md) for installation, policy, diagnostics, limitations, and smoke testing
 - `adapters/README.md` for adapter taxonomy and composition guidance

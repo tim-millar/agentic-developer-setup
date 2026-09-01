@@ -1,0 +1,1273 @@
+---
+schema_version: 1
+framework:
+  metadata_schema_version: 2
+  version: 0.1.0
+  source_revision: normalised-for-fixture
+assessment:
+  generated_at: '2026-01-02T03:04:05Z'
+repository:
+  root: examples/reference-service
+  git:
+    detected: true
+    commit: normalised-for-fixture
+    branch: main
+    working_tree: clean
+scope:
+  type: repository
+  project_roots:
+  - "."
+  shape: single_project
+  excluded_paths: []
+  ignored_paths: []
+  symlink_boundaries: []
+ecosystem:
+- name: python
+  role: primary
+  status: detected
+  confidence: high
+  paths:
+  - pyproject.toml
+  - uv.lock
+  evidence_ids:
+  - E063
+  - E068
+  signals:
+  - Python project metadata detected
+tooling:
+  package_managers:
+  - name: uv
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E068
+  test_frameworks:
+  - name: pytest
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E064
+  linters:
+  - name: Ruff
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E066
+  formatters:
+  - name: Ruff format
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E067
+  type_checkers:
+  - name: mypy
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E062
+  task_runners:
+  - name: Make
+    status: detected
+    confidence: high
+    evidence_ids:
+    - E041
+  command_surface:
+    status: detected
+    commands:
+    - name: make format
+      source: Makefile
+      evidence_ids:
+      - E042
+    - name: make format-check
+      source: Makefile
+      evidence_ids:
+      - E043
+    - name: make lint
+      source: Makefile
+      evidence_ids:
+      - E044
+    - name: make setup
+      source: Makefile
+      evidence_ids:
+      - E045
+    - name: make test
+      source: Makefile
+      evidence_ids:
+      - E046
+    - name: make typecheck
+      source: Makefile
+      evidence_ids:
+      - E047
+    - name: make verify
+      source: Makefile
+      evidence_ids:
+      - E048
+    - name: mypy
+      source: documentation
+      evidence_ids:
+      - E014
+      - E019
+      - E024
+    - name: pytest
+      source: documentation
+      evidence_ids:
+      - E015
+      - E020
+      - E025
+    - name: ruff
+      source: documentation
+      evidence_ids:
+      - E016
+    - name: uv run --locked
+      source: documentation
+      evidence_ids:
+      - E006
+      - E017
+  ci:
+    provider: github_actions
+    workflow_paths:
+    - ".github/workflows/ci.yml"
+    invocations:
+    - make setup
+    - make verify
+    evidence_ids:
+    - E001
+    - E002
+    - E037
+  hooks:
+    status: not_detected
+    paths: []
+    evidence_ids: []
+  workspace:
+    status: not_detected
+    evidence_ids: []
+  containerisation:
+    status: not_detected
+    paths: []
+    evidence_ids: []
+validation:
+  capabilities:
+    tests:
+      status: implementation_detected
+      signals:
+      - implementation_detected
+      - configuration_detected
+      - documented_command_detected
+      evidence_ids:
+      - E003
+      - E050
+      - E064
+    linting:
+      status: implementation_detected
+      signals:
+      - implementation_detected
+      - configuration_detected
+      - documented_command_detected
+      evidence_ids:
+      - E049
+      - E066
+    formatting:
+      status: implementation_detected
+      signals:
+      - implementation_detected
+      - configuration_detected
+      - documented_command_detected
+      evidence_ids:
+      - E067
+    static_type_checking:
+      status: implementation_detected
+      signals:
+      - implementation_detected
+      - configuration_detected
+      - documented_command_detected
+      evidence_ids:
+      - E051
+      - E062
+    build_compile:
+      status: implementation_detected
+      signals:
+      - implementation_detected
+      - configuration_detected
+      evidence_ids:
+      - E065
+    standard_local_verification:
+      status: documented_command_detected
+      commands:
+      - verify
+      evidence_ids:
+      - E052
+    ci_execution:
+      status: ci_invocation_detected
+      evidence_ids:
+      - E001
+      - E002
+      - E037
+    local_hooks:
+      status: not_detected
+      paths: []
+      evidence_ids: []
+    validation_documentation:
+      status: documented_command_detected
+      signals:
+      - documented_command_detected
+      evidence_ids:
+      - E005
+      - E007
+      - E008
+      - E009
+      - E011
+      - E012
+      - E013
+      - E014
+      - E015
+      - E016
+      - E019
+      - E020
+      - E021
+      - E022
+      - E023
+      - E024
+      - E025
+  ci_alignment:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E001
+    - E002
+    - E037
+    local_commands:
+    - make format
+    - make format-check
+    - make lint
+    - make setup
+    - make test
+    - make typecheck
+    - make verify
+    - mypy
+    - pytest
+    - ruff
+    - uv run --locked
+    ci_commands:
+    - make setup
+    - make verify
+  local_commands:
+  - make format
+  - make format-check
+  - make lint
+  - make setup
+  - make test
+  - make typecheck
+  - make verify
+  - mypy
+  - pytest
+  - ruff
+  - uv run --locked
+  ci_commands:
+  - make setup
+  - make verify
+documentation:
+  root_readme:
+    status: present
+    paths:
+    - README.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E053
+  development_guide:
+    status: present
+    paths:
+    - docs/DEVELOPMENT.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E056
+  architecture:
+    status: present
+    paths:
+    - docs/ARCHITECTURE.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E054
+  domain:
+    status: present
+    paths:
+    - docs/DOMAIN.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E058
+  testing:
+    status: present
+    paths:
+    - docs/TESTING.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E060
+  security:
+    status: not_detected
+    paths: []
+    discoverability: unknown
+    ambiguity: false
+    evidence_ids: []
+  deployment_operations:
+    status: not_detected
+    paths: []
+    discoverability: unknown
+    ambiguity: false
+    evidence_ids: []
+  adrs:
+    status: not_detected
+    paths: []
+    discoverability: unknown
+    ambiguity: false
+    evidence_ids: []
+  agent_instructions:
+    status: present
+    paths:
+    - AGENTS.md
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E038
+  issue_templates:
+    status: present
+    paths:
+    - ".github/ISSUE_TEMPLATE/agent-ready-implementation.md"
+    - ".github/ISSUE_TEMPLATE/bug-report.md"
+    - ".github/ISSUE_TEMPLATE/config.yml"
+    - ".github/ISSUE_TEMPLATE/discovery-or-shaping.md"
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E026
+    - E028
+    - E030
+    - E032
+  pull_request_template:
+    status: present
+    paths:
+    - ".github/PULL_REQUEST_TEMPLATE.md"
+    discoverability: obvious
+    ambiguity: false
+    evidence_ids:
+    - E034
+  ownership:
+    status: not_detected
+    paths: []
+    discoverability: unknown
+    ambiguity: false
+    evidence_ids: []
+framework_adoption:
+  metadata:
+    status: unsupported_in_schema_v1
+  detected_components:
+  - component: agent_instructions
+    state: framework_like
+    paths:
+    - AGENTS.md
+    evidence_ids:
+    - E039
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: agent_ready_issue_template
+    state: framework_like
+    paths:
+    - ".github/ISSUE_TEMPLATE/agent-ready-implementation.md"
+    evidence_ids:
+    - E027
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: architecture_scaffold
+    state: framework_like
+    paths:
+    - docs/ARCHITECTURE.md
+    evidence_ids:
+    - E055
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: bug_report_issue_template
+    state: framework_like
+    paths:
+    - ".github/ISSUE_TEMPLATE/bug-report.md"
+    evidence_ids:
+    - E029
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: ci_workflow
+    state: framework_like
+    paths:
+    - ".github/workflows/ci.yml"
+    evidence_ids:
+    - E036
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: command_interface
+    state: framework_like
+    paths:
+    - Makefile
+    evidence_ids:
+    - E040
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: development_guide
+    state: framework_like
+    paths:
+    - docs/DEVELOPMENT.md
+    evidence_ids:
+    - E057
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: discovery_or_shaping_issue_template
+    state: framework_like
+    paths:
+    - ".github/ISSUE_TEMPLATE/discovery-or-shaping.md"
+    evidence_ids:
+    - E033
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: domain_context
+    state: framework_like
+    paths:
+    - docs/DOMAIN.md
+    evidence_ids:
+    - E059
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: issue_template_config
+    state: framework_exact
+    paths:
+    - ".github/ISSUE_TEMPLATE/config.yml"
+    evidence_ids:
+    - E031
+    rationale: Exact current-framework correspondence was established by content identity.
+  - component: pull_request_template
+    state: framework_like
+    paths:
+    - ".github/PULL_REQUEST_TEMPLATE.md"
+    evidence_ids:
+    - E035
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+  - component: testing_strategy
+    state: framework_like
+    paths:
+    - docs/TESTING.md
+    evidence_ids:
+    - E061
+    rationale: A recognised framework-style artefact exists, but current-framework
+      provenance was not established.
+readiness:
+  repository_context:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E053
+    - E054
+    - E056
+    consequence: Agents need discoverable repository purpose, roots, and development
+      context.
+    recommended_action: Document repository purpose, project roots, and material boundaries.
+  task_boundary:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E026
+    - E028
+    - E030
+    - E032
+    - E034
+    consequence: Explicit scope, acceptance criteria, and non-goals make agent work
+      reviewable.
+    recommended_action: Document task scope, acceptance criteria, non-goals, and implementation
+      boundaries.
+  command_surface:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E006
+    - E014
+    - E015
+    - E016
+    - E017
+    - E019
+    - E020
+    - E024
+    - E025
+    - E042
+    - E043
+    - E044
+    - E045
+    - E046
+    - E047
+    - E048
+    consequence: A stable command surface bounds how humans and agents discover local
+      work.
+    recommended_action: Define a stable local command for development and deterministic
+      validation.
+  deterministic_validation:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E001
+    - E002
+    - E003
+    - E005
+    - E007
+    - E008
+    - E009
+    - E011
+    - E012
+    - E013
+    - E014
+    - E015
+    - E016
+    - E019
+    - E020
+    - E021
+    - E022
+    - E023
+    - E024
+    - E025
+    - E037
+    - E049
+    - E050
+    - E051
+    - E052
+    - E062
+    - E064
+    - E065
+    - E066
+    - E067
+    consequence: Static validation evidence helps constrain agent changes without
+      executing project tools.
+    recommended_action: Document and align deterministic tests and validation checks.
+  ci_alignment:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E001
+    - E002
+    - E037
+    consequence: CI should provide merge-time evidence conceptually aligned with local
+      validation.
+    recommended_action: Align CI invocations with the documented local validation
+      surface.
+  sensitive_area_guidance:
+    status: unknown
+    confidence: low
+    evidence_ids: []
+    consequence: Static inspection cannot establish whether undocumented restricted
+      areas exist.
+    recommended_action: Ask repository owners to identify sensitive or high-risk areas.
+  runtime_access:
+    status: not_applicable
+    confidence: high
+    evidence_ids: []
+    consequence: No agent runtime requirement is established by static repository
+      evidence.
+    recommended_action: Evaluate runtime controls only if the adoption scope requires
+      them.
+  review_handoff:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E026
+    - E028
+    - E030
+    - E032
+    - E034
+    consequence: Human review needs a visible place for scope and validation evidence.
+    recommended_action: Provide a review handoff that records scope, validation, risks,
+      and follow-up work.
+  local_setup_reproducibility:
+    status: ready
+    confidence: high
+    evidence_ids:
+    - E053
+    - E056
+    consequence: Agents need reproducible prerequisites without relying on undocumented
+      local state.
+    recommended_action: Document prerequisites, setup commands, and lockfile/runtime
+      expectations.
+tier_recommendation:
+  outcome: tier-2
+  confidence: high
+  evidence_ids:
+  - E001
+  - E002
+  - E003
+  - E005
+  - E006
+  - E007
+  - E008
+  - E009
+  - E011
+  - E012
+  - E013
+  - E014
+  - E015
+  - E016
+  - E017
+  - E019
+  - E020
+  - E021
+  - E022
+  - E023
+  - E024
+  - E025
+  - E026
+  - E028
+  - E030
+  - E032
+  - E034
+  - E037
+  - E042
+  - E043
+  - E044
+  - E045
+  - E046
+  - E047
+  - E048
+  - E049
+  - E050
+  - E051
+  - E052
+  - E053
+  - E054
+  - E056
+  - E062
+  - E064
+  - E065
+  - E066
+  - E067
+  blocking_gap_ids: []
+  assumptions:
+  - The supplied target path is treated as the repository-level adoption scope.
+  alternative_conditions:
+  - Tier 3 requires discoverable architecture, domain, testing, and repository conventions
+    that can be specialised without invention.
+component_recommendations:
+- component: agent_instructions
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E039
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: agent_launcher
+  state: evaluate_later
+  confidence: low
+  evidence_ids: []
+  rationale: This optional runtime or hook component should be evaluated only if its
+    access and workflow value is established.
+  prerequisite_gap_ids: []
+- component: agent_prompt
+  state: adopt_now
+  confidence: low
+  evidence_ids: []
+  rationale: The capability is not currently detected; adopt it incrementally using
+    repository evidence and native conventions.
+  prerequisite_gap_ids: []
+- component: agent_ready_issue_template
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E027
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: architecture_scaffold
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E055
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: bug_report_issue_template
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E029
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: ci_workflow
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E036
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: claude_agent_entrypoint
+  state: evaluate_later
+  confidence: low
+  evidence_ids: []
+  rationale: This optional runtime or hook component should be evaluated only if its
+    access and workflow value is established.
+  prerequisite_gap_ids: []
+- component: command_interface
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E040
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: commit_metadata
+  state: defer
+  confidence: low
+  evidence_ids: []
+  rationale: The current repository does not establish a need for this source-repository
+    session artefact.
+  prerequisite_gap_ids: []
+- component: development_guide
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E057
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: discovery_or_shaping_issue_template
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E033
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: domain_context
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E059
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: git_hooks
+  state: evaluate_later
+  confidence: low
+  evidence_ids: []
+  rationale: This optional runtime or hook component should be evaluated only if its
+    access and workflow value is established.
+  prerequisite_gap_ids: []
+- component: github_access_helper
+  state: evaluate_later
+  confidence: low
+  evidence_ids: []
+  rationale: This optional runtime or hook component should be evaluated only if its
+    access and workflow value is established.
+  prerequisite_gap_ids: []
+- component: issue_template_config
+  state: adopt_now
+  confidence: high
+  evidence_ids:
+  - E031
+  rationale: Current framework content is present; retain it and review its applicability.
+  prerequisite_gap_ids: []
+- component: pull_request_template
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E035
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+- component: testing_strategy
+  state: specialise_now
+  confidence: medium
+  evidence_ids:
+  - E061
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+  prerequisite_gap_ids: []
+gaps: []
+risks: []
+roadmap:
+- id: STEP-001
+  phase: 1
+  title: Document architecture boundaries for adoption
+  component: architecture_scaffold
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-002
+  phase: 1
+  title: Document deterministic testing and validation strategy
+  component: testing_strategy
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-003
+  phase: 1
+  title: Document domain context for adoption
+  component: domain_context
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-004
+  phase: 1
+  title: Document reproducible local development
+  component: development_guide
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-005
+  phase: 1
+  title: Document the agent session brief and repository orientation
+  component: agent_prompt
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: The capability is not currently detected; adopt it incrementally using
+    repository evidence and native conventions.
+- id: STEP-006
+  phase: 1
+  title: Establish a stable repository command interface
+  component: command_interface
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-007
+  phase: 1
+  title: Establish repository agent instructions and boundaries
+  component: agent_instructions
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-008
+  phase: 2
+  title: Align the CI validation workflow
+  component: ci_workflow
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-009
+  phase: 2
+  title: Configure the issue-template chooser
+  component: issue_template_config
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: Current framework content is present; retain it and review its applicability.
+- id: STEP-010
+  phase: 2
+  title: Establish the agent-ready task workflow
+  component: agent_ready_issue_template
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-011
+  phase: 2
+  title: Establish the defect-report workflow
+  component: bug_report_issue_template
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-012
+  phase: 2
+  title: Establish the discovery and shaping workflow
+  component: discovery_or_shaping_issue_template
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+- id: STEP-013
+  phase: 2
+  title: Establish the human review handoff
+  component: pull_request_template
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: A framework-like artefact is present; confirm provenance and specialise
+    it to repository evidence.
+assessor_context:
+  status: not_provided
+assumptions:
+- Static inspection is limited to recognised repository metadata and documentation;
+  arbitrary source code is not analysed.
+- Existing repository-native mechanisms are treated as capability evidence, not as
+  framework provenance.
+unknowns:
+- Static evidence cannot prove that a documented command succeeds or that an unobserved
+  area does not exist.
+- Repository semantics, ownership, security posture, and operational suitability require
+  human review.
+- The assessment does not recursively assess each project root in a multi-project
+  repository.
+- No assessor context was supplied for facts that are not discoverable from repository
+  files.
+evidence:
+- type: ci_invocation
+  method: ci_invocation
+  summary: GitHub Actions invokes make setup
+  path: ".github/workflows/ci.yml"
+  id: E001
+- type: ci_invocation
+  method: ci_invocation
+  summary: GitHub Actions invokes make verify
+  path: ".github/workflows/ci.yml"
+  id: E002
+- type: directory
+  method: test_directory
+  summary: Generic test directory detected
+  path: tests
+  id: E003
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make setup'
+  path: README.md
+  id: E004
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make verify'
+  path: README.md
+  id: E005
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: uv run --locked'
+  path: README.md
+  id: E006
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make format'
+  path: docs/DEVELOPMENT.md
+  id: E007
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make format-check'
+  path: docs/DEVELOPMENT.md
+  id: E008
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make lint'
+  path: docs/DEVELOPMENT.md
+  id: E009
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make setup'
+  path: docs/DEVELOPMENT.md
+  id: E010
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make test'
+  path: docs/DEVELOPMENT.md
+  id: E011
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make typecheck'
+  path: docs/DEVELOPMENT.md
+  id: E012
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make verify'
+  path: docs/DEVELOPMENT.md
+  id: E013
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: mypy'
+  path: docs/DEVELOPMENT.md
+  id: E014
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: pytest'
+  path: docs/DEVELOPMENT.md
+  id: E015
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: ruff'
+  path: docs/DEVELOPMENT.md
+  id: E016
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: uv run --locked'
+  path: docs/DEVELOPMENT.md
+  id: E017
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make setup'
+  path: docs/FRAMEWORK_ADOPTION.md
+  id: E018
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: mypy'
+  path: docs/FRAMEWORK_ADOPTION.md
+  id: E019
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: pytest'
+  path: docs/FRAMEWORK_ADOPTION.md
+  id: E020
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make format'
+  path: docs/TESTING.md
+  id: E021
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make test'
+  path: docs/TESTING.md
+  id: E022
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: make verify'
+  path: docs/TESTING.md
+  id: E023
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: mypy'
+  path: docs/TESTING.md
+  id: E024
+- type: documented_command
+  method: documented_command
+  summary: 'Repository command documented: pytest'
+  path: docs/TESTING.md
+  id: E025
+- type: file
+  method: documentation_presence
+  summary: Issue templates detected
+  path: ".github/ISSUE_TEMPLATE/agent-ready-implementation.md"
+  id: E026
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for agent_ready_issue_template
+  path: ".github/ISSUE_TEMPLATE/agent-ready-implementation.md"
+  id: E027
+- type: file
+  method: documentation_presence
+  summary: Issue templates detected
+  path: ".github/ISSUE_TEMPLATE/bug-report.md"
+  id: E028
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for bug_report_issue_template
+  path: ".github/ISSUE_TEMPLATE/bug-report.md"
+  id: E029
+- type: file
+  method: documentation_presence
+  summary: Issue templates detected
+  path: ".github/ISSUE_TEMPLATE/config.yml"
+  id: E030
+- type: file
+  method: framework_exact_content_match
+  summary: Current framework artefact content matches issue_template_config
+  path: ".github/ISSUE_TEMPLATE/config.yml"
+  id: E031
+- type: file
+  method: documentation_presence
+  summary: Issue templates detected
+  path: ".github/ISSUE_TEMPLATE/discovery-or-shaping.md"
+  id: E032
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for discovery_or_shaping_issue_template
+  path: ".github/ISSUE_TEMPLATE/discovery-or-shaping.md"
+  id: E033
+- type: file
+  method: documentation_presence
+  summary: Pull request template detected
+  path: ".github/PULL_REQUEST_TEMPLATE.md"
+  id: E034
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for pull_request_template
+  path: ".github/PULL_REQUEST_TEMPLATE.md"
+  id: E035
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for ci_workflow
+  path: ".github/workflows/ci.yml"
+  id: E036
+- type: file
+  method: github_actions_workflow
+  summary: GitHub Actions workflow detected
+  path: ".github/workflows/ci.yml"
+  id: E037
+- type: file
+  method: documentation_presence
+  summary: Repository agent instructions detected
+  path: AGENTS.md
+  id: E038
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for agent_instructions
+  path: AGENTS.md
+  id: E039
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for command_interface
+  path: Makefile
+  id: E040
+- type: file
+  method: make_command_surface
+  summary: Makefile command interface detected
+  path: Makefile
+  id: E041
+- type: file
+  method: make_target
+  summary: Make target format declared
+  path: Makefile
+  id: E042
+- type: file
+  method: make_target
+  summary: Make target format-check declared
+  path: Makefile
+  id: E043
+- type: file
+  method: make_target
+  summary: Make target lint declared
+  path: Makefile
+  id: E044
+- type: file
+  method: make_target
+  summary: Make target setup declared
+  path: Makefile
+  id: E045
+- type: file
+  method: make_target
+  summary: Make target test declared
+  path: Makefile
+  id: E046
+- type: file
+  method: make_target
+  summary: Make target typecheck declared
+  path: Makefile
+  id: E047
+- type: file
+  method: make_target
+  summary: Make target verify declared
+  path: Makefile
+  id: E048
+- type: file
+  method: make_validation_target
+  summary: Make target lint invokes a linting tool
+  path: Makefile
+  id: E049
+- type: file
+  method: make_validation_target
+  summary: Make target test invokes a test tool
+  path: Makefile
+  id: E050
+- type: file
+  method: make_validation_target
+  summary: Make target typecheck invokes a type checking tool
+  path: Makefile
+  id: E051
+- type: file
+  method: verification_command
+  summary: Standard verification Make target detected
+  path: Makefile
+  id: E052
+- type: file
+  method: documentation_presence
+  summary: README documentation detected
+  path: README.md
+  id: E053
+- type: file
+  method: documentation_presence
+  summary: Architecture documentation detected
+  path: docs/ARCHITECTURE.md
+  id: E054
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for architecture_scaffold
+  path: docs/ARCHITECTURE.md
+  id: E055
+- type: file
+  method: documentation_presence
+  summary: Development guidance detected
+  path: docs/DEVELOPMENT.md
+  id: E056
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for development_guide
+  path: docs/DEVELOPMENT.md
+  id: E057
+- type: file
+  method: documentation_presence
+  summary: Domain documentation detected
+  path: docs/DOMAIN.md
+  id: E058
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for domain_context
+  path: docs/DOMAIN.md
+  id: E059
+- type: file
+  method: documentation_presence
+  summary: Testing guidance detected
+  path: docs/TESTING.md
+  id: E060
+- type: file
+  method: framework_like_path
+  summary: Recognised framework-style artefact path detected for testing_strategy
+  path: docs/TESTING.md
+  id: E061
+- type: file
+  method: mypy_configuration
+  summary: mypy configuration or dependency detected
+  path: pyproject.toml
+  id: E062
+- type: file
+  method: pyproject_project_metadata
+  summary: Python project metadata detected
+  path: pyproject.toml
+  id: E063
+- type: file
+  method: pytest_configuration
+  summary: pytest configuration or dependency detected
+  path: pyproject.toml
+  id: E064
+- type: file
+  method: python_build_configuration
+  summary: Python build configuration detected
+  path: pyproject.toml
+  id: E065
+- type: file
+  method: ruff_configuration
+  summary: Ruff configuration or dependency detected
+  path: pyproject.toml
+  id: E066
+- type: file
+  method: ruff_formatter_configuration
+  summary: Ruff formatter configuration or dependency detected
+  path: pyproject.toml
+  id: E067
+- type: file
+  method: uv_lockfile
+  summary: uv lockfile detected
+  path: uv.lock
+  id: E068
+- type: framework_metadata
+  method: framework_catalogue
+  summary: Current framework catalogue and metadata detected
+  path: framework.yml
+  id: E069
+- type: git
+  method: git_branch
+  summary: Current Git branch detected
+  id: E070
+- type: git
+  method: git_commit
+  summary: Current Git commit detected
+  id: E071
+- type: git
+  method: git_repository_detection
+  summary: Git repository detection completed
+  id: E072
+- type: git
+  method: git_working_tree
+  summary: Git working-tree state detected
+  id: E073
