@@ -151,6 +151,15 @@ class AssessmentPathSafetyTest < Minitest::Test
     refute_equal destination.resolved.dirname.to_s, directory
   end
 
+  def test_containment_uses_canonical_existing_ancestry
+    existing = File.join(@temporary_root, "Repository")
+    FileUtils.mkdir_p(existing)
+    requested = File.join(existing, "nested", "result.yml")
+    canonical = AgenticDeveloperSetup::Assessment::PathSafety.send(:canonical_path, Pathname.new(requested))
+
+    assert_equal Pathname.new(existing).realpath, canonical.parent.parent
+  end
+
   private
 
   def cli_status(*arguments)

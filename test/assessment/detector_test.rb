@@ -36,6 +36,16 @@ class AssessmentDetectorTest < Minitest::Test
     assert_equal "high", result.dig("tooling", "test_frameworks").find { |item| item["name"] == "pytest" }["confidence"]
   end
 
+  def test_single_direct_python_configuration_has_high_ecosystem_and_tool_confidence
+    write("pyproject.toml", "[project]\nname = \"sample\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+    result = assess
+
+    assert_equal "high", result["ecosystem"].find { |item| item["name"] == "python" }["confidence"]
+    assert_equal "high", result.dig("tooling", "test_frameworks").find { |item| item["name"] == "pytest" }["confidence"]
+    assert_equal "high", result.dig("readiness", "deterministic_validation", "confidence")
+  end
+
   def test_typescript_compiler_script_has_package_script_evidence
     write("package.json", "{\"scripts\":{\"typecheck\":\"tsc --noEmit\"}}\n")
 
@@ -65,6 +75,16 @@ class AssessmentDetectorTest < Minitest::Test
     refute_empty compiler["evidence_ids"]
   end
 
+  def test_typescript_configuration_alone_is_not_an_implemented_validation_check
+    write("package.json", "{\"name\":\"sample\"}\n")
+    write("tsconfig.json", "{}\n")
+
+    result = assess
+
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "static_type_checking", "status")
+    assert_equal "missing", result.dig("readiness", "deterministic_validation", "status")
+  end
+
   def test_no_typescript_evidence_does_not_detect_compiler
     write("package.json", "{\"name\":\"sample\"}\n")
 
@@ -78,6 +98,47 @@ class AssessmentDetectorTest < Minitest::Test
     compiler = assess.dig("tooling", "type_checkers").find { |item| item["name"] == "TypeScript compiler" }
 
     assert_equal "high", compiler["confidence"]
+  end
+
+  def test_dependency_only_validation_tools_are_discovered_but_not_invokable
+    write("package.json", "{\"devDependencies\":{\"eslint\":\"^9\",\"typescript\":\"^5\"}}\n")
+
+    result = assess
+
+    assert_equal "detected", result.dig("tooling", "linters").find { |item| item["name"] == "ESLint" }["status"]
+    assert_equal "detected", result.dig("tooling", "type_checkers").find { |item| item["name"] == "TypeScript compiler" }["status"]
+    refute_equal "implementation_detected", result.dig("validation", "capabilities", "linting", "status")
+    refute_equal "implementation_detected", result.dig("validation", "capabilities", "static_type_checking", "status")
+  end
+
+  def test_eslint_configuration_without_local_invocation_is_not_substantive
+    write(".eslintrc.json", "{}\n")
+
+    result = assess
+
+    assert_equal "detected", result.dig("tooling", "linters").find { |item| item["name"] == "ESLint" }["status"]
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "linting", "status")
+    assert_equal "missing", result.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_mypy_configuration_requires_a_local_invocation_for_substantive_validation
+    write("pyproject.toml", "[project]\nname = \"sample\"\n\n[tool.mypy]\nstrict = true\n")
+
+    result = assess
+
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "static_type_checking", "status")
+    refute_equal "ready", result.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_mypy_make_invocation_is_substantive_validation
+    write("pyproject.toml", "[project]\nname = \"sample\"\n\n[tool.mypy]\nstrict = true\n")
+    write("tests/example_test.py", "sentinel\n")
+    write("Makefile", "typecheck:\n\t@mypy src\n")
+
+    result = assess
+
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "static_type_checking", "status")
+    assert_equal "ready", result.dig("readiness", "deterministic_validation", "status")
   end
 
   def test_package_json_only_has_high_node_confidence_and_medium_npm_fallback
@@ -223,6 +284,16 @@ class AssessmentDetectorTest < Minitest::Test
     assert_includes names, "npm run build"
     assert_includes names, "yarn check"
     assert_equal names.uniq, names
+  end
+
+  def test_validation_readiness_confidence_uses_evidence_quality_not_count
+    write("tests/example_test.py", "sentinel\n")
+    write("README.md", "make lint\n")
+    write("docs/DEVELOPMENT.md", "make setup\n")
+
+    result = assess
+
+    assert_equal "medium", result.dig("readiness", "deterministic_validation", "confidence")
   end
 
   def test_pyproject_prose_and_comments_do_not_detect_python_tools
@@ -381,6 +452,19 @@ class AssessmentDetectorTest < Minitest::Test
     refute_includes commands, "make env-only"
     refute_includes commands, "make with-only"
     refute_includes commands, "make commented-out"
+  end
+
+  def test_github_actions_recognizes_uv_run_validation_commands
+    write(".github/workflows/ci.yml", <<~YAML)
+      jobs:
+        verify:
+          steps:
+            - run: uv run pytest
+    YAML
+
+    result = assess
+
+    assert_equal ["uv run pytest"], result.dig("tooling", "ci", "invocations")
   end
 
   def test_malformed_github_actions_workflow_degrades_without_execution

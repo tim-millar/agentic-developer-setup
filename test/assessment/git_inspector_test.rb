@@ -42,4 +42,35 @@ class AssessmentGitInspectorTest < Minitest::Test
     refute File.exist?(sentinel)
     assert_equal "dirty", result.dig("repository", "git", "working_tree")
   end
+
+  def test_git_inspection_clears_inherited_repository_routing_environment
+    init_git
+    write(".gitignore", "ignored.txt\n")
+    Open3.capture3("git", "-C", @target, "add", ".gitignore")
+    Open3.capture3("git", "-C", @target, "commit", "-m", "target metadata")
+    write("ignored.txt", "ignored\n")
+
+    decoy = File.join(@temporary_root, "decoy")
+    init_git(decoy)
+    write_absolute(File.join(decoy, "decoy-only.md"), "decoy\n")
+    Open3.capture3("git", "-C", decoy, "add", "decoy-only.md")
+    Open3.capture3("git", "-C", decoy, "commit", "-m", "decoy metadata")
+    target_commit = Open3.capture3("git", "-C", @target, "rev-parse", "HEAD").first.strip
+
+    original = %w[GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE].to_h { |name| [name, ENV[name]] }
+    begin
+      ENV["GIT_DIR"] = File.join(decoy, ".git")
+      ENV["GIT_WORK_TREE"] = decoy
+      ENV["GIT_INDEX_FILE"] = File.join(decoy, ".git", "index")
+
+      inspector = AgenticDeveloperSetup::Assessment::GitInspector.new(Pathname.new(@target))
+
+      assert_equal target_commit, inspector.source_revision
+      assert_includes inspector.tracked_files, ".gitignore"
+      refute_includes inspector.tracked_files, "decoy-only.md"
+      assert inspector.ignored?("ignored.txt")
+    ensure
+      original.each { |name, value| value.nil? ? ENV.delete(name) : ENV[name] = value }
+    end
+  end
 end

@@ -67,8 +67,10 @@ module AgenticDeveloperSetup
             record_symlink_boundary(name, path)
           elsif PROJECT_CONTAINERS.include?(name)
             walk_project_container(name)
-          elsif name == ".github" || name == "docs"
+          elsif name == ".github"
             walk_known_tree(name, 0)
+          elsif name == "docs"
+            walk_documentation_tree(name, 0)
           elsif known_root_file?(name)
             add_if_known(name)
           end
@@ -155,6 +157,29 @@ module AgenticDeveloperSetup
         end
       end
 
+      def walk_documentation_tree(relative_path, depth)
+        return if depth > 4
+
+        path = @root.join(relative_path)
+        return unless regular_directory?(path)
+
+        Dir.children(path).sort.each do |child|
+          child_relative = File.join(relative_path, child)
+          child_path = @root.join(child_relative)
+          if excluded_directory_name?(child)
+            add_excluded(child_relative) if directory_or_symlink?(child_path)
+          elsif symlink?(child_path)
+            record_symlink_boundary(child_relative, child_path)
+          elsif regular_directory?(child_path)
+            walk_documentation_tree(child_relative, depth + 1)
+          elsif documentation_file?(child_relative)
+            add_if_known(child_relative)
+          end
+        rescue SystemCallError
+          next
+        end
+      end
+
       def add_if_known(relative_path)
         return unless safe_relative?(relative_path)
         if excluded_path?(relative_path)
@@ -178,6 +203,11 @@ module AgenticDeveloperSetup
       end
 
       def known_path?(relative_path)
+        # Documentation trees are an inspection surface for recognised
+        # documents only. A tracked sample manifest must not become project
+        # evidence merely because Git supplied it to the inventory.
+        return documentation_file?(relative_path) if relative_path.start_with?("docs/")
+
         if !relative_path.include?(File::SEPARATOR)
           known_root_file?(relative_path)
         else
@@ -196,6 +226,15 @@ module AgenticDeveloperSetup
         return true if relative_path.match?(%r{\Adocs/(?:adr|adrs)/.+\.(?:md|markdown|rst|txt)\z}i)
         return true if relative_path.start_with?("docs/") && basename.match?(/\A(?:README|AGENT_PROMPT|ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|SECURITY|DEPLOY|OPERATIONS|COMMITS|FRAMEWORK_ADOPTION|ADOPTION)[^\/]*\.(?:md|markdown|rst|txt)\z/i)
         known_root_file?(basename)
+      end
+
+      def documentation_file?(relative_path)
+        basename = File.basename(relative_path)
+        return true if relative_path.match?(%r{\Adocs/(?:adr|adrs)/.+\.(?:md|markdown|rst|txt)\z}i)
+
+        relative_path.start_with?("docs/") && basename.match?(
+          /\A(?:README|AGENT_PROMPT|ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|SECURITY|DEPLOY|OPERATIONS|COMMITS|FRAMEWORK_ADOPTION|ADOPTION)[^\/]*\.(?:md|markdown|rst|txt)\z/i
+        )
       end
 
       def safe_relative?(relative_path)

@@ -9,7 +9,7 @@ module AgenticDeveloperSetup
       SUPPORTED_ECOSYSTEMS = %w[node typescript python].freeze
       NODE_PACKAGE_MANAGERS = %w[npm yarn pnpm].freeze
       DOCUMENT_COMMAND_PATTERN = /\b(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|uv\s+run\s+[^\s`]+|(?:pytest|ruff|mypy|tsc)\b)/
-      CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run|pytest|ruff|mypy|tsc)\b)/
+      CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run\s+[^\s`]+|pytest|ruff|mypy|tsc)\b)/
       DIRECT_EVIDENCE_METHODS = %w[
         package_json_project_metadata package_manager_lockfile package_json_manager
         pyproject_project_metadata requirements_project_metadata requirements_file uv_lockfile
@@ -17,7 +17,8 @@ module AgenticDeveloperSetup
         pytest_configuration ruff_configuration ruff_formatter_configuration mypy_configuration
         eslint_dependency eslint_configuration prettier_dependency prettier_configuration
         package_script_test_framework package_script_type_checker package_scripts
-        make_command_surface make_target
+        package_validation_script make_validation_target verification_command verification_script
+        package_build_script python_build_configuration make_command_surface make_target
       ].freeze
 
       def initialize(inventory, catalogue, evidence)
@@ -51,6 +52,7 @@ module AgenticDeveloperSetup
           package_scripts: package_scripts.keys.sort,
           local_commands: @local_commands,
           ci_commands: @ci[:commands].sort,
+          ci_validation_workflow_paths: @ci[:validation_paths].sort,
           ci_present: !@ci[:paths].empty?,
           ci_invocations: @ci[:invocation_keys],
           issue_template_components: issue_template_components,
@@ -349,12 +351,18 @@ module AgenticDeveloperSetup
       end
 
       def validation
+        test_keys = test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] } + test_directory_evidence
+        test_command_keys = package_test_command_evidence + make_test_command_evidence
+        lint_keys = linters.flat_map { |entry| entry["_evidence_keys"] || [] }
+        lint_invocation_keys = validation_tool_invocation_evidence("linting")
+        type_keys = type_checkers.flat_map { |entry| entry["_evidence_keys"] || [] }
+        type_invocation_keys = validation_tool_invocation_evidence("static_type_checking")
         {
           "capabilities" => {
-            "tests" => capability("tests", test_frameworks.any? || @inventory.directory?("tests") || @inventory.directory?("test"), test_frameworks.flat_map { |entry| entry["_evidence_keys"] || [] } + test_directory_evidence),
-            "linting" => capability("linting", linters.any?, linters.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "tests" => capability("tests", test_keys.any? || test_command_keys.any?, test_keys + test_command_keys),
+            "linting" => capability("linting", lint_invocation_keys.any?, lint_keys + lint_invocation_keys),
             "formatting" => capability("formatting", formatters.any?, formatters.flat_map { |entry| entry["_evidence_keys"] || [] }),
-            "static_type_checking" => capability("static_type_checking", type_checkers.any?, type_checkers.flat_map { |entry| entry["_evidence_keys"] || [] }),
+            "static_type_checking" => capability("static_type_checking", type_invocation_keys.any?, type_keys + type_invocation_keys),
             "build_compile" => build_capability,
             "standard_local_verification" => standard_verification,
             "ci_execution" => ci_execution,
@@ -386,6 +394,61 @@ module AgenticDeveloperSetup
         keys << file("package.json", "package_build_script", "Package build script detected") if package_scripts.keys.any? { |name| name.match?(/\A(?:build|compile)\z/i) }
         keys << file("pyproject.toml", "python_build_configuration", "Python build configuration detected") if pyproject_has_section?("build-system")
         capability("build_compile", implementation, keys.compact)
+      end
+
+      def package_test_command_evidence
+        package_scripts.filter_map do |name, command|
+          next unless name.match?(/\Atest(?:-|:|\z)/i) || command.to_s.match?(/\b(?:pytest|jest|vitest|mocha)\b/i)
+
+          file("package.json", "package_validation_script", "Package script #{name} provides a local test command")
+        end
+      end
+
+      def make_test_command_evidence
+        make_target_evidence(/\Atest(?:-|\z)/i, /\b(?:pytest|jest|vitest|mocha|npm\s+(?:run\s+)?test|yarn\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test)\b/i, "test")
+      end
+
+      def validation_tool_invocation_evidence(capability)
+        case capability
+        when "linting"
+          package_tool_evidence(/\b(?:eslint|ruff)\b/i, "linting") + make_target_evidence(/\A(?:lint|check|verify)(?:-|\z)/i, /\b(?:eslint|ruff)\b/i, "linting")
+        when "static_type_checking"
+          typescript_script_evidence + package_tool_evidence(/\b(?:mypy|tsc)\b/i, "type checking") + make_target_evidence(/\A(?:typecheck|type-check|check|verify)(?:-|\z)/i, /\b(?:mypy|tsc)\b/i, "type checking")
+        else
+          []
+        end
+      end
+
+      def package_tool_evidence(pattern, label)
+        package_scripts.filter_map do |name, command|
+          next unless command.to_s.match?(pattern)
+
+          file("package.json", "package_validation_script", "Package script #{name} invokes a #{label} tool")
+        end
+      end
+
+      def make_target_evidence(target_pattern, command_pattern, label)
+        @make_targets.filter_map do |target|
+          next unless target.match?(target_pattern) && make_target_body(target).match?(command_pattern)
+
+          file("Makefile", "make_validation_target", "Make target #{target} invokes a #{label} tool")
+        end
+      end
+
+      def make_target_body(target)
+        content = text("Makefile").to_s
+        body = []
+        active = false
+        content.lines.each do |line|
+          if line.match?(/\A#{Regexp.escape(target)}\s*:/)
+            active = true
+          elsif active && line.match?(/\A\S/)
+            break
+          elsif active
+            body << line
+          end
+        end
+        body.join
       end
 
       def standard_verification
@@ -620,16 +683,20 @@ module AgenticDeveloperSetup
         paths = @inventory.files.keys.grep(%r{\A\.github/workflows/.*\.(?:yml|yaml)\z}i).sort
         file_keys = paths.map { |path| file(path, "github_actions_workflow", "GitHub Actions workflow detected") }
         invocations = []
+        validation_paths = []
         paths.each do |path|
+          path_has_validation = false
           github_actions_run_values(text(path)).each do |run_value|
             extract_commands(run_value, CI_COMMAND_PATTERN).each do |command|
               key = file(path, "ci_invocation", "GitHub Actions invokes #{command}", type: "ci_invocation")
               invocations << { command: command, key: key }
+              path_has_validation = true if validation_command?(command)
             end
           end
+          validation_paths << path if path_has_validation
         end
         invocations = invocations.uniq { |entry| [entry[:command], entry[:key]] }
-        { paths: paths, file_keys: file_keys, invocation_keys: invocations.map { |entry| entry[:key] }, invocations: invocations, commands: invocations.map { |entry| entry[:command] }.uniq.sort }
+        { paths: paths, validation_paths: validation_paths, file_keys: file_keys, invocation_keys: invocations.map { |entry| entry[:key] }, invocations: invocations, commands: invocations.map { |entry| entry[:command] }.uniq.sort }
       end
 
       def parse_json(path)

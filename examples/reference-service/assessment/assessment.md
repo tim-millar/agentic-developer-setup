@@ -51,7 +51,7 @@ Alternative conditions:
 | --- | --- | --- | --- |
 | `agent_instructions` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `agent_launcher` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
-| `agent_prompt` | `defer` | `low` | The current repository does not establish a need for this source-repository session artefact. |
+| `agent_prompt` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `agent_ready_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `architecture_scaffold` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `bug_report_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
@@ -98,42 +98,47 @@ No adoption-specific risks were recorded from the inspected evidence.
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 1 — Establish a stable repository command interface** (`STEP-005`, component `command_interface`)
+- **Phase 1 — Document the agent session brief and repository orientation** (`STEP-005`, component `agent_prompt`)
+  - Gaps: none
+  - Prerequisites: none
+  - The capability is not currently detected; adopt it incrementally using repository evidence and native conventions.
+
+- **Phase 1 — Establish a stable repository command interface** (`STEP-006`, component `command_interface`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 1 — Establish repository agent instructions and boundaries** (`STEP-006`, component `agent_instructions`)
+- **Phase 1 — Establish repository agent instructions and boundaries** (`STEP-007`, component `agent_instructions`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Align the CI validation workflow** (`STEP-007`, component `ci_workflow`)
+- **Phase 2 — Align the CI validation workflow** (`STEP-008`, component `ci_workflow`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Configure the issue-template chooser** (`STEP-008`, component `issue_template_config`)
+- **Phase 2 — Configure the issue-template chooser** (`STEP-009`, component `issue_template_config`)
   - Gaps: none
   - Prerequisites: none
   - Current framework content is present; retain it and review its applicability.
 
-- **Phase 2 — Establish the agent-ready task workflow** (`STEP-009`, component `agent_ready_issue_template`)
+- **Phase 2 — Establish the agent-ready task workflow** (`STEP-010`, component `agent_ready_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the defect-report workflow** (`STEP-010`, component `bug_report_issue_template`)
+- **Phase 2 — Establish the defect-report workflow** (`STEP-011`, component `bug_report_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-011`, component `discovery_or_shaping_issue_template`)
+- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-012`, component `discovery_or_shaping_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the human review handoff** (`STEP-012`, component `pull_request_template`)
+- **Phase 2 — Establish the human review handoff** (`STEP-013`, component `pull_request_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
@@ -200,25 +205,28 @@ No adoption-specific risks were recorded from the inspected evidence.
 - `E046` — file/make_target (`Makefile`): Make target test declared
 - `E047` — file/make_target (`Makefile`): Make target typecheck declared
 - `E048` — file/make_target (`Makefile`): Make target verify declared
-- `E049` — file/verification_command (`Makefile`): Standard verification Make target detected
-- `E050` — file/documentation_presence (`README.md`): README documentation detected
-- `E051` — file/documentation_presence (`docs/ARCHITECTURE.md`): Architecture documentation detected
-- `E052` — file/framework_like_path (`docs/ARCHITECTURE.md`): Recognised framework-style artefact path detected for architecture_scaffold
-- `E053` — file/documentation_presence (`docs/DEVELOPMENT.md`): Development guidance detected
-- `E054` — file/framework_like_path (`docs/DEVELOPMENT.md`): Recognised framework-style artefact path detected for development_guide
-- `E055` — file/documentation_presence (`docs/DOMAIN.md`): Domain documentation detected
-- `E056` — file/framework_like_path (`docs/DOMAIN.md`): Recognised framework-style artefact path detected for domain_context
-- `E057` — file/documentation_presence (`docs/TESTING.md`): Testing guidance detected
-- `E058` — file/framework_like_path (`docs/TESTING.md`): Recognised framework-style artefact path detected for testing_strategy
-- `E059` — file/mypy_configuration (`pyproject.toml`): mypy configuration or dependency detected
-- `E060` — file/pyproject_project_metadata (`pyproject.toml`): Python project metadata detected
-- `E061` — file/pytest_configuration (`pyproject.toml`): pytest configuration or dependency detected
-- `E062` — file/python_build_configuration (`pyproject.toml`): Python build configuration detected
-- `E063` — file/ruff_configuration (`pyproject.toml`): Ruff configuration or dependency detected
-- `E064` — file/ruff_formatter_configuration (`pyproject.toml`): Ruff formatter configuration or dependency detected
-- `E065` — file/uv_lockfile (`uv.lock`): uv lockfile detected
-- `E066` — framework_metadata/framework_catalogue (`framework.yml`): Current framework catalogue and metadata detected
-- `E067` — git/git_branch: Current Git branch detected
-- `E068` — git/git_commit: Current Git commit detected
-- `E069` — git/git_repository_detection: Git repository detection completed
-- `E070` — git/git_working_tree: Git working-tree state detected
+- `E049` — file/make_validation_target (`Makefile`): Make target lint invokes a linting tool
+- `E050` — file/make_validation_target (`Makefile`): Make target test invokes a test tool
+- `E051` — file/make_validation_target (`Makefile`): Make target typecheck invokes a type checking tool
+- `E052` — file/verification_command (`Makefile`): Standard verification Make target detected
+- `E053` — file/documentation_presence (`README.md`): README documentation detected
+- `E054` — file/documentation_presence (`docs/ARCHITECTURE.md`): Architecture documentation detected
+- `E055` — file/framework_like_path (`docs/ARCHITECTURE.md`): Recognised framework-style artefact path detected for architecture_scaffold
+- `E056` — file/documentation_presence (`docs/DEVELOPMENT.md`): Development guidance detected
+- `E057` — file/framework_like_path (`docs/DEVELOPMENT.md`): Recognised framework-style artefact path detected for development_guide
+- `E058` — file/documentation_presence (`docs/DOMAIN.md`): Domain documentation detected
+- `E059` — file/framework_like_path (`docs/DOMAIN.md`): Recognised framework-style artefact path detected for domain_context
+- `E060` — file/documentation_presence (`docs/TESTING.md`): Testing guidance detected
+- `E061` — file/framework_like_path (`docs/TESTING.md`): Recognised framework-style artefact path detected for testing_strategy
+- `E062` — file/mypy_configuration (`pyproject.toml`): mypy configuration or dependency detected
+- `E063` — file/pyproject_project_metadata (`pyproject.toml`): Python project metadata detected
+- `E064` — file/pytest_configuration (`pyproject.toml`): pytest configuration or dependency detected
+- `E065` — file/python_build_configuration (`pyproject.toml`): Python build configuration detected
+- `E066` — file/ruff_configuration (`pyproject.toml`): Ruff configuration or dependency detected
+- `E067` — file/ruff_formatter_configuration (`pyproject.toml`): Ruff formatter configuration or dependency detected
+- `E068` — file/uv_lockfile (`uv.lock`): uv lockfile detected
+- `E069` — framework_metadata/framework_catalogue (`framework.yml`): Current framework catalogue and metadata detected
+- `E070` — git/git_branch: Current Git branch detected
+- `E071` — git/git_commit: Current Git commit detected
+- `E072` — git/git_repository_detection: Git repository detection completed
+- `E073` — git/git_working_tree: Git working-tree state detected

@@ -49,4 +49,31 @@ class AssessmentInventoryTest < Minitest::Test
     assert_includes result.dig("scope", "excluded_paths"), "dist"
     assert_includes result.dig("scope", "excluded_paths"), "build"
   end
+
+  def test_documentation_sample_manifests_do_not_enter_project_inventory
+    init_git
+    write("docs/examples/package.json", "{\"name\":\"sample\"}\n")
+    write("docs/snippets/pyproject.toml", "[project]\nname = \"sample\"\n")
+    write("docs/examples/requirements.txt", "pytest\n")
+    write("docs/DEVELOPMENT.md", "Development guidance.\n")
+    Open3.capture3("git", "-C", @target, "add", "docs")
+    Open3.capture3("git", "-C", @target, "commit", "-m", "add documentation samples")
+
+    result = assess
+
+    refute_includes result.dig("scope", "project_roots"), "docs/examples"
+    refute_includes result.dig("ecosystem").map { |item| item["name"] }, "node"
+    refute_includes result.dig("ecosystem").map { |item| item["name"] }, "python"
+    assert_includes result.dig("documentation", "development_guide", "paths"), "docs/DEVELOPMENT.md"
+    refute result["evidence"].any? { |item| item["path"].to_s.match?(%r{\Adocs/(?:examples|snippets)/(?:package\.json|pyproject\.toml|requirements\.txt)\z}) }
+  end
+
+  def test_project_container_manifest_remains_discoverable
+    write("apps/api/package.json", "{\"name\":\"api\"}\n")
+
+    result = assess
+
+    assert_includes result.dig("scope", "project_roots"), "apps/api"
+    assert_includes result.dig("ecosystem").map { |item| item["name"] }, "node"
+  end
 end

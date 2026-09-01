@@ -16,10 +16,8 @@ module AgenticDeveloperSetup
       def validate_output!(path, target_root)
         candidate = Pathname.new(path.to_s).expand_path
         target = Pathname.new(target_root).realpath
-        reject! if inside?(candidate, target)
-
-        resolved = resolve_without_following_unsafe_symlinks(candidate)
-        reject! if inside?(resolved, target)
+        resolved = canonical_path(resolve_without_following_unsafe_symlinks(candidate))
+        reject! if inside?(resolved, canonical_path(target))
         Destination.new(path: candidate, resolved: resolved)
       rescue Errno::EACCES, Errno::ELOOP, Errno::EINVAL, Errno::ENOTDIR => e
         raise InvocationError, "output destination cannot be resolved: #{e.message}"
@@ -31,6 +29,27 @@ module AgenticDeveloperSetup
 
       def inside?(path, root)
         path == root || path.to_s.start_with?("#{root}#{File::SEPARATOR}")
+      end
+
+      def canonical_path(path)
+        current = Pathname.new(path.to_s).cleanpath
+        missing = []
+        loop do
+          begin
+            current.lstat
+            break
+          rescue Errno::ENOENT
+            parent = current.parent
+            raise Errno::ENOENT if parent == current
+
+            missing.unshift(current.basename.to_s)
+            current = parent
+          end
+        end
+
+        canonical = Pathname.new(File.realpath(current.to_s))
+        missing.each { |component| canonical = canonical.join(component) }
+        canonical.cleanpath
       end
 
       def resolve_without_following_unsafe_symlinks(path)
@@ -76,7 +95,7 @@ module AgenticDeveloperSetup
         resolved.cleanpath
       end
 
-      private_class_method :inside?
+      private_class_method :inside?, :canonical_path
     end
   end
 end

@@ -67,7 +67,10 @@ cache directories. Git-ignored files are not inspected by default. `.env`,
 credential, private-key, token, and secret-store files are excluded. Example
 environment metadata is not treated as live credentials. Symlinks are not
 followed; a symlink escaping the target root is reported as an excluded
-boundary when it is in a recognised traversal area.
+boundary when it is in a recognised traversal area. Generic project manifest
+discovery is limited to the repository root and recognised project-container
+children; documentation trees contribute recognised documentation only, so
+tracked sample manifests under `docs/` do not become project evidence.
 
 The first detector scope is generic Git, GitHub Actions, Make, Python, and
 Node.js/TypeScript. Python signals include `pyproject.toml`, requirements
@@ -208,8 +211,9 @@ standard verification such as `make check` or `make verify`. Supporting
 surfaces such as hooks, CI configuration, and validation documentation add
 evidence to their own findings but do not count as independent executable
 capabilities. Zero substantive capabilities is `missing`, one is `partial`,
-and two or more are `ready`; formatting counts only when it is explicitly a
-validation-oriented check.
+and two or more are `ready`. Formatting tool presence does not by itself count
+as a substantive capability in schema v1; a recognised validation command such
+as `make check` may cover whatever checks that command is documented to run.
 
 ## Tier recommendation
 

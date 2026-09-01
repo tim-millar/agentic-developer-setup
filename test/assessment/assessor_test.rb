@@ -25,6 +25,20 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal "ready", result.dig("readiness", "sensitive_area_guidance", "status")
   end
 
+  def test_sensitive_readiness_cites_the_document_with_the_matching_policy
+    write("docs/DEVELOPMENT.md", "Sensitive files must not be modified without human review.\n")
+    context = context_file(sensitive_paths: ["config/production"])
+
+    result = assess(@target, context_path: context)
+    evidence = result["readiness"]["sensitive_area_guidance"]["evidence_ids"].map do |id|
+      result["evidence"].find { |item| item["id"] == id }
+    end
+
+    assert_equal "ready", result.dig("readiness", "sensitive_area_guidance", "status")
+    assert_includes evidence.map { |item| item["path"] }, "docs/DEVELOPMENT.md"
+    refute_includes evidence.map { |item| item["path"] }, "AGENTS.md"
+  end
+
   def test_denial_style_sensitive_guidance_does_not_support_declared_sensitive_paths
     write("AGENTS.md", "This area contains no secrets and requires no review.\n")
     context = context_file(sensitive_paths: ["config/production"])
@@ -90,6 +104,14 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal "defer", result["component_recommendations"].find { |item| item["component"] == "commit_metadata" }["state"]
   end
 
+  def test_missing_agent_prompt_uses_normal_missing_component_recommendation
+    result = assess
+    recommendation = result["component_recommendations"].find { |item| item["component"] == "agent_prompt" }
+
+    refute_equal "defer", recommendation["state"]
+    assert_equal "adopt_now", recommendation["state"]
+  end
+
   def test_bare_package_manifest_does_not_satisfy_command_interface
     write("package.json", "{\"name\":\"bare\"}\n")
 
@@ -142,6 +164,60 @@ class AssessmentAssessorTest < Minitest::Test
     write(".github/PULL_REQUEST_TEMPLATE.md", "Implementation boundaries and constraints.\n")
 
     assert_equal "ready", assess.dig("readiness", "task_boundary", "status")
+  end
+
+  def test_tier_one_does_not_require_a_preexisting_task_boundary_workflow
+    write("README.md", "# Service\n")
+    write("docs/ARCHITECTURE.md", "Architecture boundaries.\n")
+    write("pyproject.toml", "[project]\nname = \"sample\"\n")
+
+    result = assess
+
+    assert_equal "tier-1", result.dig("tier_recommendation", "outcome")
+    assert_equal "missing", result.dig("readiness", "task_boundary", "status")
+    assert result["gaps"].any? { |gap| gap["readiness_dimension"] == "task_boundary" }
+  end
+
+  def test_missing_repository_context_requires_manual_review
+    result = assess
+
+    assert_equal "manual_review_required", result.dig("tier_recommendation", "outcome")
+  end
+
+  def test_context_setup_constraints_prevent_ready_setup_and_tier_two
+    write("README.md", "# Service\n")
+    write("pyproject.toml", "[project]\nname = \"sample\"\n")
+    write("uv.lock", "version = 1\n")
+    context = context_file(known_setup_constraints: ["Requires a private package registry."])
+
+    result = assess(@target, context_path: context)
+    readiness = result.dig("readiness", "local_setup_reproducibility")
+    context_ids = result["assessor_context"]["evidence_ids"]
+
+    assert_equal "partial", readiness["status"]
+    assert_equal "tier-1", result.dig("tier_recommendation", "outcome")
+    assert (readiness["evidence_ids"] & context_ids).any?
+    assert result["gaps"].any? { |gap| gap["readiness_dimension"] == "local_setup_reproducibility" }
+    assert result["risks"].any? { |risk| risk["category"] == "non_reproducible_local_setup" && (risk["evidence_ids"] & context_ids).any? }
+  end
+
+  def test_release_only_workflow_does_not_satisfy_native_ci_component
+    write(".github/workflows/release.yml", "jobs:\n  release:\n    steps:\n      - uses: example/release@v1\n")
+
+    result = assess
+    components = result["framework_adoption"]["detected_components"]
+
+    refute components.any? { |item| item["component"] == "ci_workflow" && item["state"] == "repository_native" }
+    assert_equal "adopt_now", result["component_recommendations"].find { |item| item["component"] == "ci_workflow" }["state"]
+  end
+
+  def test_validation_workflow_satisfies_native_ci_component
+    write(".github/workflows/native.yml", "jobs:\n  verify:\n    steps:\n      - run: make test\n")
+
+    component = assess["framework_adoption"]["detected_components"].find { |item| item["component"] == "ci_workflow" }
+
+    assert_equal "repository_native", component["state"]
+    assert_equal [".github/workflows/native.yml"], component["paths"]
   end
 
   def test_tier_three_requires_architecture_domain_testing_and_commit_evidence
@@ -293,10 +369,40 @@ class AssessmentAssessorTest < Minitest::Test
 
   def test_tests_and_linting_are_ready_for_deterministic_validation
     write("tests/example_test.py", "sentinel\n")
-    write("package.json", "{\"devDependencies\":{\"eslint\":\"^9\"}}\n")
+    write("package.json", "{\"scripts\":{\"lint\":\"eslint .\"},\"devDependencies\":{\"eslint\":\"^9\"}}\n")
     write(".eslintrc.json", "{}\n")
 
     assert_equal "ready", assess.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_dependency_only_lint_and_type_tools_do_not_unlock_validation
+    write("tests/example_test.py", "sentinel\n")
+    write("package.json", "{\"devDependencies\":{\"eslint\":\"^9\",\"typescript\":\"^5\"}}\n")
+
+    result = assess
+
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "linting", "status")
+    assert_equal "configuration_detected", result.dig("validation", "capabilities", "static_type_checking", "status")
+    assert_equal "partial", result.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_make_lint_invocation_is_substantive_validation_evidence
+    write("tests/example_test.py", "sentinel\n")
+    write("Makefile", "lint:\n\t@eslint .\n")
+
+    result = assess
+
+    assert_equal "implementation_detected", result.dig("validation", "capabilities", "linting", "status")
+    assert_equal "ready", result.dig("readiness", "deterministic_validation", "status")
+  end
+
+  def test_negated_production_wording_does_not_create_context_conflict
+    write("README.md", "This library is not used in production.\nThis component is not a production critical service.\n")
+
+    result = assess(@target, context_path: context_file(criticality: "low", deployment_impact: "none"))
+
+    assert_empty result["assessor_context"]["conflicts"]
+    refute_equal "manual_review_required", result.dig("tier_recommendation", "outcome")
   end
 
   def test_tests_and_type_checking_are_ready_for_deterministic_validation
@@ -333,7 +439,7 @@ class AssessmentAssessorTest < Minitest::Test
 
   private
 
-  def context_file(sensitive_paths: [], criticality: nil, deployment_impact: nil)
+  def context_file(sensitive_paths: [], criticality: nil, deployment_impact: nil, known_setup_constraints: [])
     path = File.join(@temporary_root, "context.yml")
     repository = {}
     repository["criticality"] = criticality if criticality
@@ -344,7 +450,7 @@ class AssessmentAssessorTest < Minitest::Test
       "sensitive_paths" => sensitive_paths,
       "approved_agent_runtimes" => [],
       "review_requirements" => [],
-      "known_setup_constraints" => [],
+      "known_setup_constraints" => known_setup_constraints,
       "notes" => []
     ))
     path

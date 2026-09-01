@@ -230,7 +230,7 @@ class AssessmentTest < Minitest::Test
 
     FileUtils.rm_f(File.join(@target, "README.md"))
     FileUtils.rm_rf(File.join(@target, ".github"))
-    assert_equal "manual_review_required", assess(@target).dig("tier_recommendation", "outcome")
+    assert_equal "tier-2", assess(@target).dig("tier_recommendation", "outcome")
   end
 
   def test_assessment_does_not_execute_scripts_read_ignored_secrets_or_follow_external_symlinks

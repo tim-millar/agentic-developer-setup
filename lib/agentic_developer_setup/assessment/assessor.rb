@@ -34,6 +34,7 @@ module AgenticDeveloperSetup
         "architecture_scaffold" => { "phase" => 1, "title" => "Document architecture boundaries for adoption" },
         "domain_context" => { "phase" => 1, "title" => "Document domain context for adoption" },
         "command_interface" => { "phase" => 1, "title" => "Establish a stable repository command interface" },
+        "agent_prompt" => { "phase" => 1, "title" => "Document the agent session brief and repository orientation" },
         "agent_ready_issue_template" => { "phase" => 2, "title" => "Establish the agent-ready task workflow" },
         "bug_report_issue_template" => { "phase" => 2, "title" => "Establish the defect-report workflow" },
         "discovery_or_shaping_issue_template" => { "phase" => 2, "title" => "Establish the discovery and shaping workflow" },
@@ -52,6 +53,8 @@ module AgenticDeveloperSetup
       SENSITIVE_TERMS = /\b(?:sensitive|secret|credential|security[- ]critical|restricted)\b/i
       SENSITIVE_POLICY = /(?:\bmust(?:\s+not)?\b|\bdo not\b|\bnever\b|\brestricted\b|\bprohibited\b|\bonly\b|\brequires?\s+(?:human\s+)?(?:review|approval|handling|access)\b|\breview\s+required\b|\baccess\s+limited\b|\bhandling\s+requirements?\b|\bpermitted\s+operations\b|\bnot\s+permitted\b)/i
       SENSITIVE_DENIAL = /(?:\b(?:no|not)\s+(?:secrets?|credentials?|sensitive|review|approval)\b|\b(?:contains?|has|requires?|needs?)\s+no\s+(?:secrets?|credentials?|review|approval)\b|\b(?:no|without)\s+(?:review|approval)\s+(?:required|needed)\b)/i
+      HIGH_IMPACT_TERMS = /\b(?:production|critical|safety[- ]critical|high[- ]impact)\b/i
+      HIGH_IMPACT_DENIAL = /(?:\bnot\s+(?:used\s+in\s+)?(?:a\s+)?production\b|\bnot\s+(?:a\s+)?production[- ]critical\b|\bnot\s+(?:a\s+)?(?:safety[- ]?)?critical\b|\bno\s+production\s+impact\b|\bnot\s+high[- ]impact\b|\b(?:no|without)\s+(?:production|critical|safety[- ]critical|high[- ]impact)\b)/i
 
       def initialize(target, framework_root: default_framework_root, clock: -> { Time.now.utc })
         expanded = Pathname.new(target.to_s).expand_path
@@ -172,7 +175,7 @@ module AgenticDeveloperSetup
           next unless path.match?(/\A(?:README|CONTRIBUTING|AGENTS|CLAUDE|docs\/).*/i)
 
           content = @inventory.read(path).to_s
-          next unless content.match?(/\b(?:production|critical|safety[- ]critical|high[- ]impact)\b/i)
+          next unless high_impact_documentation_signal?(content)
 
           key = @evidence.add(type: "file", path: path, method: "context_conflicting_repository_signal", summary: "Repository documentation describes a potentially high-impact context")
           low_fields.each do |field, value|
@@ -197,7 +200,7 @@ module AgenticDeveloperSetup
         task_evidence = docs["issue_templates"]["evidence_ids"] + docs["pull_request_template"]["evidence_ids"]
         architecture_evidence = docs["architecture"]["evidence_ids"] + docs["development_guide"]["evidence_ids"]
         context_evidence = context.provided? ? @evidence.references(context.evidence_keys) : []
-        guidance = sensitive_guidance(docs)
+        guidance = detect_sensitive_guidance(docs)
         {
           "repository_context" => readiness_entry(
             if project_roots.any? && docs["root_readme"]["status"] == "present" && architecture_evidence.any?
@@ -240,10 +243,10 @@ module AgenticDeveloperSetup
           ),
           "deterministic_validation" => validation_readiness(validation),
           "ci_alignment" => ci_readiness(validation),
-          "sensitive_area_guidance" => sensitive_readiness(guidance, context, context_evidence),
+          "sensitive_area_guidance" => sensitive_readiness(guidance, context),
           "runtime_access" => runtime_readiness(analysis, context, context_evidence),
           "review_handoff" => review_readiness(docs),
-          "local_setup_reproducibility" => setup_readiness(analysis, docs)
+          "local_setup_reproducibility" => setup_readiness(analysis, docs, context)
         }.tap do |items|
           if conflicts.any?
             items["repository_context"]["status"] = "blocked"
@@ -283,14 +286,17 @@ module AgenticDeveloperSetup
           if name == "standard_local_verification"
             capability["status"] == "documented_command_detected" && capability["commands"].any?
           else
-            %w[implementation_detected configuration_detected].include?(capability["status"])
+            capability["status"] == "implementation_detected"
           end
         end
       end
 
       def validation_confidence(capabilities)
         keys = capabilities.values.flat_map { |item| item["evidence_ids"] }
-        keys.length >= 2 ? "high" : "medium"
+        methods = keys.filter_map { |key| @evidence.item_for(key)&.fetch("method", nil) }
+        return "high" if methods.any? { |method| Detector::DIRECT_EVIDENCE_METHODS.include?(method) }
+
+        keys.empty? ? "low" : "medium"
       end
 
       def ci_readiness(validation)
@@ -298,29 +304,36 @@ module AgenticDeveloperSetup
         readiness_entry(alignment["status"], alignment["confidence"], alignment["evidence_ids"], "CI should provide merge-time evidence conceptually aligned with local validation.", "Align CI invocations with the documented local validation surface.")
       end
 
-      def sensitive_guidance(docs)
-        docs["security"]["evidence_ids"] + docs["agent_instructions"]["evidence_ids"]
-      end
-
-      def sensitive_readiness(guidance, context, context_evidence)
-        if context.values.fetch("sensitive_paths", []).any?
-          supported = guidance_mentions_sensitive?
-          status = supported ? "ready" : "missing"
-          return readiness_entry(status, supported ? "high" : "medium", guidance + context_evidence, "Sensitive paths need explicit handling boundaries before agent access is expanded.", "Document sensitive areas, permitted operations, and review requirements.")
-        end
-        return readiness_entry("ready", "medium", guidance, "Recognised repository guidance provides evidence of sensitive-area boundaries.", "Keep sensitive-area guidance current.") if guidance.any? && guidance_mentions_sensitive?
-
-        readiness_entry("unknown", "low", guidance, "Static inspection cannot establish whether undocumented restricted areas exist.", "Ask repository owners to identify sensitive or high-risk areas.")
-      end
-
-      def guidance_mentions_sensitive?
-        @inventory.files.keys.any? do |path|
-          next false unless path.match?(/\A(?:SECURITY|AGENTS|CLAUDE|docs\/).*/i)
-
+      def detect_sensitive_guidance(docs)
+        paths = docs.values.flat_map { |entry| entry["paths"] if entry.is_a?(Hash) }.compact
+          .select { |path| path.match?(%r{\A(?:SECURITY|AGENTS|CLAUDE)[^/]*\z}i) || path.start_with?("docs/") }
+          .uniq.sort
+        matches = paths.filter_map do |path|
           content = @inventory.read(path).to_s
-          content.split(/(?<=[.!?])\s+|\R/).any? do |sentence|
+          next unless content.split(/(?<=[.!?])\s+|\R/).any? do |sentence|
             sentence.match?(SENSITIVE_TERMS) && sentence.match?(SENSITIVE_POLICY) && !sentence.match?(SENSITIVE_DENIAL)
           end
+
+          @evidence.add(type: "file", path: path, method: "sensitive_guidance_policy", summary: "Affirmative sensitive-area handling guidance detected")
+        end
+        { matched: !matches.empty?, evidence_keys: matches }
+      end
+
+      def sensitive_readiness(guidance, context)
+        if context.values.fetch("sensitive_paths", []).any?
+          supported = guidance[:matched]
+          status = supported ? "ready" : "missing"
+          sensitive_context = context_evidence_keys(context, "sensitive_paths")
+          return readiness_entry(status, supported ? "high" : "medium", guidance[:evidence_keys] + sensitive_context, "Sensitive paths need explicit handling boundaries before agent access is expanded.", "Document sensitive areas, permitted operations, and review requirements.")
+        end
+        return readiness_entry("ready", "medium", guidance[:evidence_keys], "Recognised repository guidance provides evidence of sensitive-area boundaries.", "Keep sensitive-area guidance current.") if guidance[:matched]
+
+        readiness_entry("unknown", "low", guidance[:evidence_keys], "Static inspection cannot establish whether undocumented restricted areas exist.", "Ask repository owners to identify sensitive or high-risk areas.")
+      end
+
+      def high_impact_documentation_signal?(content)
+        content.to_s.split(/(?<=[.!?])\s+|\R/).any? do |sentence|
+          sentence.match?(HIGH_IMPACT_TERMS) && !sentence.match?(HIGH_IMPACT_DENIAL)
         end
       end
 
@@ -346,7 +359,7 @@ module AgenticDeveloperSetup
         readiness_entry(status, evidence.any? ? "high" : "medium", evidence, "Human review needs a visible place for scope and validation evidence.", "Provide a review handoff that records scope, validation, risks, and follow-up work.")
       end
 
-      def setup_readiness(analysis, docs)
+      def setup_readiness(analysis, docs, context)
         manifest = analysis[:facts][:framework_paths].any? { |path| path.match?(/\A(?:pyproject\.toml|package\.json|requirements[^\/]*\.txt)\z/i) }
         lock = analysis[:facts][:framework_paths].any? { |path| path.match?(/\A(?:uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z/i) }
         setup_docs = docs["root_readme"]["status"] == "present" || docs["development_guide"]["status"] == "present"
@@ -357,8 +370,22 @@ module AgenticDeveloperSetup
                  else
                    "unknown"
                  end
+        constraints = context.values.fetch("known_setup_constraints", [])
+        status = "partial" if constraints.any?
         keys = docs["root_readme"]["evidence_ids"] + docs["development_guide"]["evidence_ids"]
-        readiness_entry(status, manifest && lock ? "high" : "medium", keys, "Agents need reproducible prerequisites without relying on undocumented local state.", "Document prerequisites, setup commands, and lockfile/runtime expectations.")
+        keys.concat(context_evidence_keys(context, "known_setup_constraints")) if constraints.any?
+        consequence = if constraints.any?
+                        "Assessor context records setup constraints that static repository evidence cannot resolve."
+                      else
+                        "Agents need reproducible prerequisites without relying on undocumented local state."
+                      end
+        readiness_entry(status, manifest && lock ? "high" : "medium", keys, consequence, "Document prerequisites, setup commands, and lockfile/runtime expectations.")
+      end
+
+      def context_evidence_keys(context, field)
+        context.evidence_keys.select do |key|
+          @evidence.item_for(key).to_h["method"] == "context_#{field}"
+        end
       end
 
       def task_templates_show_boundaries(paths)
@@ -442,10 +469,13 @@ module AgenticDeveloperSetup
           specs << risk("high_impact_deployment_path", "high-impact deployment path", "high", "Assessor context identifies deployment impact that warrants restricted agent scope.", "Keep deployment changes explicitly human-reviewed and outside automatic assessment conclusions.", keys)
         end
         if context.values.fetch("sensitive_paths", []).any?
-          specs << risk("sensitive_security_critical_area", "sensitive or security-critical areas", "high", "Assessor context identifies paths requiring special handling.", "Record path-level access and review rules before expanding runtime authority.", @evidence.ids_for(context.evidence_keys))
+          specs << risk("sensitive_security_critical_area", "sensitive or security-critical areas", "high", "Assessor context identifies paths requiring special handling.", "Record path-level access and review rules before expanding runtime authority.", @evidence.ids_for(context_evidence_keys(context, "sensitive_paths")))
         end
         if context.values.fetch("review_requirements", []).any?
           specs << risk("unresolved_ownership_review", "unresolved ownership or review responsibilities", "medium", "Assessor context adds review requirements that static repository evidence cannot verify.", "Resolve the requirements with repository owners and retain them in the adoption decision.", @evidence.ids_for(context.evidence_keys))
+        end
+        if context.values.fetch("known_setup_constraints", []).any?
+          specs << risk("non_reproducible_local_setup", "non-reproducible local setup", "high", "Assessor context identifies setup constraints that static inspection cannot resolve.", "Resolve or document the setup constraints before expanding executable agent workflows.", @evidence.ids_for(context_evidence_keys(context, "known_setup_constraints")))
         end
         if @inventory.excluded_paths.any? { |path| path.split("/").any? { |part| %w[vendor node_modules dist build target coverage].include?(part.downcase) } }
           key = @evidence.add(type: "directory", path: @inventory.excluded_paths.first, method: "excluded_generated_or_dependency_area", summary: "Generated, dependency, or build area excluded from inspection")
@@ -523,7 +553,7 @@ module AgenticDeveloperSetup
         when "domain_context" then docs["domain"]["paths"]
         when "commit_metadata" then []
         when "pull_request_template" then docs["pull_request_template"]["paths"]
-        when "ci_workflow" then analysis[:tooling]["ci"]["workflow_paths"]
+        when "ci_workflow" then analysis[:facts][:ci_validation_workflow_paths]
         when "git_hooks" then analysis[:tooling]["hooks"]["paths"]
         when "agent_ready_issue_template", "bug_report_issue_template", "discovery_or_shaping_issue_template", "issue_template_config"
           analysis[:facts][:issue_template_components].fetch(name, [])
@@ -542,8 +572,9 @@ module AgenticDeveloperSetup
       def tier_recommendation(analysis, readiness, gaps, context, conflicts)
         blocking = gaps.select { |gap| gap["severity"] == "blocking" }.map { |gap| gap["id"] }
         manual = conflicts.any? || readiness["repository_context"]["status"] == "blocked" || readiness["sensitive_area_guidance"]["status"] == "missing" || %w[missing unknown].include?(readiness["repository_context"]["status"])
-        tier1 = !manual && %w[ready partial].include?(readiness["repository_context"]["status"]) && %w[ready partial].include?(readiness["task_boundary"]["status"])
-        tier2 = tier1 && readiness["command_surface"]["status"] == "ready" && readiness["deterministic_validation"]["status"] == "ready" && readiness["ci_alignment"]["status"] != "partial" && readiness["ci_alignment"]["status"] != "blocked"
+        tier1 = !manual && %w[ready partial].include?(readiness["repository_context"]["status"])
+        setup_constraints = context.values.fetch("known_setup_constraints", []).any?
+        tier2 = tier1 && readiness["command_surface"]["status"] == "ready" && readiness["deterministic_validation"]["status"] == "ready" && readiness["ci_alignment"]["status"] != "partial" && readiness["ci_alignment"]["status"] != "blocked" && !setup_constraints
         tier3_components = tier_components("tier-3")
         tier3 = tier2 && tier3_components.all? { |name| tier_component_supported?(name, analysis) }
         outcome = if manual || !tier1
@@ -638,7 +669,7 @@ module AgenticDeveloperSetup
         if name == "ci_workflow" && analysis[:tooling]["ci"]["workflow_paths"].empty?
           return ["evaluate_later", "No CI workflow is present; absence is not treated as a defect without repository-owner policy.", []]
         end
-        if %w[agent_prompt commit_metadata].include?(name)
+        if name == "commit_metadata"
           return ["defer", "The current repository does not establish a need for this source-repository session artefact.", []]
         end
         prereqs = []
