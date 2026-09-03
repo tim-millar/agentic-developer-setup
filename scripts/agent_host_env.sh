@@ -32,7 +32,7 @@ validate_ruby_requirement() {
   fi
   exec 3<&-
 
-  if [[ "$first_status" -ne 0 && -z "$required_declaration" ]] || [[ "$extra_status" -eq 0 ]]; then
+  if [[ "$first_status" -ne 0 && -z "$required_declaration" ]] || [[ -n "$extra_line" ]] || [[ "$extra_status" -eq 0 ]]; then
     echo "Error: .ruby-version must contain exactly one Ruby version in the form ruby-X.Y.Z." >&2
     return 1
   fi

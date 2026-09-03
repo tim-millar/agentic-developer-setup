@@ -73,6 +73,7 @@ class AgentHostEnvTest < Minitest::Test
     assert_includes result.stderr, ".ruby-version requires Ruby 3.3.12"
     assert_includes result.stderr, "no ruby executable is available through the selected host PATH"
     assert_includes result.stderr, "Prepare the host shell before launching Codex."
+    assert_path_was_preserved(path)
   end
 
   def test_failed_version_probe_fails_safely
@@ -93,16 +94,24 @@ class AgentHostEnvTest < Minitest::Test
     assert_empty result.stdout
     assert_includes result.stderr, ".ruby-version"
     assert_includes result.stderr, "missing or unreadable"
+    assert_path_was_preserved(path)
   end
 
   def test_malformed_ruby_version_files_fail
-    ["3.3.12", "ruby-3.3", "ruby-3.3.12 extra"].each do |declaration|
+    [
+      "3.3.12",
+      "ruby-3.3",
+      "ruby-3.3.12 extra",
+      "ruby-3.3.12\nruby-9.8.7",
+      "ruby-3.3.12\nruby-9.8.7\n"
+    ].each do |declaration|
       result, path = run_hook(declaration, ruby_present: false)
 
       assert_failure(result, declaration)
       assert_empty result.stdout
       assert_includes result.stderr, ".ruby-version", declaration
       assert_includes result.stderr, "ruby-X.Y.Z", declaration
+      assert_path_was_preserved(path)
     end
   end
 
@@ -123,10 +132,15 @@ class AgentHostEnvTest < Minitest::Test
     stdout, stderr, status = Open3.capture3(
       {
         "PATH" => path,
-        "EXPECTED_PATH" => path,
         "PATH_OBSERVED" => @observed_path
       },
       BASH,
+      "-c",
+      <<~'BASH',
+        trap 'printf "%s" "${PATH-}" > "$PATH_OBSERVED"' EXIT
+        source "$1"
+      BASH
+      "agent-host-env-test",
       HOOK,
       chdir: @repository,
       stdin_data: "",
@@ -144,12 +158,8 @@ class AgentHostEnvTest < Minitest::Test
   def write_synthetic_ruby(version, probe_status)
     File.write(File.join(@ruby_bin, "ruby"), <<~SH)
       #!/bin/sh
-      printf '%s' "${PATH-}" > "$PATH_OBSERVED"
-      if [ "${PATH-}" != "${EXPECTED_PATH-}" ]; then
-        exit 18
-      fi
       if [ "${1-}" != "-e" ] || [ "${2-}" != "print RUBY_VERSION" ]; then
-        exit 19
+        exit 18
       fi
       printf '%s' '#{version}'
       exit #{probe_status}
@@ -166,11 +176,8 @@ class AgentHostEnvTest < Minitest::Test
   end
 
   def assert_path_was_preserved(path)
-    if File.exist?(@observed_path)
-      assert_equal path, File.read(@observed_path)
-    else
-      assert_empty path
-    end
+    assert File.file?(@observed_path), "the test wrapper did not record PATH"
+    assert_equal path, File.read(@observed_path)
   end
 
   def failure_message(result, context)
