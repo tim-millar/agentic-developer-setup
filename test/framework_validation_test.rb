@@ -34,7 +34,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md docs/AGENT_PROMPT.txt scripts/run_codex.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -500,6 +500,18 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("repository structure: scripts/run_codex.sh", "file does not exist")
   end
 
+  def test_missing_root_ruby_version_file_fails
+    FileUtils.rm(File.join(@fixture_root, ".ruby-version"))
+
+    assert_fails("repository structure: .ruby-version", "file does not exist")
+  end
+
+  def test_missing_root_host_environment_hook_fails
+    FileUtils.rm(File.join(@fixture_root, "scripts/agent_host_env.sh"))
+
+    assert_fails("repository structure: scripts/agent_host_env.sh", "file does not exist")
+  end
+
   def test_missing_root_pull_request_template_fails
     FileUtils.rm(File.join(@fixture_root, ".github/PULL_REQUEST_TEMPLATE.md"))
 
@@ -596,8 +608,8 @@ class FrameworkValidationTest < Minitest::Test
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
-      AGENTS.md README.md docs/AGENT_PROMPT.txt scripts/run_codex.sh
-      .github/PULL_REQUEST_TEMPLATE.md
+      AGENTS.md README.md .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md prompts/bootstrap.md
     ].each { |path| write_file(path) }

@@ -2,11 +2,11 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `.ruby-version`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
-Local validation requires GNU Make and Ruby 3.3. It uses Ruby's standard YAML/Psych, Minitest, filesystem, and pathname libraries; Bundler and third-party gems are not required.
+Local validation requires GNU Make and the exact Ruby declared by `.ruby-version`, currently `ruby-3.3.12`. If that declaration changes, it remains the authoritative local validation requirement. The validator uses Ruby's standard YAML/Psych, Minitest, filesystem, and pathname libraries; Bundler and third-party gems are not required.
 
 Run the live metadata and repository validator:
 
@@ -56,9 +56,11 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- root `AGENTS.md`, `.ruby-version`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
 - `baseline/AGENTS.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
+
+The root `scripts/agent_host_env.sh` hook validates before Codex starts that the inherited host `PATH` resolves the exact Ruby version declared by `.ruby-version`. It validates the environment only: it does not select or install Ruby, invoke a version manager, or modify `PATH`. Developers must prepare the host shell/toolchain before launching a self-hosted Codex session.
 
 The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts.
 

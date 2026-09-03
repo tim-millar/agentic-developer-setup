@@ -671,7 +671,7 @@ class FrameworkValidator
   end
 
   def validate_repository_structure
-    required_files = %w[AGENTS.md README.md framework.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh .github/PULL_REQUEST_TEMPLATE.md]
+    required_files = %w[AGENTS.md README.md framework.yml .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
     required_directories = %w[docs scripts baseline prompts adapters]
     required_files.each { |path| validate_existing_source(path, "repository structure: #{path}", :file) }
     required_directories.each { |path| validate_existing_source(path, "repository structure: #{path}", :directory) }

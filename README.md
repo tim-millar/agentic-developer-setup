@@ -264,6 +264,7 @@ This repository is intended to be usable directly by coding agents and LLMs.
 This framework source repository uses a minimal self-hosted agent harness:
 
 - root `AGENTS.md` defines the operating contract for work on this repository
+- root `.ruby-version` and `scripts/agent_host_env.sh` define and validate the required host Ruby
 - root `docs/AGENT_PROMPT.txt` provides the repository-specific session bootstrap
 - root `scripts/run_codex.sh` is the supported Codex entrypoint
 
@@ -272,6 +273,8 @@ Launch Codex from the repository root with:
 ```sh
 ./scripts/run_codex.sh
 ```
+
+Self-hosted Codex sessions validate the exact Ruby version declared by `.ruby-version` before starting. Prepare your shell/toolchain first; the launcher does not invoke a Ruby version manager automatically.
 
 These root files govern this repository only. The corresponding files under `baseline/` remain the reusable framework source artefacts declared in `framework.yml`. The root launcher supplies repository-specific location and identity defaults, then delegates to the executable canonical implementation at `baseline/scripts/run_codex.sh` rather than duplicating its behaviour. Keeping that baseline launcher executable supports both direct delegation here and direct use when the artefact is adopted into another repository.
 
