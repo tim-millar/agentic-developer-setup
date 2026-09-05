@@ -1351,8 +1351,13 @@ class LauncherTest < Minitest::Test
     @harness&.release_token_attempt(2) if @harness&.token_attempt_started?(2)
     stop_renewable_session(session)
     request&.join
-    [request_pid, renewal_pid].compact.each do |pid|
-      Process.kill("KILL", pid) if @harness&.process_alive?(pid)
+    begin
+      Process.kill("KILL", -renewal_pid) if renewal_pid
+    rescue Errno::ESRCH
+      nil
+    end
+    begin
+      Process.kill("KILL", request_pid) if request_pid && @harness&.process_alive?(request_pid)
     rescue Errno::ESRCH
       nil
     end
@@ -1380,8 +1385,13 @@ class LauncherTest < Minitest::Test
     refute File.exist?(credential_dir)
     assert_empty @harness.launcher_temporary_paths
   ensure
-    [gate_pid, renewal_pid].compact.each do |pid|
-      Process.kill("KILL", pid) if @harness&.process_alive?(pid)
+    begin
+      Process.kill("KILL", -renewal_pid) if renewal_pid
+    rescue Errno::ESRCH
+      nil
+    end
+    begin
+      Process.kill("KILL", gate_pid) if gate_pid && @harness&.process_alive?(gate_pid)
     rescue Errno::ESRCH
       nil
     end
