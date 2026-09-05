@@ -1348,13 +1348,14 @@ class LauncherTest < Minitest::Test
     refute File.exist?(credential_dir)
     assert_empty @harness.launcher_temporary_paths
   ensure
+    @harness&.release_token_attempt(2) if @harness&.token_attempt_started?(2)
+    stop_renewable_session(session)
     request&.join
     [request_pid, renewal_pid].compact.each do |pid|
       Process.kill("KILL", pid) if @harness&.process_alive?(pid)
     rescue Errno::ESRCH
       nil
     end
-    stop_renewable_session(session)
   end
 
   def test_shutdown_at_post_publication_boundary_reaps_attempt_without_result_publication
