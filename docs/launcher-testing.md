@@ -174,7 +174,12 @@ The worker normally renews at the token publication epoch plus 2700 seconds.
 `SIGUSR1` asks it to ensure freshness and `SIGUSR2` asks it to force one
 replacement attempt. Signal traps only coalesce pending state and wake the
 cadence wait; the worker loop checks pending state on both sides of wait
-establishment and serialises every POST. Force dominates ensure. Requests that
+establishment and serialises every POST. Shutdown is monotonic across those
+same creation windows: the worker checks the local flag and private session
+shutdown marker before spawning, records the new child PID, rechecks both, and
+terminates and reaps a cadence child that raced with shutdown. A per-iteration
+test gate covers this invariant both before the initial wait and after a
+completed renewal cycle. Force dominates ensure. Requests that
 arrive before an active attempt publishes its generation share that attempt; a
 force caller that already observed the published generation remains queued for
 one later serial attempt. A fresh ensure request is a no-op and retains the
@@ -239,9 +244,18 @@ condition.
 Success, child failure, resume, App failure paths where resources exist, and
 handled signals assert cleanup beneath the controlled `TMPDIR`. Cleanup marks
 the session as shutting down, rejects new helper work, stops and waits for the
-renewal worker, and then removes its state. Controlled in-flight renewal tests
-verify that token or coordination state is not published after teardown begins
-and that helper, worker, and wait processes do not survive. A debug prompt created by
+renewal worker, and then removes its state. Each active renewal attempt runs in
+a launcher-owned process group spanning JWT minting, the token request,
+publication, and test-only gates. Reactive `SIGUSR1` and `SIGUSR2` interruptions
+continue waiting on that bounded shared attempt; shutdown instead terminates
+the complete group and waits for its boundary process to reap its children.
+Controlled tests hold the first and later pre-wait boundaries, an installation-
+token request, and the post-publication boundary. They verify that token,
+metadata, renewal-result, or later coordination state is not published after
+teardown begins and that helpers, workers, cadence waits, renewal attempts, and
+requests do not survive. The five-second outer deadlock detector reports only
+sanitised PID and liveness fields for the launcher, fake Codex, worker, cadence
+wait, and renewal child. A debug prompt created by
 `DEBUG_CODEX_PROMPT=1` is deliberately retained, checked for mode `0600`, and
 compared exactly with the final prompt passed to Codex.
 
