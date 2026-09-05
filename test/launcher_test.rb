@@ -882,6 +882,9 @@ class LauncherTest < Minitest::Test
     askpass = env_fact("GIT_ASKPASS", "value")
     credential_dir = File.dirname(helper)
     metadata_file = File.join(credential_dir, "current-token.meta")
+    assert_equal "1", parse_state_file(metadata_file).fetch("generation")
+    assert_equal 1, @harness.events.count("state:current-token-published")
+    assert_equal 1, @harness.events.count("state:current-token-meta-published")
     @harness.advance_clock(2700)
     posts_before = @harness.token_attempts
 
@@ -1255,6 +1258,64 @@ class LauncherTest < Minitest::Test
     assert_empty @harness.launcher_temporary_paths
   end
 
+  def test_shutdown_before_first_cadence_wait_does_not_create_or_retain_a_wait
+    @harness.enable_renewal_gate("before-first-wait")
+    session = start_renewable_session(wait_for_first_wait: false)
+    credential_dir = session.fetch(:credential_dir)
+    wait_until { @harness.renewal_gate_started?("before-first-wait") }
+    launcher_pid = session.fetch(:wait_thread).pid
+    codex_pid = @harness.fake_codex_pid
+    worker_pid = @harness.renewal_worker_pid(credential_dir)
+    gate_pid = @harness.renewal_gate_pid("before-first-wait")
+
+    @harness.release_codex
+    wait_until { File.exist?(File.join(credential_dir, ".shutting-down")) }
+    assert @harness.process_alive?(worker_pid)
+    refute @harness.renewal_wait_started?(1)
+
+    @harness.release_renewal_gate("before-first-wait")
+    result = complete_renewable_session(session)
+    assert_success(result, "shutdown before first cadence wait")
+    refute @harness.renewal_wait_started?(1)
+    [launcher_pid, codex_pid, worker_pid, gate_pid].each do |pid|
+      refute @harness.process_alive?(pid), "launcher-owned process #{pid} survived teardown"
+    end
+    refute File.exist?(credential_dir)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    @harness&.release_renewal_gate("before-first-wait")
+    stop_renewable_session(session)
+  end
+
+  def test_shutdown_before_later_cadence_wait_does_not_create_or_retain_a_wait
+    @harness.enable_renewal_gate("before-wait", 2)
+    session = start_renewable_session
+    credential_dir = session.fetch(:credential_dir)
+    @harness.release_renewal_wait(1)
+    wait_until { @harness.renewal_gate_started?("before-wait", 2) }
+    assert_equal 2, @harness.token_attempts
+    refute @harness.renewal_wait_started?(2)
+    worker_pid = @harness.renewal_worker_pid(credential_dir)
+    gate_pid = @harness.renewal_gate_pid("before-wait", 2)
+
+    @harness.release_codex
+    wait_until { File.exist?(File.join(credential_dir, ".shutting-down")) }
+    assert @harness.process_alive?(worker_pid)
+    refute @harness.renewal_wait_started?(2)
+
+    @harness.release_renewal_gate("before-wait", 2)
+    result = complete_renewable_session(session)
+    assert_success(result, "shutdown before later cadence wait")
+    refute @harness.renewal_wait_started?(2)
+    refute @harness.process_alive?(worker_pid)
+    refute @harness.process_alive?(gate_pid)
+    refute File.exist?(credential_dir)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    @harness&.release_renewal_gate("before-wait", 2)
+    stop_renewable_session(session)
+  end
+
   def test_shutdown_during_reactive_renewal_fails_waiting_helper_and_prevents_publication
     sequence = [
       @harness.token_response(LauncherHarness::INSTALLATION_TOKEN),
@@ -1267,28 +1328,62 @@ class LauncherTest < Minitest::Test
     @harness.advance_clock(2700)
     request = Thread.new { @harness.run_generated_helper(helper) }
     wait_until { @harness.token_attempt_started?(2) }
+    renewal_pid = @harness.renewal_attempt_pid(1)
+    request_pid = @harness.token_request_pid(2)
 
     Process.kill("TERM", session.fetch(:wait_thread).pid)
     wait_until { File.exist?(File.join(credential_dir, ".shutting-down")) }
     helper_result = request.value
     refute helper_result.status.success?
     assert_empty helper_result.stdout
-    assert_includes helper_result.stderr, "session is shutting down"
-    assert_equal "1", parse_state_file(metadata_file).fetch("generation")
+    assert_match(/GitHub credential (?:session is shutting down|renewal worker is unavailable)/, helper_result.stderr)
 
-    @harness.release_token_attempt(2)
-    status = Timeout.timeout(5) { session.fetch(:wait_thread).value }
-    assert_equal 143, status.exitstatus
-    session.fetch(:stdout).read
-    session.fetch(:stderr).read
-    session.fetch(:stdout).close
-    session.fetch(:stderr).close
-    session[:finished] = true
+    result = complete_renewable_session(session)
+    assert_equal 143, result.status.exitstatus, failure_message("shutdown during blocked renewal", result)
+    assert_equal 1, @harness.events.count("state:current-token-published")
+    assert_equal 1, @harness.events.count("state:current-token-meta-published")
+    assert_equal 1, @harness.events.count("state:renewal-result-published")
+    refute @harness.process_alive?(renewal_pid), "renewal boundary survived launcher cleanup"
+    refute @harness.process_alive?(request_pid), "blocked token request survived launcher cleanup"
     refute File.exist?(credential_dir)
     assert_empty @harness.launcher_temporary_paths
   ensure
-    @harness.release_token_attempt(2) if @harness&.token_attempt_started?(2)
     request&.join
+    [request_pid, renewal_pid].compact.each do |pid|
+      Process.kill("KILL", pid) if @harness&.process_alive?(pid)
+    rescue Errno::ESRCH
+      nil
+    end
+    stop_renewable_session(session)
+  end
+
+  def test_shutdown_at_post_publication_boundary_reaps_attempt_without_result_publication
+    @harness.enable_renewal_gate("after-publication")
+    session = start_renewable_session
+    credential_dir = session.fetch(:credential_dir)
+    result_file = File.join(credential_dir, "renewal-result")
+    @harness.release_renewal_wait(1)
+    wait_until { @harness.renewal_gate_started?("after-publication") }
+    assert_equal "0", parse_state_file(result_file).fetch("attempt")
+    assert_equal 1, @harness.events.count("state:renewal-result-published")
+    renewal_pid = @harness.renewal_attempt_pid(1)
+    gate_pid = @harness.renewal_gate_pid("after-publication")
+
+    Process.kill("TERM", session.fetch(:wait_thread).pid)
+    wait_until { File.exist?(File.join(credential_dir, ".shutting-down")) }
+    result = complete_renewable_session(session)
+    assert_equal 143, result.status.exitstatus, failure_message("shutdown after publication", result)
+    assert_equal 1, @harness.events.count("state:renewal-result-published")
+    refute @harness.process_alive?(renewal_pid), "renewal boundary survived launcher cleanup"
+    refute @harness.process_alive?(gate_pid), "post-publication gate survived launcher cleanup"
+    refute File.exist?(credential_dir)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    [gate_pid, renewal_pid].compact.each do |pid|
+      Process.kill("KILL", pid) if @harness&.process_alive?(pid)
+    rescue Errno::ESRCH
+      nil
+    end
     stop_renewable_session(session)
   end
 
@@ -1686,6 +1781,7 @@ class LauncherTest < Minitest::Test
         @harness.codex_invocations.any? &&
         (!wait_for_first_wait || @harness.renewal_wait_started?(1))
     end
+    session[:credential_dir] = File.dirname(env_fact("AGENT_GITHUB_TOKEN_HELPER", "value"))
     session
   rescue StandardError
     stop_renewable_session(session)
@@ -1694,7 +1790,11 @@ class LauncherTest < Minitest::Test
 
   def finish_renewable_session(session)
     @harness.release_codex
-    status = Timeout.timeout(5) { session.fetch(:wait_thread).value }
+    complete_renewable_session(session)
+  end
+
+  def complete_renewable_session(session)
+    status = wait_for_launcher(session)
     result = LauncherHarness::Result.new(
       stdout: session.fetch(:stdout).read,
       stderr: session.fetch(:stderr).read,
@@ -1704,6 +1804,16 @@ class LauncherTest < Minitest::Test
     session.fetch(:stderr).close
     session[:finished] = true
     result
+  end
+
+  def wait_for_launcher(session)
+    Timeout.timeout(5) { session.fetch(:wait_thread).value }
+  rescue Timeout::Error
+    diagnostics = @harness.lifecycle_diagnostics(
+      launcher_pid: session.fetch(:wait_thread).pid,
+      credential_dir: session.fetch(:credential_dir)
+    )
+    raise Timeout::Error, "launcher teardown exceeded five seconds: #{diagnostics}"
   end
 
   def stop_renewable_session(session)
@@ -1729,12 +1839,7 @@ class LauncherTest < Minitest::Test
   end
 
   def process_alive?(pid)
-    return false unless pid
-
-    Process.kill(0, pid)
-    true
-  rescue Errno::ESRCH
-    false
+    @harness.process_alive?(pid)
   end
 
   def failure_message(scenario, result)
@@ -1756,9 +1861,15 @@ class LauncherTest < Minitest::Test
     )
     stdin.close
     wait_until { File.exist?(@harness.started_marker) && @harness.renewal_wait_started?(1) }
+    credential_dir = File.dirname(env_fact("AGENT_GITHUB_TOKEN_HELPER", "value"))
+    worker_pid = @harness.renewal_worker_pid(credential_dir)
+    codex_pid = @harness.fake_codex_pid
     renewal_wait_pid = @harness.renewal_wait_pid(1)
     Process.kill(signal, wait_thread.pid)
-    status = Timeout.timeout(5) { wait_thread.value }
+    status = wait_for_launcher(
+      wait_thread: wait_thread,
+      credential_dir: credential_dir
+    )
     captured_stdout = stdout.read
     captured_stderr = stderr.read
     stdout.close
@@ -1769,6 +1880,8 @@ class LauncherTest < Minitest::Test
     assert_equal [signal], @harness.signals
     assert_includes @harness.events, "codex:signal:#{signal}"
     assert_equal 1, @harness.codex_invocations.length
+    refute process_alive?(codex_pid), "fake Codex survived signal cleanup"
+    refute process_alive?(worker_pid), "renewal worker survived signal cleanup"
     refute process_alive?(renewal_wait_pid), "renewal wait process survived signal cleanup"
     assert_empty @harness.launcher_temporary_paths
   ensure
