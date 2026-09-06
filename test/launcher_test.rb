@@ -1332,7 +1332,6 @@ class LauncherTest < Minitest::Test
     session = start_renewable_session(sequence: sequence)
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
     credential_dir = File.dirname(helper)
-    File.join(credential_dir, "current-token.meta")
     @harness.advance_clock(2700)
     request = Thread.new { @harness.run_generated_helper(helper) }
     wait_until { @harness.token_attempt_started?(2) }
