@@ -34,7 +34,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -506,6 +506,24 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("repository structure: .ruby-version", "file does not exist")
   end
 
+  def test_missing_root_gemfile_fails
+    FileUtils.rm(File.join(@fixture_root, "Gemfile"))
+
+    assert_fails("repository structure: Gemfile", "file does not exist")
+  end
+
+  def test_missing_root_gemfile_lock_fails
+    FileUtils.rm(File.join(@fixture_root, "Gemfile.lock"))
+
+    assert_fails("repository structure: Gemfile.lock", "file does not exist")
+  end
+
+  def test_missing_root_lefthook_configuration_fails
+    FileUtils.rm(File.join(@fixture_root, "lefthook.yml"))
+
+    assert_fails("repository structure: lefthook.yml", "file does not exist")
+  end
+
   def test_missing_root_host_environment_hook_fails
     FileUtils.rm(File.join(@fixture_root, "scripts/agent_host_env.sh"))
 
@@ -608,7 +626,7 @@ class FrameworkValidationTest < Minitest::Test
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
-      AGENTS.md README.md .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      AGENTS.md README.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md prompts/bootstrap.md
@@ -678,7 +696,7 @@ class FrameworkValidationTest < Minitest::Test
                 "expected_repo_env" => "EXPECTED_REPO",
                 "expected_repo_default" => "repository"
               }
-            },
+            }
           }
         ],
         "planned" => [
@@ -738,7 +756,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def mutate
-    metadata = YAML.safe_load(File.read(File.join(@fixture_root, "framework.yml")))
+    metadata = YAML.safe_load_file(File.join(@fixture_root, "framework.yml"))
     yield metadata
     write_metadata(metadata)
   end
@@ -782,7 +800,7 @@ class FrameworkValidationTest < Minitest::Test
   def failure_message(scenario, stdout, stderr, status)
     <<~MESSAGE
       #{scenario} produced an unexpected validator result.
-      Expected status: #{scenario == 'invalid fixture' ? 'non-zero' : 'zero'}
+      Expected status: #{(scenario == "invalid fixture") ? "non-zero" : "zero"}
       Actual status: #{status.exitstatus}
       stdout:
       #{stdout}
