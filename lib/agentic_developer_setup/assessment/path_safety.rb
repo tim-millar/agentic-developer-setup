@@ -7,11 +7,13 @@ module AgenticDeveloperSetup
     module PathSafety
       module_function
 
+      # standard:disable Style/RedundantStructKeywordInit
       Destination = Struct.new(:path, :resolved, keyword_init: true) do
         def identity
           resolved.to_s
         end
       end
+      # standard:enable Style/RedundantStructKeywordInit
 
       def validate_output!(path, target_root)
         candidate = Pathname.new(path.to_s).expand_path
@@ -35,16 +37,14 @@ module AgenticDeveloperSetup
         current = Pathname.new(path.to_s).cleanpath
         missing = []
         loop do
-          begin
-            current.lstat
-            break
-          rescue Errno::ENOENT
-            parent = current.parent
-            raise Errno::ENOENT if parent == current
+          current.lstat
+          break
+        rescue Errno::ENOENT
+          parent = current.parent
+          raise Errno::ENOENT if parent == current
 
-            missing.unshift(current.basename.to_s)
-            current = parent
-          end
+          missing.unshift(current.basename.to_s)
+          current = parent
         end
 
         canonical = Pathname.new(File.realpath(current.to_s))
@@ -82,10 +82,10 @@ module AgenticDeveloperSetup
 
             link = File.readlink(candidate.to_s)
             target = if link.start_with?(File::SEPARATOR)
-                       Pathname.new(link).expand_path
-                     else
-                       candidate.parent.join(link).expand_path
-                     end
+              Pathname.new(link).expand_path
+            else
+              candidate.parent.join(link).expand_path
+            end
             pending = target.to_s.split(File::SEPARATOR).reject(&:empty?) + pending
             resolved = Pathname.new(File::SEPARATOR)
           else

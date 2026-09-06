@@ -56,7 +56,7 @@ class LauncherTest < Minitest::Test
 
     assert_success(result, "argument forwarding")
     assert_equal @harness.expected_codex_args("--model", "model with spaces", "$(touch NEVER_CREATED)", "semi;colon", "pipe|data", "", @harness.expected_prompt),
-                 @harness.invocation.fetch("args")
+      @harness.invocation.fetch("args")
     refute File.exist?(File.join(@harness.repository, "NEVER_CREATED"))
     assert_equal @harness.repository, @harness.invocation.fetch("cwd")
     assert_equal 1, @harness.codex_invocations.length
@@ -70,14 +70,14 @@ class LauncherTest < Minitest::Test
     assert_success(result, "CLI profile")
     assert_equal "alternate-codex", @harness.invocation.fetch("executable")
     assert_equal ["--profile", "cli-profile", *@harness.expected_codex_args("--sandbox", "workspace-write", @harness.expected_prompt)],
-                 @harness.invocation.fetch("args")
+      @harness.invocation.fetch("args")
 
     @harness.close
     @harness = LauncherHarness.new
     result = @harness.run("--quiet", env: {"CODEX_PROFILE" => "environment-profile"})
     assert_success(result, "environment profile")
     assert_equal ["--profile", "environment-profile", *@harness.expected_codex_args("--quiet", @harness.expected_prompt)],
-                 @harness.invocation.fetch("args")
+      @harness.invocation.fetch("args")
   end
 
   def test_child_inherits_launcher_standard_input
@@ -165,7 +165,7 @@ class LauncherTest < Minitest::Test
     assert_success(result, "inherited host PATH")
     assert_path_contract(inherited_path)
     assert_equal @harness.expected_codex_args("--sandbox", "read-only", @harness.expected_prompt),
-                 @harness.invocation.fetch("args")
+      @harness.invocation.fetch("args")
     assert_includes result.stdout, "Agent host environment: inherited"
     assert_includes result.stdout, "Agent host PATH: preserved for Codex shell commands"
     refute File.exist?(File.join(@harness.repository, "scripts", "agent_host_env.sh"))
@@ -220,7 +220,7 @@ class LauncherTest < Minitest::Test
   def test_hook_cannot_clobber_launcher_result_routing_with_ordinary_variables
     unexpected_result = File.join(@harness.root, "unexpected-result")
     selected_prefix = File.join(@harness.root, "selected-tools")
-    @harness.write_host_env_hook(<<~'BASH')
+    @harness.write_host_env_hook(<<~BASH)
       result="$FAKE_UNEXPECTED_RESULT"
       chmod_bin=/usr/bin/false
       PATH="$FAKE_SELECTED_PREFIX:$PATH"
@@ -241,7 +241,7 @@ class LauncherTest < Minitest::Test
 
   def test_hook_cannot_mutate_readonly_launcher_result_routing
     unexpected_result = File.join(@harness.root, "redirected-result")
-    @harness.write_host_env_hook(<<~'BASH')
+    @harness.write_host_env_hook(<<~BASH)
       __launcher_host_result="$FAKE_UNEXPECTED_RESULT"
       PATH="$PATH"
       export PATH
@@ -365,7 +365,7 @@ class LauncherTest < Minitest::Test
       argument.start_with?("shell_environment_policy.set.PATH=")
     end
     refute_nil config
-    assert_includes config, '\\\\'
+    assert_includes config, "\\\\"
     assert_includes config, '\\"'
     %w[\\b \\t \\n \\f \\r].each { |escape| assert_includes config, escape }
     %w[\\u0001 \\u000b \\u001f \\u007f].each { |escape| assert_includes config, escape }
@@ -443,7 +443,7 @@ class LauncherTest < Minitest::Test
 
     assert_success(result, "unrelated forwarded Codex config")
     assert_equal @harness.expected_codex_args(*arguments, @harness.expected_prompt),
-                 @harness.invocation.fetch("args")
+      @harness.invocation.fetch("args")
     assert_path_contract(@harness.inherited_path)
   end
 
@@ -834,10 +834,10 @@ class LauncherTest < Minitest::Test
     assert_equal credential_dir, File.dirname(env_fact("GH_CONFIG_DIR", "value"))
     assert_equal 1, @harness.token_attempts
     assert File.binread(token_file) == LauncherHarness::INSTALLATION_TOKEN,
-           "authoritative token file did not contain exactly the initial token"
+      "authoritative token file did not contain exactly the initial token"
     assert_equal "generation=1\npublished_at_epoch=", File.read(metadata_file).lines.first(2).join.sub(/\d+\n\z/, "")
     assert_equal({"attempt" => "0", "outcome" => "none", "generation" => "1", "completed_at_epoch" => "0"},
-                 parse_state_file(result_file))
+      parse_state_file(result_file))
     events_before_helper = @harness.events.dup
     assert_helper_token(@harness.run_generated_helper(helper), LauncherHarness::INSTALLATION_TOKEN)
     assert_helper_token(
@@ -849,7 +849,7 @@ class LauncherTest < Minitest::Test
     assert_equal "x-access-token\n", username.stdout
     assert_equal events_before_helper, @harness.events, "generated helpers minted credentials independently"
     assert_operator @harness.events.index { |event| event.start_with?("curl:issue ") }, :<,
-                    @harness.events.index { |event| event.start_with?("renewal:wait ") }
+      @harness.events.index { |event| event.start_with?("renewal:wait ") }
 
     generated_material = File.read(helper) + File.read(askpass)
     assert_includes File.read(helper), "refresh_interval=2700\n"
@@ -945,7 +945,7 @@ class LauncherTest < Minitest::Test
     assert_equal 2, @harness.token_attempts
     assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
     assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=2 ") }, :<,
-                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=1" }
+      @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=1" }
 
     result = finish_renewable_session(session)
     assert_success(result, "force request before first cadence wait")
@@ -983,7 +983,7 @@ class LauncherTest < Minitest::Test
     assert_equal 3, @harness.token_attempts
     assert_equal "3", parse_state_file(metadata_file).fetch("generation")
     assert_operator @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }, :<,
-                    @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=2" }
+      @harness.events.index { |event| event == "renewal:wait seconds=2700 ordinal=2" }
 
     result = finish_renewable_session(session)
     assert_success(result, "force request between attempt and next cadence wait")
@@ -1025,13 +1025,13 @@ class LauncherTest < Minitest::Test
     assert_equal 3, @harness.token_attempts
     assert_equal "3", parse_state_file(metadata_file).fetch("generation")
     assert_equal({"attempt" => "2", "outcome" => "success", "generation" => "3"},
-                 parse_state_file(result_file).slice("attempt", "outcome", "generation"))
+      parse_state_file(result_file).slice("attempt", "outcome", "generation"))
     attempt_two_complete = @harness.events.index { |event| event == "curl:token-complete attempt=2" }
     attempt_three_start = @harness.events.index { |event| event.start_with?("curl:token attempt=3 ") }
     refute_nil attempt_two_complete
     refute_nil attempt_three_start
     assert_operator attempt_two_complete, :<, attempt_three_start,
-                    "installation-token POSTs overlapped instead of remaining serial"
+      "installation-token POSTs overlapped instead of remaining serial"
     assert_equal 1, @harness.events.grep(/^curl:token attempt=2 /).length
     assert_equal 1, @harness.events.grep(/^curl:token attempt=3 /).length
 
@@ -1100,7 +1100,7 @@ class LauncherTest < Minitest::Test
     assert_equal LauncherHarness::INSTALLATION_TOKEN, File.binread(token_file)
     assert_equal "1", parse_state_file(metadata_file).fetch("generation")
     assert_equal({"attempt" => "1", "outcome" => "failure", "generation" => "1"},
-                 parse_state_file(result_file).slice("attempt", "outcome", "generation"))
+      parse_state_file(result_file).slice("attempt", "outcome", "generation"))
     wait_until { @harness.renewal_wait_started?(2) }
     assert_equal "300", File.read(File.join(@harness.renewal_control_dir, "wait-2.started"))
 
@@ -1169,7 +1169,7 @@ class LauncherTest < Minitest::Test
   def test_missing_malformed_and_future_metadata_each_require_reactive_renewal
     tokens = %w[renewed-two renewed-three renewed-four renewed-five]
     sequence = [@harness.token_response(LauncherHarness::INSTALLATION_TOKEN)] +
-               tokens.map { |token| @harness.token_response(token) }
+      tokens.map { |token| @harness.token_response(token) }
     session = start_renewable_session(sequence: sequence)
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
     metadata_file = File.join(File.dirname(helper), "current-token.meta")
@@ -1221,8 +1221,16 @@ class LauncherTest < Minitest::Test
     assert_success(result, "invalid metadata and bounded helper wait")
   ensure
     if dummy_pid
-      Process.kill("TERM", dummy_pid) rescue nil
-      Process.wait(dummy_pid) rescue nil
+      begin
+        Process.kill("TERM", dummy_pid)
+      rescue
+        nil
+      end
+      begin
+        Process.wait(dummy_pid)
+      rescue
+        nil
+      end
     end
     stop_renewable_session(session)
   end
@@ -1324,7 +1332,7 @@ class LauncherTest < Minitest::Test
     session = start_renewable_session(sequence: sequence)
     helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
     credential_dir = File.dirname(helper)
-    metadata_file = File.join(credential_dir, "current-token.meta")
+    File.join(credential_dir, "current-token.meta")
     @harness.advance_clock(2700)
     request = Thread.new { @harness.run_generated_helper(helper) }
     wait_until { @harness.token_attempt_started?(2) }
@@ -1437,7 +1445,7 @@ class LauncherTest < Minitest::Test
     assert readings.any?, "atomic reader did not observe the credential file"
     allowed = [LauncherHarness::INSTALLATION_TOKEN, LauncherHarness::RENEWED_INSTALLATION_TOKEN].map { |token| "#{token}\n" }
     assert readings.all? { |success, output| success && allowed.include?(output) },
-           "atomic reader observed unavailable or partial credential state"
+      "atomic reader observed unavailable or partial credential state"
     assert_empty Dir[File.join(credential_dir, "current-token.tmp.*")]
     assert_equal "2700", File.read(File.join(@harness.renewal_control_dir, "wait-2.started"))
     assert_operator @harness.events.count { |event| event == "openssl:sign source_credentials_present=true" }, :>=, 2
@@ -1794,7 +1802,7 @@ class LauncherTest < Minitest::Test
     end
     session[:credential_dir] = File.dirname(env_fact("AGENT_GITHUB_TOKEN_HELPER", "value"))
     session
-  rescue StandardError
+  rescue
     stop_renewable_session(session)
     raise
   end

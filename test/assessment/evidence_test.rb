@@ -8,7 +8,7 @@ class AssessmentEvidenceTest < Minitest::Test
   def test_final_ids_are_resolved_after_late_evidence_changes_sort_order
     evidence = AgenticDeveloperSetup::Assessment::Evidence.new
     evidence_a = evidence.add(type: "file", path: "z.yml", method: "test", summary: "Evidence A")
-    finding = { "evidence_ids" => evidence.references([evidence_a]) }
+    finding = {"evidence_ids" => evidence.references([evidence_a])}
     evidence_b = evidence.add(type: "file", path: "a.yml", method: "test", summary: "Evidence B")
 
     evidence.resolve_references!(finding)
@@ -24,8 +24,8 @@ class AssessmentEvidenceTest < Minitest::Test
     first = evidence.add(type: "file", path: "same.yml", method: "test", summary: "Same")
     duplicate = evidence.add(type: "file", path: "same.yml", method: "test", summary: "Same")
     result = {
-      "first" => { "evidence_ids" => evidence.references([first, duplicate]) },
-      "second" => { "evidence_ids" => evidence.references([duplicate]) }
+      "first" => {"evidence_ids" => evidence.references([first, duplicate])},
+      "second" => {"evidence_ids" => evidence.references([duplicate])}
     }
 
     evidence.resolve_references!(result)

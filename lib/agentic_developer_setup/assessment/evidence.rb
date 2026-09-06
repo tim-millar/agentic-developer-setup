@@ -25,7 +25,7 @@ module AgenticDeveloperSetup
         raise InternalError, "evidence collection is already frozen" if @final_ids
         raise ArgumentError, "unsupported evidence type: #{type}" unless TYPES.include?(type)
 
-        item = { "type" => type, "method" => method, "summary" => summary }
+        item = {"type" => type, "method" => method, "summary" => summary}
         item["path"] = path unless path.nil?
         key = Digest::SHA256.hexdigest([type, path, method, summary].join("\0"))
         @items[key] ||= item
@@ -40,7 +40,7 @@ module AgenticDeveloperSetup
 
       # Kept as an internal compatibility name for the existing detector
       # helpers. This returns internal keys, never public E### identifiers.
-      alias ids_for references
+      alias_method :ids_for, :references
 
       def item_for(key)
         @items[key]

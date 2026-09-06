@@ -16,13 +16,10 @@ module AgenticDeveloperSetup
         file = File.expand_path(path)
         raise InvocationError, "assessor context does not exist: #{path}" unless File.file?(file)
 
-        raw = YAML.safe_load(
-          File.read(file),
-          permitted_classes: [],
+        raw = YAML.safe_load_file(file, permitted_classes: [],
           permitted_symbols: [],
           aliases: false,
-          filename: file
-        )
+          filename: file)
         validate(raw, path)
         evidence_keys = []
         raw.each do |field, value|
@@ -50,7 +47,7 @@ module AgenticDeveloperSetup
           raise InvocationError, "assessor context must be a YAML mapping: #{path}"
         end
         unknown = value.keys.map(&:to_s) - TOP_LEVEL
-        raise InvocationError, "assessor context has unknown fields: #{unknown.sort.join(', ')}" unless unknown.empty?
+        raise InvocationError, "assessor context has unknown fields: #{unknown.sort.join(", ")}" unless unknown.empty?
         unless value["schema_version"] == 1
           raise InvocationError, "assessor context schema_version must be 1"
         end
@@ -85,11 +82,11 @@ module AgenticDeveloperSetup
         @values[key]
       end
 
-      private
-
       def self.string_field(value, field)
         raise InvocationError, "assessor context #{field} must be a string" unless value.is_a?(String)
       end
+
+      private_class_method :string_field
     end
   end
 end

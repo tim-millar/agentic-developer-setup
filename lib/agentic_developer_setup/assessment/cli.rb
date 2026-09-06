@@ -11,7 +11,7 @@ module AgenticDeveloperSetup
         options = parse_options(argv)
         target = argv.shift
         raise InvocationError, "TARGET is required" unless target
-        raise InvocationError, "unexpected arguments: #{argv.join(' ')}" unless argv.empty?
+        raise InvocationError, "unexpected arguments: #{argv.join(" ")}" unless argv.empty?
         raise InvocationError, "--report cannot be combined with --no-report" if options[:report] && options[:no_report]
 
         output_destination = options[:output] && PathSafety.validate_output!(options[:output], target)
@@ -23,8 +23,8 @@ module AgenticDeveloperSetup
         result = Assessor.new(target).assess(context_path: options[:context])
         yaml = YAML.dump(deep_copy(result))
         report = if options[:report] && !options[:no_report]
-                   MarkdownRenderer.render(result)
-                 end
+          MarkdownRenderer.render(result)
+        end
         write(output_destination, yaml, target) if output_destination
         stdout.write(yaml) unless options[:output]
         write(report_destination, report, target) if report
@@ -38,7 +38,7 @@ module AgenticDeveloperSetup
       end
 
       def self.parse_options(argv)
-        options = { no_report: false }
+        options = {no_report: false}
         parser = OptionParser.new do |opts|
           opts.banner = "Usage: ruby scripts/assess_repository.rb TARGET [options]"
           opts.on("--output PATH", "Write YAML assessment to PATH") { |value| options[:output] = value }

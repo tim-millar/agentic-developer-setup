@@ -33,7 +33,7 @@ class AssessmentSchemaTest < Minitest::Test
 
   def test_malformed_command_surface_entry_is_rejected
     invalid = copy(@valid)
-    invalid.dig("tooling", "command_surface", "commands") << { "name" => "make test", "source" => "Makefile" }
+    invalid.dig("tooling", "command_surface", "commands") << {"name" => "make test", "source" => "Makefile"}
 
     assert_schema_error(invalid, "tooling.command_surface.commands[0]")
   end
@@ -91,21 +91,21 @@ class AssessmentSchemaTest < Minitest::Test
 
   def test_not_provided_context_variant_is_valid_when_it_contains_only_status
     valid = copy(@valid)
-    valid["assessor_context"] = { "status" => "not_provided" }
+    valid["assessor_context"] = {"status" => "not_provided"}
 
     assert_schema(valid)
   end
 
   def test_not_provided_context_rejects_additional_fields
     invalid = copy(@valid)
-    invalid["assessor_context"] = { "status" => "not_provided", "sensitive_paths" => 42 }
+    invalid["assessor_context"] = {"status" => "not_provided", "sensitive_paths" => 42}
 
     assert_schema_error(invalid, "not_provided")
   end
 
   def test_not_provided_context_rejects_unknown_fields
     invalid = copy(@valid)
-    invalid["assessor_context"] = { "status" => "not_provided", "unexpected" => true }
+    invalid["assessor_context"] = {"status" => "not_provided", "unexpected" => true}
 
     assert_schema_error(invalid, "not_provided")
   end

@@ -213,10 +213,10 @@ class FrameworkValidator
       error("#{location}.runtime_version", "expected a positive integer")
     end
     if runtime["status"].is_a?(String) && runtime["status"] != "supported"
-      error("#{location}.status", "unsupported runtime status: #{runtime['status'].inspect}; expected: supported")
+      error("#{location}.status", "unsupported runtime status: #{runtime["status"].inspect}; expected: supported")
     end
     if runtime["distribution"].is_a?(String) && !RUNTIME_DISTRIBUTIONS.include?(runtime["distribution"])
-      error("#{location}.distribution", "unsupported distribution: #{runtime['distribution'].inspect}; expected one of: #{RUNTIME_DISTRIBUTIONS.join(', ')}")
+      error("#{location}.distribution", "unsupported distribution: #{runtime["distribution"].inspect}; expected one of: #{RUNTIME_DISTRIBUTIONS.join(", ")}")
     end
     validate_runtime_artefacts(runtime["artefacts"], "#{location}.artefacts", runtime["distribution"], runtime.dig("configuration", "type"))
     string_sequence(runtime["supported_platforms"], "#{location}.supported_platforms", non_empty: true, allowed: RUNTIME_PLATFORMS)
@@ -232,7 +232,7 @@ class FrameworkValidator
 
     %w[id display_name status description].each { |field| string(runtime[field], "#{location}.#{field}") }
     if runtime["status"].is_a?(String) && runtime["status"] != "planned"
-      error("#{location}.status", "unsupported runtime status: #{runtime['status'].inspect}; expected: planned")
+      error("#{location}.status", "unsupported runtime status: #{runtime["status"].inspect}; expected: planned")
     end
   end
 
@@ -256,7 +256,7 @@ class FrameworkValidator
       string(artefact["source_path"], "#{item_location}.source_path")
       string(artefact["target_path"], "#{item_location}.target_path") if artefact.key?("target_path")
       if artefact["role"].is_a?(String) && !RUNTIME_ARTEFACT_ROLES.include?(artefact["role"])
-        error("#{item_location}.role", "unsupported artefact role: #{artefact['role'].inspect}; expected one of: #{RUNTIME_ARTEFACT_ROLES.join(', ')}")
+        error("#{item_location}.role", "unsupported artefact role: #{artefact["role"].inspect}; expected one of: #{RUNTIME_ARTEFACT_ROLES.join(", ")}")
       end
       roles << [artefact["role"], "#{item_location}.role"]
     end
@@ -325,7 +325,7 @@ class FrameworkValidator
       string(value[field], "#{location}.#{field}")
     end
     if value["origin_remote_scheme"].is_a?(String) && value["origin_remote_scheme"] != "https"
-      error("#{location}.origin_remote_scheme", "unsupported origin scheme: #{value['origin_remote_scheme'].inspect}; expected: https")
+      error("#{location}.origin_remote_scheme", "unsupported origin scheme: #{value["origin_remote_scheme"].inspect}; expected: https")
     end
   end
 
@@ -371,7 +371,7 @@ class FrameworkValidator
 
         %w[name type path status].each { |field| string(entry[field], "framework.yml: #{item_location}.#{field}") }
         if entry["status"].is_a?(String) && !ADAPTER_STATUSES.include?(entry["status"])
-          error("framework.yml: #{item_location}.status", "unsupported adapter status: #{entry['status'].inspect}")
+          error("framework.yml: #{item_location}.status", "unsupported adapter status: #{entry["status"].inspect}")
         end
         if entry["name"].is_a?(String) && entry["type"].is_a?(String)
           identities << [[entry["type"], entry["name"]], "framework.yml: #{item_location}"]
@@ -518,11 +518,11 @@ class FrameworkValidator
       entry["source_path"] == pair["source_path"] && entry["target_path"] == pair["target_path"]
     end
     if matches.empty?
-      error(location, "source_path/target_path pair does not match a baseline artefact: #{pair['source_path'].inspect} -> #{pair['target_path'].inspect}")
+      error(location, "source_path/target_path pair does not match a baseline artefact: #{pair["source_path"].inspect} -> #{pair["target_path"].inspect}")
     elsif matches.length > 1
       error(location, "source_path/target_path pair matches multiple baseline artefacts")
     elsif matches.first["category"] != expected_category
-      error("#{location}.category", "matching baseline artefact has category #{matches.first['category'].inspect}; expected: #{expected_category}")
+      error("#{location}.category", "matching baseline artefact has category #{matches.first["category"].inspect}; expected: #{expected_category}")
     end
   end
 
@@ -563,10 +563,10 @@ class FrameworkValidator
       item_location = adapter_location("available", adapter, index, "name")
       matches = taxonomy.select { |entry| entry["type"] == adapter["type"] }
       if matches.empty?
-        error("framework.yml: #{item_location}.type", "unknown adapter taxonomy type: #{adapter['type']}")
+        error("framework.yml: #{item_location}.type", "unknown adapter taxonomy type: #{adapter["type"]}")
         next
       elsif matches.length > 1
-        error("framework.yml: #{item_location}.type", "ambiguous adapter taxonomy type: #{adapter['type']}")
+        error("framework.yml: #{item_location}.type", "ambiguous adapter taxonomy type: #{adapter["type"]}")
         next
       end
 
@@ -575,7 +575,7 @@ class FrameworkValidator
 
       expected = pattern.sub("<name>", adapter["name"])
       if adapter["path"] != expected
-        error("framework.yml: #{item_location}.path", "path does not match taxonomy pattern; expected: #{expected}, got: #{adapter['path']}")
+        error("framework.yml: #{item_location}.path", "path does not match taxonomy pattern; expected: #{expected}, got: #{adapter["path"]}")
       end
     end
   end
@@ -671,7 +671,7 @@ class FrameworkValidator
   end
 
   def validate_repository_structure
-    required_files = %w[AGENTS.md README.md framework.yml .ruby-version docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
+    required_files = %w[AGENTS.md README.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
     required_directories = %w[docs scripts baseline prompts adapters]
     required_files.each { |path| validate_existing_source(path, "repository structure: #{path}", :file) }
     required_directories.each { |path| validate_existing_source(path, "repository structure: #{path}", :directory) }
@@ -732,10 +732,10 @@ class FrameworkValidator
         return false
       end
     rescue Errno::ENOENT
-      error(location, "#{expected_type == :file ? 'file' : 'directory'} does not exist: #{value}")
+      error(location, "#{(expected_type == :file) ? "file" : "directory"} does not exist: #{value}")
       return false
     rescue SystemCallError => e
-      kind = expected_type == :file ? "file" : "directory"
+      kind = (expected_type == :file) ? "file" : "directory"
       error(location, "could not resolve #{kind}: #{value} (#{e.class.name})")
       return false
     end
@@ -829,7 +829,7 @@ class FrameworkValidator
       if string(entry, entry_location)
         identities << [entry, entry_location]
         if allowed && !allowed.include?(entry)
-          error(entry_location, "unsupported value: #{entry.inspect}; expected one of: #{allowed.join(', ')}")
+          error(entry_location, "unsupported value: #{entry.inspect}; expected one of: #{allowed.join(", ")}")
         end
       end
     end
@@ -881,22 +881,22 @@ class FrameworkValidator
   end
 
   def collection_location(collection, entry, index)
-    identity = entry.is_a?(Hash) && entry["id"].is_a?(String) && !entry["id"].empty? ? entry["id"] : index
+    identity = (entry.is_a?(Hash) && entry["id"].is_a?(String) && !entry["id"].empty?) ? entry["id"] : index
     "#{collection}[#{identity}]"
   end
 
   def baseline_location(collection, entry, index)
-    identity = entry.is_a?(Hash) && entry["name"].is_a?(String) && !entry["name"].empty? ? entry["name"] : index
+    identity = (entry.is_a?(Hash) && entry["name"].is_a?(String) && !entry["name"].empty?) ? entry["name"] : index
     "baseline.#{collection}[#{identity}]"
   end
 
   def runtime_location(collection, entry, index)
-    identity = entry.is_a?(Hash) && entry["id"].is_a?(String) && !entry["id"].empty? ? entry["id"] : index
+    identity = (entry.is_a?(Hash) && entry["id"].is_a?(String) && !entry["id"].empty?) ? entry["id"] : index
     "agent_runtimes.#{collection}[#{identity}]"
   end
 
   def adapter_location(collection, entry, index, identity_key)
-    identity = entry.is_a?(Hash) && entry[identity_key].is_a?(String) && !entry[identity_key].empty? ? entry[identity_key] : index
+    identity = (entry.is_a?(Hash) && entry[identity_key].is_a?(String) && !entry[identity_key].empty?) ? entry[identity_key] : index
     "adapters.#{collection}[#{identity}]"
   end
 

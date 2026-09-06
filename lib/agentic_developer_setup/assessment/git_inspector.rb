@@ -60,7 +60,7 @@ module AgenticDeveloperSetup
       private
 
       def capture(*arguments, stdin_data: nil)
-        options = { chdir: @root.to_s }
+        options = {chdir: @root.to_s}
         options[:stdin_data] = stdin_data if stdin_data
         environment = {
           "GIT_OPTIONAL_LOCKS" => "0",
@@ -76,7 +76,7 @@ module AgenticDeveloperSetup
       end
 
       def value_or_unknown(result)
-        result.success? && !result.stdout.strip.empty? ? result.stdout.strip : "unknown"
+        (result.success? && !result.stdout.strip.empty?) ? result.stdout.strip : "unknown"
       end
     end
   end
