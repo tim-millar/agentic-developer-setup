@@ -169,61 +169,61 @@ class ClaudeExploreHarness
   def fake_claude(default_version)
     <<~SH
       #!/bin/sh
-      if [ "\${1:-}" = "--version" ]; then
-        echo "Claude Code \${FAKE_CLAUDE_VERSION:-#{default_version}}"
-        exit "\${FAKE_VERSION_EXIT:-0}"
+      if [ "${1:-}" = "--version" ]; then
+        echo "Claude Code ${FAKE_CLAUDE_VERSION:-#{default_version}}"
+        exit "${FAKE_VERSION_EXIT:-0}"
       fi
-      : > "\$FAKE_CLAUDE_LOG"
+      : > "$FAKE_CLAUDE_LOG"
       previous=
-      for argument in "\$@"; do
-        printf '%s\n' "\$argument" >> "\$FAKE_CLAUDE_LOG"
-        if [ "\$previous" = settings ]; then /bin/cp "\$argument" "\$FAKE_SETTINGS_COPY"; fi
-        if [ "\$previous" = mcp ]; then /bin/cp "\$argument" "\$FAKE_MCP_COPY"; fi
+      for argument in "$@"; do
+        printf '%s\n' "$argument" >> "$FAKE_CLAUDE_LOG"
+        if [ "$previous" = settings ]; then /bin/cp "$argument" "$FAKE_SETTINGS_COPY"; fi
+        if [ "$previous" = mcp ]; then /bin/cp "$argument" "$FAKE_MCP_COPY"; fi
         previous=
-        [ "\$argument" = --settings ] && previous=settings
-        [ "\$argument" = --mcp-config ] && previous=mcp
+        [ "$argument" = --settings ] && previous=settings
+        [ "$argument" = --mcp-config ] && previous=mcp
       done
-      /usr/bin/env > "\$FAKE_ENV_LOG"
-      case "\${FAKE_INNER_SCENARIO:-}" in
-        blocked) "\$FAKE_COMMAND" ; exit \$? ;;
-        git-allowed) git status ; exit \$? ;;
-        git-env) GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.status GIT_CONFIG_VALUE_0='!marker-command' git status ; exit \$? ;;
-        git-push) git push origin main ; exit \$? ;;
-        psql-db) psql -d mydb ; exit \$? ;;
-        psql-command) psql -d mydb -c 'select 1' ; exit \$? ;;
-        psql-meta) psql -d mydb -c '\\connect postgresql://remote.example/db' ; exit \$? ;;
-        psql-file) psql -d mydb -f commands.sql ; exit \$? ;;
-        psql-stdin) printf '\\connect postgresql://remote.example/db\n' | psql -d mydb ; exit \$? ;;
-        psql-env) PGHOST=remote.example psql ; exit \$? ;;
-        psql-query) psql 'postgresql://localhost/db?host=remote.example' ; exit \$? ;;
+      /usr/bin/env > "$FAKE_ENV_LOG"
+      case "${FAKE_INNER_SCENARIO:-}" in
+        blocked) "$FAKE_COMMAND" ; exit $? ;;
+        git-allowed) git status ; exit $? ;;
+        git-env) GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.status GIT_CONFIG_VALUE_0='!marker-command' git status ; exit $? ;;
+        git-push) git push origin main ; exit $? ;;
+        psql-db) psql -d mydb ; exit $? ;;
+        psql-command) psql -d mydb -c 'select 1' ; exit $? ;;
+        psql-meta) psql -d mydb -c '\\connect postgresql://remote.example/db' ; exit $? ;;
+        psql-file) psql -d mydb -f commands.sql ; exit $? ;;
+        psql-stdin) printf '\\connect postgresql://remote.example/db\n' | psql -d mydb ; exit $? ;;
+        psql-env) PGHOST=remote.example psql ; exit $? ;;
+        psql-query) psql 'postgresql://localhost/db?host=remote.example' ; exit $? ;;
       esac
-      if [ "\${FAKE_WAIT:-}" = 1 ]; then
+      if [ "${FAKE_WAIT:-}" = 1 ]; then
         trap 'exit 130' INT
         trap 'exit 143' TERM
-        : > "\$FAKE_STARTED"
+        : > "$FAKE_STARTED"
         while :; do sleep 1; done
       fi
-      exit "\${FAKE_CLAUDE_EXIT:-0}"
+      exit "${FAKE_CLAUDE_EXIT:-0}"
     SH
   end
 
   def fake_delegate(name)
     <<~SH
       #!/bin/sh
-      if [ "#{name}" = git ] && [ "\${GIT_CONFIG_COUNT-unset}" != unset ]; then
-        : > "\$FAKE_GIT_INJECTION_MARKER"
+      if [ "#{name}" = git ] && [ "${GIT_CONFIG_COUNT-unset}" != unset ]; then
+        : > "$FAKE_GIT_INJECTION_MARKER"
       fi
       if [ "#{name}" = psql ]; then
-        case " \$* " in *" -X "*) ;; *) [ -z "\${FAKE_PSQLRC_MARKER:-}" ] || : > "\$FAKE_PSQLRC_MARKER" ;; esac
-        if [ -z "\${PGPASSFILE:-}" ] || [ "\$PGPASSFILE" = "\$HOME/.pgpass" ]; then
-          [ -z "\${FAKE_PGPASS_MARKER:-}" ] || : > "\$FAKE_PGPASS_MARKER"
+        case " $* " in *" -X "*) ;; *) [ -z "${FAKE_PSQLRC_MARKER:-}" ] || : > "$FAKE_PSQLRC_MARKER" ;; esac
+        if [ -z "${PGPASSFILE:-}" ] || [ "$PGPASSFILE" = "$HOME/.pgpass" ]; then
+          [ -z "${FAKE_PGPASS_MARKER:-}" ] || : > "$FAKE_PGPASS_MARKER"
         fi
-        if IFS= read -r ignored; then [ -z "\${FAKE_PSQL_STDIN_MARKER:-}" ] || : > "\$FAKE_PSQL_STDIN_MARKER"; fi
+        if IFS= read -r ignored; then [ -z "${FAKE_PSQL_STDIN_MARKER:-}" ] || : > "$FAKE_PSQL_STDIN_MARKER"; fi
       fi
       printf '#{name}' >> "$FAKE_DELEGATE_LOG"
-      for argument in "\$@"; do printf ' <%s>' "\$argument" >> "$FAKE_DELEGATE_LOG"; done
+      for argument in "$@"; do printf ' <%s>' "$argument" >> "$FAKE_DELEGATE_LOG"; done
       printf ' PGHOST=%s GIT_CONFIG_COUNT=%s GIT_CONFIG_KEY_0=%s GIT_CONFIG_VALUE_0=%s PGPASSFILE=%s\n' \
-        "\${PGHOST-unset}" "\${GIT_CONFIG_COUNT-unset}" "\${GIT_CONFIG_KEY_0-unset}" "\${GIT_CONFIG_VALUE_0-unset}" "\${PGPASSFILE-unset}" >> "$FAKE_DELEGATE_LOG"
+        "${PGHOST-unset}" "${GIT_CONFIG_COUNT-unset}" "${GIT_CONFIG_KEY_0-unset}" "${GIT_CONFIG_VALUE_0-unset}" "${PGPASSFILE-unset}" >> "$FAKE_DELEGATE_LOG"
       exit 0
     SH
   end

@@ -288,6 +288,28 @@ Typical agent workflows include:
 
 The `prompts/` directory exists to support those workflows.
 
+## Root Ruby Development and Validation
+
+This framework source repository uses the exact Ruby declared by `.ruby-version` and a locked root bundle declared by `Gemfile` and `Gemfile.lock`. Minitest is an explicit dependency; Standard Ruby provides the lint and format policy; Lefthook provides local hook execution.
+
+Prepare dependencies and install the root hooks with:
+
+```sh
+make setup
+```
+
+The repository-owned command surface is:
+
+```text
+make lint              # check maintained Ruby without modifying files
+make format            # apply Standard's safe formatting
+make test              # run the complete bundled Ruby test suite
+make validate          # validate framework metadata and root structure
+make check             # lint, test, and validate
+```
+
+Pre-commit runs `make lint`, pre-push runs `make check`, and CI runs the same `make check` surface after setting up the committed bundle. The direct `ruby scripts/assess_repository.rb TARGET` entrypoint remains separate from root development dependency management; `make assess REPO=TARGET` is the bundled repository wrapper.
+
 ## Reference fixture
 
 [`examples/reference-service/`](examples/reference-service/) is a small, executable selected greenfield reference adoption. It is independently inspectable and demonstrates how framework artefacts, native tooling, a stable Make interface, tests, CI, and a repository contract fit together. It is a fixture for later adoption work, not a production service or universal project template.

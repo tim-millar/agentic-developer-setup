@@ -28,24 +28,24 @@ module AgenticDeveloperSetup
         already_satisfied_by_repository_native
       ].freeze
       ROADMAP_COMPONENT_PLAN = {
-        "agent_instructions" => { "phase" => 1, "title" => "Establish repository agent instructions and boundaries" },
-        "development_guide" => { "phase" => 1, "title" => "Document reproducible local development" },
-        "testing_strategy" => { "phase" => 1, "title" => "Document deterministic testing and validation strategy" },
-        "architecture_scaffold" => { "phase" => 1, "title" => "Document architecture boundaries for adoption" },
-        "domain_context" => { "phase" => 1, "title" => "Document domain context for adoption" },
-        "command_interface" => { "phase" => 1, "title" => "Establish a stable repository command interface" },
-        "agent_prompt" => { "phase" => 1, "title" => "Document the agent session brief and repository orientation" },
-        "agent_ready_issue_template" => { "phase" => 2, "title" => "Establish the agent-ready task workflow" },
-        "bug_report_issue_template" => { "phase" => 2, "title" => "Establish the defect-report workflow" },
-        "discovery_or_shaping_issue_template" => { "phase" => 2, "title" => "Establish the discovery and shaping workflow" },
-        "issue_template_config" => { "phase" => 2, "title" => "Configure the issue-template chooser" },
-        "pull_request_template" => { "phase" => 2, "title" => "Establish the human review handoff" },
-        "ci_workflow" => { "phase" => 2, "title" => "Align the CI validation workflow" },
-        "git_hooks" => { "phase" => 2, "title" => "Evaluate repository hooks for justified validation" },
-        "agent_launcher" => { "phase" => 2, "title" => "Evaluate an agent launcher and access boundary" },
-        "github_access_helper" => { "phase" => 2, "title" => "Evaluate scoped GitHub access" },
-        "claude_agent_entrypoint" => { "phase" => 2, "title" => "Evaluate the agent compatibility entrypoint" },
-        "commit_metadata" => { "phase" => 3, "title" => "Operationalise commit authorship and metadata conventions" }
+        "agent_instructions" => {"phase" => 1, "title" => "Establish repository agent instructions and boundaries"},
+        "development_guide" => {"phase" => 1, "title" => "Document reproducible local development"},
+        "testing_strategy" => {"phase" => 1, "title" => "Document deterministic testing and validation strategy"},
+        "architecture_scaffold" => {"phase" => 1, "title" => "Document architecture boundaries for adoption"},
+        "domain_context" => {"phase" => 1, "title" => "Document domain context for adoption"},
+        "command_interface" => {"phase" => 1, "title" => "Establish a stable repository command interface"},
+        "agent_prompt" => {"phase" => 1, "title" => "Document the agent session brief and repository orientation"},
+        "agent_ready_issue_template" => {"phase" => 2, "title" => "Establish the agent-ready task workflow"},
+        "bug_report_issue_template" => {"phase" => 2, "title" => "Establish the defect-report workflow"},
+        "discovery_or_shaping_issue_template" => {"phase" => 2, "title" => "Establish the discovery and shaping workflow"},
+        "issue_template_config" => {"phase" => 2, "title" => "Configure the issue-template chooser"},
+        "pull_request_template" => {"phase" => 2, "title" => "Establish the human review handoff"},
+        "ci_workflow" => {"phase" => 2, "title" => "Align the CI validation workflow"},
+        "git_hooks" => {"phase" => 2, "title" => "Evaluate repository hooks for justified validation"},
+        "agent_launcher" => {"phase" => 2, "title" => "Evaluate an agent launcher and access boundary"},
+        "github_access_helper" => {"phase" => 2, "title" => "Evaluate scoped GitHub access"},
+        "claude_agent_entrypoint" => {"phase" => 2, "title" => "Evaluate the agent compatibility entrypoint"},
+        "commit_metadata" => {"phase" => 3, "title" => "Operationalise commit authorship and metadata conventions"}
       }.freeze
       SUBSTANTIVE_VALIDATION_CAPABILITIES = %w[
         tests linting static_type_checking build_compile standard_local_verification
@@ -95,7 +95,7 @@ module AgenticDeveloperSetup
             "version" => @catalogue.framework_version,
             "source_revision" => @catalogue.source_revision
           },
-          "assessment" => { "generated_at" => @clock.call.utc.iso8601 },
+          "assessment" => {"generated_at" => @clock.call.utc.iso8601},
           "repository" => {
             "root" => @root.to_s,
             "git" => git_info
@@ -106,7 +106,7 @@ module AgenticDeveloperSetup
           "validation" => analysis[:validation],
           "documentation" => analysis[:documentation],
           "framework_adoption" => {
-            "metadata" => { "status" => "unsupported_in_schema_v1" },
+            "metadata" => {"status" => "unsupported_in_schema_v1"},
             "detected_components" => framework_states
           },
           "readiness" => readiness,
@@ -118,15 +118,15 @@ module AgenticDeveloperSetup
           "assessor_context" => context_output(context, context_conflicts),
           "assumptions" => assumptions(analysis, context),
           "unknowns" => unknowns(analysis, context),
-            "evidence" => []
-          }
+          "evidence" => []
+        }
         @evidence.resolve_references!(result)
         result["evidence"] = @evidence.materialize
         Schema.validate!(result)
         result
       rescue SchemaError
         raise
-      rescue StandardError => e
+      rescue => e
         raise e if e.is_a?(InvocationError)
 
         raise InternalError, "assessment failed: #{e.message}"
@@ -151,7 +151,7 @@ module AgenticDeveloperSetup
       end
 
       def context_output(context, conflicts)
-        return { "status" => "not_provided" } unless context.provided?
+        return {"status" => "not_provided"} unless context.provided?
 
         context.values.merge(
           "status" => "provided",
@@ -210,7 +210,7 @@ module AgenticDeveloperSetup
             else
               "missing"
             end,
-            project_roots.any? && docs["root_readme"]["status"] == "present" ? "high" : "medium",
+            (project_roots.any? && docs["root_readme"]["status"] == "present") ? "high" : "medium",
             docs["root_readme"]["evidence_ids"] + architecture_evidence,
             "Agents need discoverable repository purpose, roots, and development context.",
             "Document repository purpose, project roots, and material boundaries."
@@ -270,10 +270,10 @@ module AgenticDeveloperSetup
         capabilities = validation["capabilities"]
         substantive = substantive_validation_capabilities(capabilities)
         status = case substantive.length
-                  when 0 then "missing"
-                  when 1 then "partial"
-                  else "ready"
-                  end
+        when 0 then "missing"
+        when 1 then "partial"
+        else "ready"
+        end
         keys = capabilities.values.flat_map { |item| item["evidence_ids"] }
         readiness_entry(status, validation_confidence(capabilities), keys, "Static validation evidence helps constrain agent changes without executing project tools.", "Document and align deterministic tests and validation checks.")
       end
@@ -316,7 +316,7 @@ module AgenticDeveloperSetup
 
           @evidence.add(type: "file", path: path, method: "sensitive_guidance_policy", summary: "Affirmative sensitive-area handling guidance detected")
         end
-        { matched: !matches.empty?, evidence_keys: matches }
+        {matched: !matches.empty?, evidence_keys: matches}
       end
 
       def sensitive_readiness(guidance, context)
@@ -350,12 +350,12 @@ module AgenticDeveloperSetup
       def review_readiness(docs)
         evidence = docs["pull_request_template"]["evidence_ids"] + docs["issue_templates"]["evidence_ids"]
         status = if docs["pull_request_template"]["status"] == "present" && docs["issue_templates"]["status"] == "present"
-                   "ready"
-                 elsif evidence.any? || docs["root_readme"]["status"] == "present"
-                   "partial"
-                 else
-                   "missing"
-                 end
+          "ready"
+        elsif evidence.any? || docs["root_readme"]["status"] == "present"
+          "partial"
+        else
+          "missing"
+        end
         readiness_entry(status, evidence.any? ? "high" : "medium", evidence, "Human review needs a visible place for scope and validation evidence.", "Provide a review handoff that records scope, validation, risks, and follow-up work.")
       end
 
@@ -364,22 +364,22 @@ module AgenticDeveloperSetup
         lock = analysis[:facts][:framework_paths].any? { |path| path.match?(/\A(?:uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z/i) }
         setup_docs = docs["root_readme"]["status"] == "present" || docs["development_guide"]["status"] == "present"
         status = if manifest && lock && setup_docs
-                   "ready"
-                 elsif manifest || setup_docs
-                   "partial"
-                 else
-                   "unknown"
-                 end
+          "ready"
+        elsif manifest || setup_docs
+          "partial"
+        else
+          "unknown"
+        end
         constraints = context.values.fetch("known_setup_constraints", [])
         status = "partial" if constraints.any?
         keys = docs["root_readme"]["evidence_ids"] + docs["development_guide"]["evidence_ids"]
         keys.concat(context_evidence_keys(context, "known_setup_constraints")) if constraints.any?
         consequence = if constraints.any?
-                        "Assessor context records setup constraints that static repository evidence cannot resolve."
-                      else
-                        "Agents need reproducible prerequisites without relying on undocumented local state."
-                      end
-        readiness_entry(status, manifest && lock ? "high" : "medium", keys, consequence, "Document prerequisites, setup commands, and lockfile/runtime expectations.")
+          "Assessor context records setup constraints that static repository evidence cannot resolve."
+        else
+          "Agents need reproducible prerequisites without relying on undocumented local state."
+        end
+        readiness_entry(status, (manifest && lock) ? "high" : "medium", keys, consequence, "Document prerequisites, setup commands, and lockfile/runtime expectations.")
       end
 
       def context_evidence_keys(context, field)
@@ -494,7 +494,7 @@ module AgenticDeveloperSetup
       end
 
       def risk(category, title, severity, impact, mitigation, evidence_ids)
-        { "category" => category, "title" => title, "severity" => severity, "confidence" => evidence_ids.any? ? "high" : "low", "evidence_ids" => evidence_ids, "impact" => impact, "mitigation" => mitigation }
+        {"category" => category, "title" => title, "severity" => severity, "confidence" => evidence_ids.any? ? "high" : "low", "evidence_ids" => evidence_ids, "impact" => impact, "mitigation" => mitigation}
       end
 
       def materialize_risks(specs)
@@ -536,7 +536,7 @@ module AgenticDeveloperSetup
           {
             "component" => component["name"],
             "state" => state,
-            "paths" => state == "repository_native" ? native_paths_for(component["name"], analysis) : [target],
+            "paths" => (state == "repository_native") ? native_paths_for(component["name"], analysis) : [target],
             "evidence_ids" => @evidence.ids_for(keys),
             "rationale" => state_rationale(state)
           }
@@ -546,7 +546,7 @@ module AgenticDeveloperSetup
       def native_paths_for(name, analysis)
         docs = analysis[:documentation]
         case name
-        when "command_interface" then analysis[:facts][:package_scripts].any? && !@inventory.exists?("Makefile") ? ["package.json"] : []
+        when "command_interface" then (analysis[:facts][:package_scripts].any? && !@inventory.exists?("Makefile")) ? ["package.json"] : []
         when "development_guide" then docs["development_guide"]["paths"]
         when "testing_strategy" then docs["testing"]["paths"]
         when "architecture_scaffold" then docs["architecture"]["paths"]
@@ -578,23 +578,23 @@ module AgenticDeveloperSetup
         tier3_components = tier_components("tier-3")
         tier3 = tier2 && tier3_components.all? { |name| tier_component_supported?(name, analysis) }
         outcome = if manual || !tier1
-                    "manual_review_required"
-                  elsif tier3
-                    "tier-3"
-                  elsif tier2
-                    "tier-2"
-                  else
-                    "tier-1"
-                  end
+          "manual_review_required"
+        elsif tier3
+          "tier-3"
+        elsif tier2
+          "tier-2"
+        else
+          "tier-1"
+        end
         confidence = if outcome == "manual_review_required"
-                       "low"
-                     elsif outcome == "tier-3"
-                       "high"
-                     elsif outcome == "tier-2"
-                       "high"
-                     else
-                       "medium"
-                     end
+          "low"
+        elsif outcome == "tier-3"
+          "high"
+        elsif outcome == "tier-2"
+          "high"
+        else
+          "medium"
+        end
         {
           "outcome" => outcome,
           "confidence" => confidence,
@@ -635,14 +635,18 @@ module AgenticDeveloperSetup
           name = component["name"]
           detected = by_name[name]
           state, rationale, prereqs = if detected
-                                       component_state_for_detected(detected)
-                                     else
-                                       component_state_for_missing(component, analysis, gap_ids, tier)
-                                     end
+            component_state_for_detected(detected)
+          else
+            component_state_for_missing(component, analysis, gap_ids, tier)
+          end
           {
             "component" => name,
             "state" => state,
-            "confidence" => detected ? (detected["state"] == "framework_exact" || detected["state"] == "repository_native" ? "high" : "medium") : "low",
+            "confidence" => if detected
+                              (detected["state"] == "framework_exact" || detected["state"] == "repository_native") ? "high" : "medium"
+                            else
+                              "low"
+                            end,
             "evidence_ids" => detected ? detected["evidence_ids"] : [],
             "rationale" => rationale,
             "prerequisite_gap_ids" => prereqs
@@ -684,7 +688,7 @@ module AgenticDeveloperSetup
         items = []
         gaps.each do |gap|
           component = component_for_dimension(gap["readiness_dimension"])
-          phase = gap["severity"] == "blocking" ? 0 : 1
+          phase = (gap["severity"] == "blocking") ? 0 : 1
           items << {
             "key" => "gap:#{gap["id"]}",
             "phase" => phase,

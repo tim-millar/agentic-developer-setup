@@ -2,19 +2,39 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `.ruby-version`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
-Local validation requires GNU Make and the exact Ruby declared by `.ruby-version`, currently `ruby-3.3.12`. If that declaration changes, it remains the authoritative local validation requirement. The validator uses Ruby's standard YAML/Psych, Minitest, filesystem, and pathname libraries; Bundler and third-party gems are not required.
+Local development requires GNU Make, the exact Ruby declared by `.ruby-version`, currently `ruby-3.3.12`, and Bundler. If the Ruby declaration changes, it remains the only repository-owned Ruby-version requirement. Ruby development dependencies are declared in `Gemfile` and their exact resolutions are committed in `Gemfile.lock`.
 
-Run the live metadata and repository validator:
+Prepare the local Ruby environment and install the root Git hooks with:
+
+```sh
+make setup
+```
+
+`make setup` runs `bundle install` and `bundle exec lefthook install`. Validation commands do not install dependencies.
+
+Check maintained Ruby code without modifying files:
+
+```sh
+make lint
+```
+
+Apply Standard Ruby's safe mechanical formatting explicitly with:
+
+```sh
+make format
+```
+
+Run the live metadata and repository validator inside the locked bundle:
 
 ```sh
 make validate
 ```
 
-Run all deterministic root tests:
+Run all deterministic root tests inside the locked bundle:
 
 ```sh
 make test
@@ -22,19 +42,37 @@ make test
 
 `make test` discovers every sorted `test/**/*_test.rb` file, including validator tests and any focused root-wrapper tests.
 
-Run only the globally installed Claude runtime tests with:
+Run only the focused Claude runtime tests with:
 
 ```sh
 make test-claude-runtime
 ```
 
-Run the authoritative local and CI sequence—tests first, then validation of the live repository—with:
+Run the authoritative local and CI sequence—lint, tests, then validation of the live repository—with:
 
 ```sh
 make check
 ```
 
 The public validator entrypoint is `scripts/validate_framework.rb`. It resolves the repository root from its own location, so it can be invoked from another working directory either directly or with Ruby.
+
+The focused Ruby targets use the same bundle:
+
+```sh
+make test-launcher
+make test-claude-runtime
+make test-assessment
+```
+
+The repository-assessment script also remains a direct public entrypoint:
+
+```sh
+ruby scripts/assess_repository.rb TARGET
+```
+
+That direct assessor contract uses only its intended Ruby/stdlib dependencies. The root `make assess REPO=TARGET` wrapper may run it inside the development bundle, but the assessor library does not depend on Standard, Lefthook, or Bundler at runtime.
+
+Git hooks use the same Make surface as local validation. Pre-commit runs `make lint`; pre-push runs `make check`. CI does not install Lefthook and runs `make check` directly after `ruby/setup-ruby` installs or caches the committed bundle.
 
 ## What is validated
 
@@ -56,7 +94,7 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `.ruby-version`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- root `AGENTS.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
 - `baseline/AGENTS.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
 
@@ -99,4 +137,4 @@ Schema version 2 deliberately does not validate these incidental or future relat
 
 ## Offline boundary
 
-`make validate`, `make test`, `make test-claude-runtime`, and the test/validator stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions may use normal checkout and Ruby setup before it runs the same `make check` command used locally.
+After `make setup` has completed, `make lint`, `make test`, `make validate`, `make test-claude-runtime`, and all stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions uses normal checkout and Ruby setup with Bundler caching before it runs the same `make check` command used locally.

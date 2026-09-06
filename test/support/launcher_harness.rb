@@ -24,13 +24,15 @@ class LauncherHarness
     File.executable?(File.join(directory, "bash"))
   end || "/bin"
 
+  # standard:disable Style/RedundantStructKeywordInit
   Result = Struct.new(:stdout, :stderr, :status, keyword_init: true)
+  # standard:enable Style/RedundantStructKeywordInit
 
   attr_reader :root, :repository, :home, :tmpdir, :launcher, :prompt_file,
-              :extra_prompt_file, :event_log, :codex_log, :started_marker,
-              :signal_log, :key_file, :app_json, :token_json, :repository_json,
-              :issue_json, :renewal_control_dir, :token_sequence_json,
-              :token_attempt_file, :helper_clock_file
+    :extra_prompt_file, :event_log, :codex_log, :started_marker,
+    :signal_log, :key_file, :app_json, :token_json, :repository_json,
+    :issue_json, :renewal_control_dir, :token_sequence_json,
+    :token_attempt_file, :helper_clock_file
 
   def initialize
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
@@ -323,7 +325,7 @@ class LauncherHarness
       renewal_child: latest_marker_pid("renewal-attempt-*.pid")
     }
     process_pids.map do |name, pid|
-      "#{name}_pid=#{pid || 'none'} #{name}_alive=#{process_alive?(pid)}"
+      "#{name}_pid=#{pid || "none"} #{name}_alive=#{process_alive?(pid)}"
     end.join(" ")
   end
 
@@ -378,9 +380,9 @@ class LauncherHarness
   end
 
   def expected_prompt(base: default_prompt, mode: "disabled", issue: nil, skipped: false,
-                      extra_path: nil, extra: nil, prompt_path: "docs/AGENT_PROMPT.txt",
-                      agent_name: "test-agent", git_mode: "developer-author",
-                      developer_name: "Test Developer", developer_email: "developer@example.test")
+    extra_path: nil, extra: nil, prompt_path: "docs/AGENT_PROMPT.txt",
+    agent_name: "test-agent", git_mode: "developer-author",
+    developer_name: "Test Developer", developer_email: "developer@example.test")
     app = mode == "app"
     lines = [
       base,
@@ -391,8 +393,8 @@ class LauncherHarness
       "- Current branch: main",
       "- GitHub repository: #{OWNER}/#{REPOSITORY}",
       "- GitHub access mode: #{mode}",
-      "- GitHub App slug: #{app ? APP_SLUG : 'disabled'}",
-      "- GitHub token expires at: #{app ? TOKEN_EXPIRY : 'n/a'}",
+      "- GitHub App slug: #{app ? APP_SLUG : "disabled"}",
+      "- GitHub token expires at: #{app ? TOKEN_EXPIRY : "n/a"}",
       "- Agent: #{agent_name}",
       "- Git mode: #{git_mode}",
       "- Prompt file: #{prompt_path}",
@@ -439,16 +441,16 @@ class LauncherHarness
     elsif skipped
       lines << "- Issue: ##{issue}"
       lines << if app
-                 "- GitHub issue fetch was skipped by --skip-issue-fetch"
-               else
-                 "- GitHub issue fetch was skipped because GitHub access is disabled"
-               end
+        "- GitHub issue fetch was skipped by --skip-issue-fetch"
+      else
+        "- GitHub issue fetch was skipped because GitHub access is disabled"
+      end
     else
       fixture = JSON.parse(File.read(issue_json))
       lines.concat([
         "- Issue: ##{issue}",
-        "- Title: #{fixture.fetch('title')}",
-        "- URL: #{fixture.fetch('html_url')}"
+        "- Title: #{fixture.fetch("title")}",
+        "- URL: #{fixture.fetch("html_url")}"
       ])
       labels = fixture.fetch("labels").map { |label| label.fetch("name") }.join(", ")
       lines << "- Labels: #{labels}" unless labels.empty?
@@ -510,7 +512,7 @@ class LauncherHarness
     )
     return stdout if status.success?
 
-    raise "fixture git command failed: git #{arguments.join(' ')}\n#{stderr}"
+    raise "fixture git command failed: git #{arguments.join(" ")}\n#{stderr}"
   end
 
   def executable(name, content)

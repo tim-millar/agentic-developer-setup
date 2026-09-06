@@ -136,7 +136,7 @@ class AgentHostEnvTest < Minitest::Test
       },
       BASH,
       "-c",
-      <<~'BASH',
+      <<~BASH,
         trap 'printf "%s" "${PATH-}" > "$PATH_OBSERVED"' EXIT
         source "$1"
       BASH

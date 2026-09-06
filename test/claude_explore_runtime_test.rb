@@ -84,7 +84,8 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
     loop_a = File.join(@harness.root, "loop-a")
     loop_b = File.join(@harness.root, "loop-b")
-    File.symlink(loop_b, loop_a); File.symlink(loop_a, loop_b)
+    File.symlink(loop_b, loop_a)
+    File.symlink(loop_a, loop_b)
     _stdout, stderr, status = @harness.install(claude: loop_a)
     refute status.success?
     assert_match(/does not exist|cannot be resolved/, stderr)
@@ -182,7 +183,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes deny_write, @harness.installed_launcher
     assert deny_write.any? { |path| path.include?("claude-explore.") }, "session control directory must be write-denied"
     assert_equal({"mcpServers" => {}}, JSON.parse(@harness.read(@harness.env.fetch("FAKE_MCP_COPY"))))
-    assert_includes settings.dig("permissions", "deny"), "Edit(//#{@harness.installed_launcher.delete_prefix('/')})"
+    assert_includes settings.dig("permissions", "deny"), "Edit(//#{@harness.installed_launcher.delete_prefix("/")})"
 
     argv = @harness.read(@harness.env.fetch("FAKE_CLAUDE_LOG"))
     assert_includes argv, "--strict-mcp-config\n"
@@ -296,7 +297,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert status.success?, stderr
     assert_includes @harness.read(@harness.env.fetch("FAKE_DELEGATE_LOG")), "git <status>"
     FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
-    _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "git-push"})
+    _stdout, _, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "git-push"})
     assert_equal 126, status.exitstatus
     refute File.exist?(@harness.env.fetch("FAKE_DELEGATE_LOG"))
 
@@ -343,8 +344,8 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     refute File.exist?(@harness.env.fetch("FAKE_DELEGATE_LOG"))
 
     [["psql", "-d", "mydb", "-c", "\\connect postgresql://remote.example/db"],
-     ["psql", "-d", "mydb", "--command=\\! id"],
-     ["psql", "-d", "mydb", "-f", "commands.sql"]].each do |argv|
+      ["psql", "-d", "mydb", "--command=\\! id"],
+      ["psql", "-d", "mydb", "-f", "commands.sql"]].each do |argv|
       assert_classification(argv, 126, "CLAUDE_EXPLORE_BLOCKED")
     end
 

@@ -33,7 +33,7 @@ module AgenticDeveloperSetup
 
       def self.validate!(result)
         errors = new(result).validate
-        raise SchemaError, "assessment schema invalid: #{errors.join('; ')}" unless errors.empty?
+        raise SchemaError, "assessment schema invalid: #{errors.join("; ")}" unless errors.empty?
 
         true
       end
@@ -78,8 +78,8 @@ module AgenticDeveloperSetup
 
         missing = TOP_LEVEL - @result.keys
         extra = @result.keys - TOP_LEVEL
-        @errors << "missing top-level fields: #{missing.sort.join(', ')}" unless missing.empty?
-        @errors << "unknown top-level fields: #{extra.sort.join(', ')}" unless extra.empty?
+        @errors << "missing top-level fields: #{missing.sort.join(", ")}" unless missing.empty?
+        @errors << "unknown top-level fields: #{extra.sort.join(", ")}" unless extra.empty?
         @errors << "schema_version must be 1" unless @result["schema_version"] == 1
         TOP_LEVEL.each { |key| @errors << "#{key} must be present" unless @result.key?(key) }
       end
@@ -392,7 +392,7 @@ module AgenticDeveloperSetup
           ids << item["id"]
           identifier(item["id"], "#{location}.id", "STEP-")
           integer(item["phase"], "#{location}.phase")
-          @errors << "#{location}.phase must be 0..3" unless item["phase"].is_a?(Integer) && (0..3).include?(item["phase"])
+          @errors << "#{location}.phase must be 0..3" unless item["phase"].is_a?(Integer) && (0..3).cover?(item["phase"])
           string(item["title"], "#{location}.title")
           string(item["component"], "#{location}.component")
           string_array(item["prerequisite_ids"], "#{location}.prerequisite_ids")
@@ -416,7 +416,7 @@ module AgenticDeveloperSetup
         if context["status"] == "not_provided"
           allowed = ["status"]
           extra = context.keys - allowed
-          @errors << "assessor_context has unknown fields for not_provided: #{extra.join(', ')}" unless extra.empty?
+          @errors << "assessor_context has unknown fields for not_provided: #{extra.join(", ")}" unless extra.empty?
           return
         end
 
@@ -530,8 +530,8 @@ module AgenticDeveloperSetup
         allowed = required + optional
         missing = required - value_to_check.keys
         extra = value_to_check.keys - allowed
-        @errors << "#{location} missing fields: #{missing.join(', ')}" unless missing.empty?
-        @errors << "#{location} has unknown fields: #{extra.join(', ')}" unless extra.empty?
+        @errors << "#{location} missing fields: #{missing.join(", ")}" unless missing.empty?
+        @errors << "#{location} has unknown fields: #{extra.join(", ")}" unless extra.empty?
         true
       end
 
@@ -582,7 +582,7 @@ module AgenticDeveloperSetup
 
       def unique(values, label)
         duplicates = values.compact.group_by(&:itself).select { |_key, entries| entries.length > 1 }.keys
-        @errors << "duplicate #{label}: #{duplicates.join(', ')}" unless duplicates.empty?
+        @errors << "duplicate #{label}: #{duplicates.join(", ")}" unless duplicates.empty?
       end
 
       def identifier(value_to_check, location, prefix)

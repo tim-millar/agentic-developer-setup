@@ -89,7 +89,7 @@ module AgenticDeveloperSetup
         unsupported = %w[Cargo.toml go.mod Gemfile composer.json pom.xml mix.exs].select { |path| @inventory.exists?(path) }
         unless unsupported.empty?
           keys = unsupported.map { |path| file(path, "unsupported_ecosystem_marker", "Unsupported ecosystem marker detected") }
-          facts << { name: "unsupported", evidence: keys, paths: unsupported.sort, confidence: "low" }
+          facts << {name: "unsupported", evidence: keys, paths: unsupported.sort, confidence: "low"}
         end
         facts.sort_by { |entry| entry[:name] }
       end
@@ -181,7 +181,7 @@ module AgenticDeveloperSetup
       def package_managers
         managers = Hash.new { |hash, key| hash[key] = [] }
         declaration = package_manager_declaration
-        lockfiles = { "package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm" }.filter_map do |path, manager|
+        lockfiles = {"package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm"}.filter_map do |path, manager|
           [manager, path] if @inventory.exists?(path)
         end
 
@@ -209,12 +209,12 @@ module AgenticDeveloperSetup
           {
             "name" => name,
             "status" => if conflict && (NODE_PACKAGE_MANAGERS.include?(name) || name == declaration[:name])
-                           "conflicting"
-                         elsif declaration[:state] == :unsupported && name == declaration[:name]
-                           "unknown"
-                         else
-                           "detected"
-                         end,
+                          "conflicting"
+                        elsif declaration[:state] == :unsupported && name == declaration[:name]
+                          "unknown"
+                        else
+                          "detected"
+                        end,
             "confidence" => if conflict && (NODE_PACKAGE_MANAGERS.include?(name) || name == declaration[:name])
                               "low"
                             elsif declaration[:state] == :unsupported && name == declaration[:name]
@@ -297,13 +297,13 @@ module AgenticDeveloperSetup
       def command_surface
         commands = []
         @make_targets.each do |target|
-          commands << { "name" => "make #{target}", "source" => "Makefile", "evidence_ids" => @evidence.ids_for([file("Makefile", "make_target", "Make target #{target} declared")]) }
+          commands << {"name" => "make #{target}", "source" => "Makefile", "evidence_ids" => @evidence.ids_for([file("Makefile", "make_target", "Make target #{target} declared")])}
         end
         package_scripts.keys.sort.each do |name|
-          commands << { "name" => "package script #{name}", "source" => "package.json", "evidence_ids" => @evidence.ids_for([file("package.json", "package_script", "Package script #{name} declared")]) }
+          commands << {"name" => "package script #{name}", "source" => "package.json", "evidence_ids" => @evidence.ids_for([file("package.json", "package_script", "Package script #{name} declared")])}
         end
         docs_commands.each do |entry|
-          commands << { "name" => entry[:command], "source" => "documentation", "evidence_ids" => @evidence.ids_for(entry[:keys]) }
+          commands << {"name" => entry[:command], "source" => "documentation", "evidence_ids" => @evidence.ids_for(entry[:keys])}
         end
         commands = commands.uniq { |entry| entry["name"] }.sort_by { |entry| entry["name"] }
         {
@@ -376,16 +376,16 @@ module AgenticDeveloperSetup
         }
       end
 
-      def capability(_name, implementation, keys)
+      def capability(name, implementation, keys)
         signals = []
         signals << "implementation_detected" if implementation
         signals << "configuration_detected" unless keys.empty?
-        signals.concat(documented_signals_for(_name))
-        signals.concat(ci_signals_for(_name))
+        signals.concat(documented_signals_for(name))
+        signals.concat(ci_signals_for(name))
         {
           "status" => signals.first || "not_detected",
           "signals" => signals.uniq,
-          "evidence_ids" => @evidence.ids_for(keys + documentation_evidence_for(_name) + ci_evidence_for(_name))
+          "evidence_ids" => @evidence.ids_for(keys + documentation_evidence_for(name) + ci_evidence_for(name))
         }
       end
 
@@ -467,7 +467,11 @@ module AgenticDeveloperSetup
 
       def ci_execution
         {
-          "status" => @ci[:paths].empty? ? "not_detected" : (@ci[:commands].empty? ? "configuration_detected" : "ci_invocation_detected"),
+          "status" => if @ci[:paths].empty?
+                        "not_detected"
+                      else
+                        (@ci[:commands].empty? ? "configuration_detected" : "ci_invocation_detected")
+                      end,
           "evidence_ids" => @evidence.ids_for(@ci[:file_keys] + @ci[:invocation_keys])
         }
       end
@@ -558,12 +562,12 @@ module AgenticDeveloperSetup
 
             content = text(path).to_s
             extract_commands(content, DOCUMENT_COMMAND_PATTERN).map do |command|
-              { command: command, key: documented_command(path, command) }
+              {command: command, key: documented_command(path, command)}
             end
           end.compact
           entries.group_by { |entry| command_identity(entry[:command]) }.values.map do |group|
             representative = group.map { |entry| entry[:command] }.min
-            { command: representative, keys: group.map { |entry| entry[:key] }.compact.uniq }
+            {command: representative, keys: group.map { |entry| entry[:key] }.compact.uniq}
           end.sort_by { |entry| [command_identity(entry[:command]), entry[:command]] }
         end
       end
@@ -577,16 +581,16 @@ module AgenticDeveloperSetup
       def documented_signals_for(name)
         return [] unless name == "tests" || name == "linting" || name == "formatting" || name == "static_type_checking"
 
-        docs_commands.any? { |entry| documented_command_matches?(name, entry[:command]) } ? ["documented_command_detected"] : []
+        (docs_commands.any? { |entry| documented_command_matches?(name, entry[:command]) }) ? ["documented_command_detected"] : []
       end
 
       def ci_signals_for(name)
-        token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
-        token && @ci[:commands].any? { |command| command.match?(token) } ? ["ci_invocation_detected"] : []
+        token = {"tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/}[name]
+        (token && @ci[:commands].any? { |command| command.match?(token) }) ? ["ci_invocation_detected"] : []
       end
 
       def ci_evidence_for(name)
-        token = { "tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/ }[name]
+        token = {"tests" => /test|pytest/, "linting" => /lint|ruff|eslint/, "formatting" => /format|prettier/, "static_type_checking" => /type|mypy|tsc/}[name]
         token ? @ci[:invocations].filter_map { |entry| entry[:key] if entry[:command].match?(token) } : []
       end
 
@@ -627,20 +631,20 @@ module AgenticDeveloperSetup
       end
 
       def package_manager_declaration
-        return { state: :absent, name: nil } unless @package.is_a?(Hash) && @package.key?("packageManager")
+        return {state: :absent, name: nil} unless @package.is_a?(Hash) && @package.key?("packageManager")
 
         declaration = @package["packageManager"].to_s
         name = declaration[/\A([A-Za-z][A-Za-z0-9_.-]*)/, 1].to_s.downcase
         name = "unknown" if name.empty?
         state = NODE_PACKAGE_MANAGERS.include?(name) ? :supported : :unsupported
-        { state: state, name: name }
+        {state: state, name: name}
       end
 
       def test_directory_evidence
         directory_keys = %w[test tests].filter_map do |path|
           directory(path, "test_directory", "Generic test directory detected")
         end
-        file_keys = @inventory.files.keys.select { |path| path.start_with?("test/") || path.start_with?("tests/") }
+        file_keys = @inventory.files.keys.select { |path| path.start_with?("test/", "tests/") }
           .map { |path| file(path, "test_directory", "Generic test file detected") }
           .compact
         directory_keys + file_keys
@@ -690,14 +694,14 @@ module AgenticDeveloperSetup
           github_actions_run_values(text(path)).each do |run_value|
             extract_commands(run_value, CI_COMMAND_PATTERN).each do |command|
               key = file(path, "ci_invocation", "GitHub Actions invokes #{command}", type: "ci_invocation")
-              invocations << { command: command, key: key }
+              invocations << {command: command, key: key}
               path_has_validation = true if validation_command?(command)
             end
           end
           validation_paths << path if path_has_validation
         end
         invocations = invocations.uniq { |entry| [entry[:command], entry[:key]] }
-        { paths: paths, validation_paths: validation_paths, file_keys: file_keys, invocation_keys: invocations.map { |entry| entry[:key] }, invocations: invocations, commands: invocations.map { |entry| entry[:command] }.uniq.sort }
+        {paths: paths, validation_paths: validation_paths, file_keys: file_keys, invocation_keys: invocations.map { |entry| entry[:key] }, invocations: invocations, commands: invocations.map { |entry| entry[:command] }.uniq.sort}
       end
 
       def parse_json(path)
@@ -929,7 +933,7 @@ module AgenticDeveloperSetup
       def confidence_for(keys, fallback: "medium")
         return fallback if keys.empty?
 
-        keys.any? { |key| DIRECT_EVIDENCE_METHODS.include?(@evidence.item_for(key)&.fetch("method", nil)) } ? "high" : fallback
+        (keys.any? { |key| DIRECT_EVIDENCE_METHODS.include?(@evidence.item_for(key)&.fetch("method", nil)) }) ? "high" : fallback
       end
 
       def evidence_path(key)

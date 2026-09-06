@@ -44,7 +44,7 @@ class AssessmentTest < Minitest::Test
 
   def test_committed_reference_assessment_is_schema_valid_and_report_is_its_projection
     path = File.join(FIXTURE, "assessment", "assessment.yml")
-    result = YAML.safe_load(File.read(path), permitted_classes: [], permitted_symbols: [], aliases: false)
+    result = YAML.safe_load_file(path, permitted_classes: [], permitted_symbols: [], aliases: false)
 
     assert_schema(result)
     assert_equal AgenticDeveloperSetup::Assessment::MarkdownRenderer.render(result), File.read(File.join(FIXTURE, "assessment", "assessment.md"))
@@ -79,8 +79,8 @@ class AssessmentTest < Minitest::Test
     write("package.json", JSON.pretty_generate(
       "name" => "synthetic-node",
       "packageManager" => "pnpm@9.0.0",
-      "scripts" => { "test" => "vitest", "lint" => "eslint .", "format" => "prettier --check .", "typecheck" => "tsc --noEmit" },
-      "devDependencies" => { "typescript" => "^5", "eslint" => "^9", "prettier" => "^3" }
+      "scripts" => {"test" => "vitest", "lint" => "eslint .", "format" => "prettier --check .", "typecheck" => "tsc --noEmit"},
+      "devDependencies" => {"typescript" => "^5", "eslint" => "^9", "prettier" => "^3"}
     ))
     write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
     write("tsconfig.json", "{}\n")
@@ -193,7 +193,7 @@ class AssessmentTest < Minitest::Test
     status = AgenticDeveloperSetup::Assessment::CLI.run([@target, "--output", output, "--report", report], stdout: StringIO.new, stderr: stderr)
 
     assert_equal 0, status, stderr.string
-    result = YAML.safe_load(File.read(output), permitted_classes: [], permitted_symbols: [], aliases: false)
+    result = YAML.safe_load_file(output, permitted_classes: [], permitted_symbols: [], aliases: false)
     assert_schema(result)
     assert_equal AgenticDeveloperSetup::Assessment::MarkdownRenderer.render(result), File.read(report)
   end

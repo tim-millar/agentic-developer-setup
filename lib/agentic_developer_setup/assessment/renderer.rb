@@ -48,8 +48,8 @@ module AgenticDeveloperSetup
           "- Root: `#{repository["root"]}`\n" \
           "- Git: #{git["detected"] ? "detected (#{git["working_tree"]} working tree)" : "not detected"}\n" \
           "- Scope shape: `#{scope["shape"]}`\n" \
-          "- Project roots: #{inline_list(scope["project_roots"]) }\n" \
-          "- Excluded areas: #{inline_list(scope["excluded_paths"]) }"
+          "- Project roots: #{inline_list(scope["project_roots"])}\n" \
+          "- Excluded areas: #{inline_list(scope["excluded_paths"])}"
       end
 
       def ecosystem_profile
