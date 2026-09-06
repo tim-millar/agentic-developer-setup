@@ -282,7 +282,49 @@ class LauncherHarness
 
   def renewal_wait_pid(ordinal)
     path = File.join(renewal_control_dir, "wait-#{ordinal}.pid")
-    File.exist?(path) ? Integer(File.read(path), 10) : nil
+    marker_pid(path)
+  end
+
+  def renewal_attempt_pid(ordinal)
+    marker_pid(File.join(renewal_control_dir, "renewal-attempt-#{ordinal}.pid"))
+  end
+
+  def token_request_pid(ordinal)
+    marker_pid(File.join(renewal_control_dir, "token-attempt-#{ordinal}.started"))
+  end
+
+  def renewal_gate_pid(transition, ordinal = 1)
+    marker_pid(File.join(renewal_control_dir, "gate-#{transition}-#{ordinal}.started"))
+  end
+
+  def renewal_worker_pid(credential_dir)
+    marker_pid(File.join(credential_dir, "renewal-worker.pid"))
+  end
+
+  def fake_codex_pid
+    marker_pid(started_marker)
+  end
+
+  def process_alive?(pid)
+    return false unless pid
+
+    Process.kill(0, pid)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+
+  def lifecycle_diagnostics(launcher_pid:, credential_dir:)
+    process_pids = {
+      launcher: launcher_pid,
+      fake_codex: fake_codex_pid,
+      worker: renewal_worker_pid(credential_dir),
+      cadence_wait: latest_marker_pid("wait-*.pid"),
+      renewal_child: latest_marker_pid("renewal-attempt-*.pid")
+    }
+    process_pids.map do |name, pid|
+      "#{name}_pid=#{pid || 'none'} #{name}_alive=#{process_alive?(pid)}"
+    end.join(" ")
   end
 
   def enable_renewal_gate(transition, ordinal = 1)
@@ -419,6 +461,22 @@ class LauncherHarness
 
   private
 
+  def marker_pid(path)
+    return nil unless File.file?(path)
+
+    Integer(File.read(path), 10)
+  rescue ArgumentError, Errno::ENOENT
+    nil
+  end
+
+  def latest_marker_pid(pattern)
+    paths = Dir[File.join(renewal_control_dir, pattern)]
+    path = paths.max_by do |candidate|
+      File.basename(candidate)[/\d+/].to_i
+    end
+    marker_pid(path) if path
+  end
+
   def build_repository
     FileUtils.mkdir_p(File.join(repository, "scripts"))
     FileUtils.mkdir_p(File.join(repository, "docs"))
@@ -480,7 +538,19 @@ class LauncherHarness
         warn "synthetic metadata publication failure"
         exit 1
       end
-      exec "/bin/mv", *ARGV
+      destination = ARGV.last
+      system "/bin/mv", *ARGV
+      exit $?.exitstatus unless $?.success?
+      if ENV["FAKE_RENEWAL_CONTROL_DIR"]
+        state = if destination.end_with?("/current-token.meta")
+          "current-token-meta"
+        elsif destination.end_with?("/current-token")
+          "current-token"
+        elsif destination.end_with?("/renewal-result")
+          "renewal-result"
+        end
+        File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("state:\#{state}-published") } if state
+      end
     RUBY
 
     executable("codex", <<~RUBY)

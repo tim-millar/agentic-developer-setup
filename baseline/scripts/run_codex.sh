@@ -510,10 +510,17 @@ if [[ "$GITHUB_ACCESS_MODE" == "disabled" && -n "$ISSUE_NUMBER" && "$SKIP_GITHUB
   die_usage "--issue requires GITHUB_ACCESS_MODE=app unless --skip-issue-fetch is set"
 fi
 
-if [[ "$GITHUB_ACCESS_MODE" == "app" && "${AGENT_LAUNCHER_TEST_MODE:-0}" == "1" ]] &&
-   ! command -v launcher-test-sleep >/dev/null 2>&1; then
-  echo "Error: AGENT_LAUNCHER_TEST_MODE=1 requires launcher-test-sleep on PATH." >&2
-  exit 1
+if [[ "$GITHUB_ACCESS_MODE" == "app" && "${AGENT_LAUNCHER_TEST_MODE:-0}" == "1" ]]; then
+  for test_command in launcher-test-sleep launcher-test-gate; do
+    if ! command -v "$test_command" >/dev/null 2>&1; then
+      echo "Error: AGENT_LAUNCHER_TEST_MODE=1 requires ${test_command} on PATH." >&2
+      exit 1
+    fi
+  done
+  if [[ -z "${FAKE_RENEWAL_CONTROL_DIR:-}" || ! -d "$FAKE_RENEWAL_CONTROL_DIR" ]]; then
+    echo "Error: AGENT_LAUNCHER_TEST_MODE=1 requires a renewal control directory." >&2
+    exit 1
+  fi
 fi
 
 b64url() {
@@ -693,8 +700,19 @@ publish_token_and_metadata() {
 
   # Publish credential bytes before freshness evidence. A concurrent reader may
   # conservatively see a new token with old metadata, never the reverse.
+  if [[ -e "$SESSION_SHUTDOWN_FILE" ]]; then
+    rm -f "$temporary_token_file" "$temporary_metadata_file" "$previous_token_file"
+    return 1
+  fi
   if ! mv -f "$temporary_token_file" "$CURRENT_TOKEN_FILE"; then
     rm -f "$temporary_token_file" "$temporary_metadata_file" "$previous_token_file"
+    return 1
+  fi
+  if [[ -e "$SESSION_SHUTDOWN_FILE" ]]; then
+    rm -f "$temporary_metadata_file"
+    if [[ -n "$previous_token_file" ]]; then
+      mv -f "$previous_token_file" "$CURRENT_TOKEN_FILE" 2>/dev/null || true
+    fi
     return 1
   fi
   if ! mv -f "$temporary_metadata_file" "$CURRENT_TOKEN_META_FILE"; then
@@ -955,20 +973,56 @@ renewal_test_gate() {
 
 run_serial_renewal_attempt() {
   local next_generation="$1"
-  local mint_pid status
+  local attempt="$2"
+  local status
 
-  renew_current_token "$next_generation" &
-  mint_pid=$!
+  [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || return 143
+
+  # Monitor mode gives this asynchronous attempt a distinct process group. The
+  # group is the launcher-owned subprocess boundary for JWT minting, the token
+  # request, publication, and any test-only gate beneath them.
+  set -m
+  (
+    trap 'exit 143' TERM
+    renew_current_token "$next_generation"
+  ) &
+  renewal_pid=$!
+  set +m
+
+  if [[ "$shutting_down" -eq 1 || -e "$SESSION_SHUTDOWN_FILE" ]]; then
+    kill -TERM -- "-$renewal_pid" 2>/dev/null || true
+  elif [[ "${AGENT_LAUNCHER_TEST_MODE:-0}" == "1" ]]; then
+    if ! printf '%s\n' "$renewal_pid" > "${FAKE_RENEWAL_CONTROL_DIR}/renewal-attempt-${attempt}.pid"; then
+      kill -TERM -- "-$renewal_pid" 2>/dev/null || true
+      wait "$renewal_pid" 2>/dev/null || true
+      renewal_pid=""
+      return 1
+    fi
+    if [[ "$shutting_down" -eq 1 || -e "$SESSION_SHUTDOWN_FILE" ]]; then
+      kill -TERM -- "-$renewal_pid" 2>/dev/null || true
+    fi
+  fi
+
   while true; do
     set +e
-    wait "$mint_pid"
+    wait "$renewal_pid"
     status=$?
     set -e
+
+    if [[ "$shutting_down" -eq 1 || -e "$SESSION_SHUTDOWN_FILE" ]]; then
+      kill -TERM -- "-$renewal_pid" 2>/dev/null || true
+      if kill -0 "$renewal_pid" 2>/dev/null; then
+        continue
+      fi
+      renewal_pid=""
+      return 143
+    fi
     if [[ "$status" -ge 128 && "$status" -ne 127 ]]; then
       # A reactive signal interrupts Bash's wait without cancelling the bounded
       # HTTP child. Wait again so that request shares this attempt.
       continue
     fi
+    renewal_pid=""
     return "$status"
   done
 }
@@ -976,6 +1030,7 @@ run_serial_renewal_attempt() {
 renewal_worker() {
   local wait_seconds=""
   local wait_pid=""
+  local renewal_pid=""
   local pending_ensure=0 pending_force=0 shutting_down=0 attempt_in_progress=0
   local retry_after_failure=0 attempt=0 generation=1 completed_at active_target_generation=0
   local request_ensure=0 request_force=0
@@ -984,6 +1039,7 @@ renewal_worker() {
   worker_stop() {
     shutting_down=1
     if [[ -n "$wait_pid" ]]; then kill -TERM "$wait_pid" 2>/dev/null || true; fi
+    if [[ -n "$renewal_pid" ]]; then kill -TERM -- "-$renewal_pid" 2>/dev/null || true; fi
   }
 
   worker_ensure() {
@@ -1025,21 +1081,27 @@ renewal_worker() {
       renewal_test_gate before-first-wait
       first_wait=0
     fi
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
+    renewal_test_gate before-wait
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
 
-    # Check both before and after establishing the wait. A signal in the small
-    # creation window records pending work while wait_pid is empty; the second
-    # check then terminates the new wait instead of stranding the request.
-    if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 ]]; then
+    # Check shutdown and reactive work both before and after establishing the
+    # wait. A signal in the creation window records state while wait_pid is
+    # empty; the second check then terminates and reaps the new wait.
+    if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 &&
+          "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]]; then
       if [[ "$retry_after_failure" -eq 1 ]]; then
         wait_seconds="$GITHUB_RETRY_INTERVAL_SECONDS"
       else
         wait_seconds="$(seconds_until_token_stale)"
       fi
 
-      if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 ]]; then
+      if [[ "$pending_force" -eq 0 && "$pending_ensure" -eq 0 &&
+            "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]]; then
         renewal_wait "$wait_seconds" &
         wait_pid=$!
-        if [[ "$pending_force" -eq 1 || "$pending_ensure" -eq 1 ]]; then
+        if [[ "$pending_force" -eq 1 || "$pending_ensure" -eq 1 ||
+              "$shutting_down" -eq 1 || -e "$SESSION_SHUTDOWN_FILE" ]]; then
           kill -TERM "$wait_pid" 2>/dev/null || true
         fi
         wait "$wait_pid" 2>/dev/null || true
@@ -1069,7 +1131,8 @@ renewal_worker() {
 
     attempt=$((attempt + 1))
 
-    if run_serial_renewal_attempt "$active_target_generation"; then
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
+    if run_serial_renewal_attempt "$active_target_generation" "$attempt"; then
       [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
       generation="$active_target_generation"
       completed_at="$(now_epoch)"
@@ -1088,6 +1151,7 @@ renewal_worker() {
     fi
     attempt_in_progress=0
     active_target_generation=0
+    [[ "$shutting_down" -eq 0 && ! -e "$SESSION_SHUTDOWN_FILE" ]] || break
     renewal_test_gate after-attempt
   done
 }
