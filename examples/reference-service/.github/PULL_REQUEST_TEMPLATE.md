@@ -19,8 +19,13 @@ work, include `make verify`. Record any check that could not be run.
 - [ ] Agent-assisted
 - [ ] Developer-authored without agent assistance
 
-If an agent was involved, record the agent or runner, supervising developer,
-and how the agent was used.
+If an agent was involved, record the agent or runner, the effective model and
+reasoning effort used for the primary implementation run, supervising
+developer, and how the agent was used. If either value cannot be determined
+reliably, record `unknown`, `not available`, or equivalent rather than
+inferring it. Note materially relevant later agent runs under `how the agent
+was used`; the model and reasoning-effort values are not a complete run
+history.
 
 ## Change type
 

@@ -37,9 +37,16 @@ Select one:
 If an agent was involved, include:
 
 - agent/runner used:
+- model:
+- reasoning effort:
 - supervising developer:
 - how the agent was used:
 - anything the reviewer should pay particular attention to:
+
+Record the effective model and reasoning effort for the primary implementation
+run. If either cannot be determined reliably, record `unknown`, `not available`,
+or equivalent rather than inferring it. Materially relevant additional agent
+runs may be noted under `how the agent was used`.
 
 Because this repository typically uses squash and merge, this section is the primary durable record of agent involvement for the change.
 
