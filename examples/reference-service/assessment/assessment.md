@@ -53,6 +53,7 @@ Alternative conditions:
 | `agent_launcher` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
 | `agent_prompt` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `agent_ready_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `agent_run_telemetry` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `architecture_scaffold` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `bug_report_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `ci_workflow` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |

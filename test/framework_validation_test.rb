@@ -570,7 +570,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_issue_template_baseline_category_must_match
-    mutate { |metadata| metadata["baseline"]["required"][2]["category"] = "issue-template-config" }
+    mutate { |metadata| metadata["baseline"]["required"][3]["category"] = "issue-template-config" }
 
     assert_fails("issue_templates.primary.category", "expected: issue-template")
   end
@@ -628,7 +628,7 @@ class FrameworkValidationTest < Minitest::Test
     %w[
       AGENTS.md README.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
-      baseline/scripts/run_codex.sh baseline/docs/AGENT_PROMPT.txt
+      baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))
@@ -663,6 +663,7 @@ class FrameworkValidationTest < Minitest::Test
         "required" => [
           baseline_entry("launcher", "agent-launcher", "baseline/scripts/run_codex.sh", "bin/codex"),
           baseline_entry("runtime_prompt", "agent-session-brief", "baseline/docs/AGENT_PROMPT.txt", "target/docs/AGENT_PROMPT.txt"),
+          baseline_entry("telemetry", "agent-telemetry-helper", "baseline/scripts/agent_run_telemetry.sh", "bin/agent-run-telemetry"),
           baseline_entry("issue_template", "issue-template", "baseline/issues/implementation.md", "target/issues/implementation.md")
         ],
         "recommended" => []
@@ -679,7 +680,8 @@ class FrameworkValidationTest < Minitest::Test
             "description" => "Supported fixture runtime.",
             "artefacts" => [
               {"role" => "launcher", "source_path" => "baseline/scripts/run_codex.sh", "target_path" => "bin/codex"},
-              {"role" => "prompt", "source_path" => "baseline/docs/AGENT_PROMPT.txt", "target_path" => "target/docs/AGENT_PROMPT.txt"}
+              {"role" => "prompt", "source_path" => "baseline/docs/AGENT_PROMPT.txt", "target_path" => "target/docs/AGENT_PROMPT.txt"},
+              {"role" => "telemetry", "source_path" => "baseline/scripts/agent_run_telemetry.sh", "target_path" => "bin/agent-run-telemetry"}
             ],
             "supported_platforms" => ["macos", "linux"],
             "required_executables" => [{"name" => "bash", "minimum_version" => "3.2"}, {"name" => "codex"}],

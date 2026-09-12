@@ -95,9 +95,12 @@ initialize_runtime_source() {
     safe_owned_executable "$path" || { runtime_error "executable runtime content is missing or unsafe"; return 1; }
     case "$path" in "$RUNTIME_ROOT"/*) ;; *) runtime_error "runtime content resolves outside installation"; return 1 ;; esac
   done
+  safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "telemetry runtime content is missing or unsafe"; return 1; }
   safe_owned_policy "$POLICY_FILE" || { runtime_error "policy is missing or unsafe"; return 1; }
   # shellcheck disable=SC1090 -- path is derived and validated above.
   . "$POLICY_FILE"
+  # shellcheck disable=SC1091 -- path is derived and validated above.
+  . "$RUNTIME_ROOT/lib/agent_run_telemetry.sh"
   [ "$CLAUDE_EXPLORE_RUNTIME_ID" = claude-explore ] || { runtime_error "policy runtime identifier mismatch"; return 1; }
   [ "$CLAUDE_EXPLORE_POLICY_SCHEMA_VERSION" = 1 ] || { runtime_error "unsupported policy schema"; return 1; }
   for path in "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE" \
@@ -410,6 +413,7 @@ validate_installed_runtime() {
   for path in "$RUNTIME_ROOT/bin/claude-explore" "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" "$RUNTIME_ROOT/lib/claude_explore_guard.sh"; do
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
+  safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
   safe_owned_policy "$RUNTIME_ROOT/policy.sh" || { runtime_error "installed policy is missing or unsafe"; return 1; }
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }
   current_link=$DATA_INSTALL_ROOT/current
@@ -493,13 +497,13 @@ EOF
 }
 
 write_settings() {
-  local settings_json settings_tmp=$SESSION_DIR/.settings.tmp mcp_tmp=$SESSION_DIR/.mcp.tmp
+  local settings_json telemetry_deny=${AGENT_TELEMETRY_RUN_DIR:-$SESSION_DIR} settings_tmp=$SESSION_DIR/.settings.tmp mcp_tmp=$SESSION_DIR/.mcp.tmp
   [ "$SETTINGS_FILE" = "$SESSION_DIR/settings.json" ] && [ "$MCP_FILE" = "$SESSION_DIR/mcp.json" ] || return 1
   [ ! -e "$SETTINGS_FILE" ] && [ ! -e "$MCP_FILE" ] || return 1
   settings_json=$({
-    printf '{"sandbox":{"enabled":%s,"failIfUnavailable":%s,"allowUnsandboxedCommands":%s,"filesystem":{"disabled":%s,"denyWrite":["%s","%s","%s","%s"]},"credentials":{"files":[' \
+    printf '{"sandbox":{"enabled":%s,"failIfUnavailable":%s,"allowUnsandboxedCommands":%s,"filesystem":{"disabled":%s,"denyWrite":["%s","%s","%s","%s","%s"]},"credentials":{"files":[' \
       "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE" "$CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS" "$CLAUDE_EXPLORE_SANDBOX_FILESYSTEM_DISABLED" \
-      "$(json_escape "$DATA_INSTALL_ROOT")" "$(json_escape "$CONFIG_ROOT")" "$(json_escape "$HOME/.local/bin/claude-explore")" "$(json_escape "$SESSION_DIR")"
+      "$(json_escape "$DATA_INSTALL_ROOT")" "$(json_escape "$CONFIG_ROOT")" "$(json_escape "$HOME/.local/bin/claude-explore")" "$(json_escape "$SESSION_DIR")" "$(json_escape "$telemetry_deny")"
     json_credential_files
     printf '],"envVars":['; json_credential_env
     printf ']}},"disableAllHooks":%s,"disableArtifact":%s,"permissions":{"deny":[' "$CLAUDE_EXPLORE_DISABLE_ALL_HOOKS" "$CLAUDE_EXPLORE_DISABLE_ARTIFACT"; json_permission_denies
@@ -579,6 +583,7 @@ strip_environment() {
   local line name value
   scrub_named_environment "$CLAUDE_EXPLORE_ENV_UNSET"
   scrub_git_environment
+  unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     name=${line%%=*}; value=${line#*=}
@@ -601,28 +606,93 @@ runtime_info() {
   printf 'known_limitations=same-user-bypass,absolute-path-bypass,finite-command-list,sandbox-permitted-network,application-mediated-services\n'
 }
 
+claude_invocation_is_inspection() {
+  local argument
+  while [ "$#" -gt 0 ]; do
+    argument=$1; shift
+    if word_in_list "$argument" "$CLAUDE_EXPLORE_CLAUDE_VALUE_FLAGS"; then
+      [ "$#" -gt 0 ] && shift
+      continue
+    fi
+    case "$argument" in --help|--version|-v) return 0 ;; esac
+  done
+  return 1
+}
+
+observe_claude_requested_configuration() {
+  local argument value
+  while [ "$#" -gt 0 ]; do
+    argument=$1; shift
+    case "$argument" in
+      --model|--effort|--resume|-r|--session-id)
+        [ "$#" -gt 0 ] || break
+        value=$1; shift
+        case "$argument" in
+          --model) agent_telemetry_set_requested_configuration model "$value" "claude_arg:--model" ;;
+          --effort) agent_telemetry_set_requested_configuration reasoning_effort "$value" "claude_arg:--effort" ;;
+          --resume|-r) agent_telemetry_set_session launcher_requested "$value" ;;
+          --session-id) agent_telemetry_set_session launcher_requested "$value" ;;
+        esac
+        ;;
+      --model=*) agent_telemetry_set_requested_configuration model "${argument#--model=}" "claude_arg:--model" ;;
+      --effort=*) agent_telemetry_set_requested_configuration reasoning_effort "${argument#--effort=}" "claude_arg:--effort" ;;
+      --resume=*|-r=*) agent_telemetry_set_session launcher_requested "${argument#*=}" ;;
+      --session-id=*) agent_telemetry_set_session launcher_requested "${argument#--session-id=}" ;;
+    esac
+  done
+}
+
+runtime_exit_cleanup() {
+  local status=$?
+  cleanup_session || true
+  agent_telemetry_finalize_pending "$status" "${TELEMETRY_GIT_BIN:-}" "${TELEMETRY_REPO_ROOT:-}"
+  return "$status"
+}
+
 run_session() {
-  local child_status signal="" name; local -a injected_args=() launch_env=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
-  validate_installed_runtime && validate_claude || return 1
+  local child_status name inspection=0; local -a injected_args=() launch_env=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
   classify_claude_args "$@" || return $?
+  claude_invocation_is_inspection "$@" && inspection=1
+  TELEMETRY_GIT_BIN=$(command -v git 2>/dev/null || true)
+  if [ -n "$TELEMETRY_GIT_BIN" ]; then
+    TELEMETRY_REPO_ROOT=$($TELEMETRY_GIT_BIN rev-parse --show-toplevel 2>/dev/null || pwd -P)
+  else
+    TELEMETRY_REPO_ROOT=$(pwd -P)
+  fi
+  if [ "$inspection" -eq 0 ]; then
+    agent_telemetry_start claude-code agent-development-framework/claude-explore "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$RUNTIME_ROOT/bin/claude-explore" "$TELEMETRY_REPO_ROOT"
+    observe_claude_requested_configuration "$@"
+    trap runtime_exit_cleanup EXIT
+  fi
+  validate_installed_runtime && validate_claude || return 1
+  agent_telemetry_set_client_version "$CLAUDE_VERSION"
+  if ! agent_telemetry_observe_repository "$TELEMETRY_GIT_BIN" "$TELEMETRY_REPO_ROOT"; then
+    agent_telemetry_warning "could not observe repository identity"
+  fi
   make_session || { cleanup_session; runtime_error "could not create private session state"; return 1; }
-  trap 'signal=INT; kill -INT "$CHILD_PID" 2>/dev/null || :' INT
-  trap 'signal=TERM; kill -TERM "$CHILD_PID" 2>/dev/null || :' TERM
-  trap cleanup_session EXIT
+  trap 'AGENT_TELEMETRY_SIGNAL=INT; kill -INT "$CHILD_PID" 2>/dev/null || :' INT
+  trap 'AGENT_TELEMETRY_SIGNAL=TERM; kill -TERM "$CHILD_PID" 2>/dev/null || :' TERM
   strip_environment || { cleanup_session; runtime_error "could not apply environment policy"; return 1; }
   injected_args=(--settings "$SETTINGS_FILE")
   [ "$CLAUDE_EXPLORE_STRICT_MCP_CONFIG" = true ] && injected_args+=(--strict-mcp-config --mcp-config "$MCP_FILE")
   [ "$CLAUDE_EXPLORE_CHROME_ENABLED" = false ] && injected_args+=(--no-chrome)
   injected_args+=(--append-system-prompt "$CLAUDE_EXPLORE_GUIDANCE")
   while IFS= read -r name; do launch_env+=( -u "$name" ); done < <(function_environment_names)
+  agent_telemetry_mark_preflight_complete
+  if ! agent_telemetry_capture_git START "$TELEMETRY_GIT_BIN" "$TELEMETRY_REPO_ROOT"; then
+    agent_telemetry_warning "could not observe start Git state"
+  fi
+  agent_telemetry_mark_launch_intent
   /usr/bin/env "${launch_env[@]}" "$CLAUDE_TARGET" "${injected_args[@]}" "$@" & CHILD_PID=$!
+  agent_telemetry_mark_child_started
   while :; do
     wait "$CHILD_PID"; child_status=$?
     if [ "$child_status" -gt 128 ] && kill -0 "$CHILD_PID" 2>/dev/null; then continue; fi
     break
   done
+  agent_telemetry_mark_child_finished "$child_status"
   trap - INT TERM
-  cleanup_session; trap - EXIT
+  cleanup_session
   return "$child_status"
 }
 

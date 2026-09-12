@@ -148,6 +148,7 @@ validate_source() {
     safe_executable "$SOURCE_ROOT/$path" || die "source executable runtime is incomplete or unsafe: $path"
     case "$($REALPATH_BIN "$SOURCE_ROOT/$path")" in "$SOURCE_ROOT"/*) ;; *) die "source file resolves outside runtime: $path" ;; esac
   done
+  safe_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" || die "source telemetry helper is incomplete or unsafe"
   safe_file "$SOURCE_ROOT/policy.sh" || die "source policy is incomplete or unsafe"
 }
 
@@ -158,11 +159,12 @@ stage_runtime() {
   cp "$SOURCE_ROOT/bin/claude-explore" "$STAGE/bin/claude-explore" || die "cannot stage runtime launcher"
   cp "$SOURCE_ROOT/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_runtime.sh" || die "cannot stage runtime library"
   cp "$SOURCE_ROOT/lib/claude_explore_guard.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot stage guard"
+  cp "$SOURCE_ROOT/lib/agent_run_telemetry.sh" "$STAGE/lib/agent_run_telemetry.sh" || die "cannot stage telemetry helper"
   cp "$SOURCE_ROOT/policy.sh" "$STAGE/policy.sh" || die "cannot stage policy"
   chmod 700 "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot protect executable runtime files"
-  chmod 600 "$STAGE/policy.sh" || die "cannot protect policy"
+  chmod 600 "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || die "cannot protect policy and telemetry files"
   /bin/sh -n "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh" && \
-    /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH /bin/bash --noprofile --norc -p -n "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/policy.sh" || {
+    /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH /bin/bash --noprofile --norc -p -n "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || {
       rm -rf "$STAGE"; rm -f "${STAGED_METADATA:-}"; die "staged runtime failed syntax validation";
     }
 }

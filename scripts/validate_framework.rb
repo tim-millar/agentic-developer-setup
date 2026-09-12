@@ -13,7 +13,7 @@ class FrameworkValidator
   ACCESS_MODES = %w[disabled app].freeze
   ADAPTER_STATUSES = %w[supported planned].freeze
   RUNTIME_DISTRIBUTIONS = %w[repository global-user].freeze
-  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy].freeze
+  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry].freeze
   RUNTIME_PLATFORMS = %w[macos linux].freeze
 
   def initialize(root)
@@ -263,6 +263,7 @@ class FrameworkValidator
     validate_unique(roles, label: "role")
     role_values = roles.map(&:first)
     error(location, "supported runtime requires exactly one launcher artefact") unless role_values.count("launcher") == 1
+    error(location, "supported runtime requires exactly one telemetry artefact") unless role_values.count("telemetry") == 1
     if configuration_type == "claude-explore"
       %w[installer policy].each do |role|
         error(location, "claude-explore requires exactly one #{role} artefact") unless role_values.count(role) == 1
@@ -487,7 +488,11 @@ class FrameworkValidator
 
       runtime["artefacts"].each_with_index do |artefact, artefact_index|
         next unless artefact.is_a?(Hash)
-        expected_category = {"launcher" => "agent-launcher", "prompt" => "agent-session-brief"}[artefact["role"]]
+        expected_category = {
+          "launcher" => "agent-launcher",
+          "prompt" => "agent-session-brief",
+          "telemetry" => "agent-telemetry-helper"
+        }[artefact["role"]]
         next unless expected_category
 
         validate_baseline_pair_reference(artefact, baseline, "framework.yml: #{item_location}.artefacts[#{artefact_index}]", expected_category)

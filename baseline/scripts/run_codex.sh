@@ -7,16 +7,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-
-if [[ -z "$REPO_ROOT" ]]; then
-  echo "Error: must be run from within a Git repository." >&2
+REPOSITORY_HINT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
+TELEMETRY_HELPER="$SCRIPT_DIR/agent_run_telemetry.sh"
+if [[ ! -f "$TELEMETRY_HELPER" || -L "$TELEMETRY_HELPER" ]]; then
+  echo "Error: framework telemetry helper not found or unsafe: $TELEMETRY_HELPER" >&2
   exit 1
 fi
-
-cd "$REPO_ROOT"
+# shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
+source "$TELEMETRY_HELPER"
 
 EXPECTED_OWNER="${EXPECTED_OWNER:-tim-millar}"
-EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPO_ROOT")}"
+EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPOSITORY_HINT")}"
 PROMPT_FILE_DEFAULT="docs/AGENT_PROMPT.txt"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CODEX_PROFILE="${CODEX_PROFILE:-}"
@@ -29,8 +30,8 @@ CODEX_PATH_CONFIG=""
 
 AGENT_NAME="${AGENT_NAME:-codex}"
 AGENT_GIT_MODE="${AGENT_GIT_MODE:-developer-author}"
-DEVELOPER_NAME="${DEVELOPER_NAME:-$(git config --get user.name || true)}"
-DEVELOPER_EMAIL="${DEVELOPER_EMAIL:-$(git config --get user.email || true)}"
+DEVELOPER_NAME="${DEVELOPER_NAME:-$(git -C "$REPOSITORY_HINT" config --get user.name 2>/dev/null || true)}"
+DEVELOPER_EMAIL="${DEVELOPER_EMAIL:-$(git -C "$REPOSITORY_HINT" config --get user.email 2>/dev/null || true)}"
 
 GITHUB_ACCESS_MODE="${GITHUB_ACCESS_MODE:-disabled}"
 
@@ -57,6 +58,7 @@ SESSION_SHUTDOWN_FILE=""
 DEBUG_PROMPT_PATH=""
 CODEX_PID=""
 HOST_ENV_DIR=""
+GIT_BIN=""
 
 GITHUB_REFRESH_INTERVAL_SECONDS=2700
 GITHUB_RETRY_INTERVAL_SECONDS=300
@@ -74,6 +76,8 @@ DEFAULT_BRANCH=""
 
 cleanup() {
   local status=$?
+
+  agent_telemetry_finalize_pending "$status" "$GIT_BIN" "$REPO_ROOT"
 
   if [[ -n "$SESSION_SHUTDOWN_FILE" && -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]]; then
     : > "$SESSION_SHUTDOWN_FILE" 2>/dev/null || true
@@ -95,6 +99,8 @@ trap cleanup EXIT
 handle_signal() {
   local signal="$1"
   local status="$2"
+
+  AGENT_TELEMETRY_SIGNAL="$signal"
 
   if [[ -n "$CODEX_PID" ]]; then
     kill -s "$signal" "$CODEX_PID" 2>/dev/null || true
@@ -176,6 +182,8 @@ require_numeric_env() {
 run_codex() {
   local status
 
+  agent_telemetry_mark_launch_intent
+
   if [[ -n "$CODEX_PROFILE" ]]; then
     env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
       -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
@@ -191,11 +199,13 @@ run_codex() {
   fi
 
   CODEX_PID=$!
+  agent_telemetry_mark_child_started
   set +e
   wait "$CODEX_PID"
   status=$?
   set -e
   CODEX_PID=""
+  agent_telemetry_mark_child_finished "$status"
 
   return "$status"
 }
@@ -331,6 +341,87 @@ validate_forwarded_codex_config() {
 
 validate_forwarded_codex_config
 
+codex_invocation_is_inspection() {
+  local index=0 argument
+  [[ -z "$RESUME_SESSION" && -z "$ISSUE_NUMBER" && -z "$EXTRA_PROMPT_FILE" ]] || return 1
+  while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
+    argument=${CODEX_ARGS[$index]}
+    case "$argument" in
+      --model|-m|-c|--config) index=$((index + 2)); continue ;;
+      --help|-h|--version|-V|help) return 0 ;;
+    esac
+    index=$((index + 1))
+  done
+  return 1
+}
+
+telemetry_toml_scalar() {
+  local value=$1
+  if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value=${value:1:${#value}-2}
+  fi
+  printf '%s' "$value"
+}
+
+observe_codex_requested_configuration() {
+  local index=0 argument value assignment key
+  while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
+    argument=${CODEX_ARGS[$index]}
+    case "$argument" in
+      --model|-m)
+        index=$((index + 1))
+        if [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; then
+          agent_telemetry_set_requested_configuration model "${CODEX_ARGS[$index]}" "codex_arg:$argument"
+        fi
+        ;;
+      --model=*) agent_telemetry_set_requested_configuration model "${argument#--model=}" "codex_arg:--model" ;;
+      -m=*) agent_telemetry_set_requested_configuration model "${argument#-m=}" "codex_arg:-m" ;;
+      -m?*) agent_telemetry_set_requested_configuration model "${argument#-m}" "codex_arg:-m" ;;
+      -c|--config)
+        index=$((index + 1))
+        [[ "$index" -lt "${#CODEX_ARGS[@]}" ]] || break
+        assignment=${CODEX_ARGS[$index]}
+        key=${assignment%%=*}; value=${assignment#*=}
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        case "$key" in
+          model) agent_telemetry_set_requested_configuration model "$(telemetry_toml_scalar "$value")" "codex_config:model" ;;
+          model_reasoning_effort) agent_telemetry_set_requested_configuration reasoning_effort "$(telemetry_toml_scalar "$value")" "codex_config:model_reasoning_effort" ;;
+        esac
+        ;;
+      --config=*|-c=*)
+        assignment=${argument#*=}; key=${assignment%%=*}; value=${assignment#*=}
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        case "$key" in
+          model) agent_telemetry_set_requested_configuration model "$(telemetry_toml_scalar "$value")" "codex_config:model" ;;
+          model_reasoning_effort) agent_telemetry_set_requested_configuration reasoning_effort "$(telemetry_toml_scalar "$value")" "codex_config:model_reasoning_effort" ;;
+        esac
+        ;;
+      -c?*)
+        assignment=${argument#-c}; key=${assignment%%=*}; value=${assignment#*=}
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        case "$key" in
+          model) agent_telemetry_set_requested_configuration model "$(telemetry_toml_scalar "$value")" "codex_config:model" ;;
+          model_reasoning_effort) agent_telemetry_set_requested_configuration reasoning_effort "$(telemetry_toml_scalar "$value")" "codex_config:model_reasoning_effort" ;;
+        esac
+        ;;
+    esac
+    index=$((index + 1))
+  done
+}
+
+if ! codex_invocation_is_inspection; then
+  agent_telemetry_start codex-cli agent-development-framework/codex 1 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
+  observe_codex_requested_configuration
+  if [[ -n "$RESUME_SESSION" ]]; then agent_telemetry_set_session launcher_requested "$RESUME_SESSION"; fi
+fi
+
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "Error: must be run from within a Git repository." >&2
+  exit 1
+fi
+
+cd "$REPO_ROOT"
+
 require_cmd curl
 require_cmd jq
 require_cmd openssl
@@ -347,6 +438,12 @@ BASH_BIN="$(command -v bash)"
 ENV_BIN="$(command -v env)"
 CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
+GIT_BIN="$(command -v git)"
+
+if CODEX_VERSION_OUTPUT="$("$CODEX_BIN" --version 2>/dev/null)"; then
+  CODEX_VERSION_OUTPUT=${CODEX_VERSION_OUTPUT%%$'\n'*}
+  if [[ -n "$CODEX_VERSION_OUTPUT" ]]; then agent_telemetry_set_client_version "$CODEX_VERSION_OUTPUT"; fi
+fi
 
 PROMPT_FILE="${PROMPT_FILE_OVERRIDE:-$PROMPT_FILE_DEFAULT}"
 
@@ -382,6 +479,10 @@ case "$ORIGIN_URL" in
     exit 1
     ;;
 esac
+
+if ! agent_telemetry_observe_repository "$GIT_BIN" "$REPO_ROOT"; then
+  agent_telemetry_warning "could not observe repository identity"
+fi
 
 prepare_agent_host_path() {
   local result_file trailing_byte
@@ -1297,6 +1398,44 @@ if [[ -n "$ISSUE_NUMBER" && "$SKIP_GITHUB_ISSUE_FETCH" != "1" ]]; then
   ISSUE_LABELS="$(printf '%s' "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")')"
 fi
 
+TASK_SNAPSHOT_CONTENT=""
+TASK_SNAPSHOT_SOURCE="unavailable"
+TASK_SNAPSHOT_IDENTIFIER=""
+if [[ -n "$ISSUE_NUMBER" ]]; then
+  TASK_SNAPSHOT_SOURCE="github_issue"
+  TASK_SNAPSHOT_IDENTIFIER="${EXPECTED_OWNER}/${EXPECTED_REPO}#${ISSUE_NUMBER}"
+  TASK_SNAPSHOT_CONTENT="$({
+    printf '%s\n' "Issue context:"
+    if [[ "$SKIP_GITHUB_ISSUE_FETCH" == "1" ]]; then
+      printf '%s\n' "- Issue: #$ISSUE_NUMBER"
+      if [[ "$GITHUB_ACCESS_MODE" == "disabled" ]]; then
+        printf '%s\n' "- GitHub issue fetch was skipped because GitHub access is disabled"
+      else
+        printf '%s\n' "- GitHub issue fetch was skipped by --skip-issue-fetch"
+      fi
+    else
+      printf '%s\n' "- Issue: #$ISSUE_NUMBER"
+      printf '%s\n' "- Title: $ISSUE_TITLE"
+      printf '%s\n' "- URL: $ISSUE_URL"
+      if [[ -n "$ISSUE_LABELS" ]]; then printf '%s\n' "- Labels: $ISSUE_LABELS"; fi
+      printf '\n%s\n%s\n' "Issue body:" "$ISSUE_BODY"
+    fi
+  })"
+fi
+if [[ -n "$EXTRA_PROMPT_FILE" ]]; then
+  EXTRA_TASK_CONTENT="$(printf '%s\n' "Additional instructions:"; cat "$EXTRA_PROMPT_FILE")"
+  if [[ -n "$TASK_SNAPSHOT_CONTENT" ]]; then
+    TASK_SNAPSHOT_SOURCE="composite"
+    TASK_SNAPSHOT_CONTENT="${TASK_SNAPSHOT_CONTENT}
+
+----
+${EXTRA_TASK_CONTENT}"
+  else
+    TASK_SNAPSHOT_SOURCE="local_prompt"
+    TASK_SNAPSHOT_CONTENT="$EXTRA_TASK_CONTENT"
+  fi
+fi
+
 case "$AGENT_GIT_MODE" in
   developer-author)
     if [[ -n "$DEVELOPER_NAME" ]]; then
@@ -1528,9 +1667,20 @@ else
   )
 fi
 
+if [[ -n "$TASK_SNAPSHOT_CONTENT" ]]; then
+  agent_telemetry_set_task "$TASK_SNAPSHOT_SOURCE" "$TASK_SNAPSHOT_IDENTIFIER" "$TASK_SNAPSHOT_CONTENT" || true
+fi
+
+agent_telemetry_mark_preflight_complete
+
 if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
   start_renewal_worker
 fi
+
+if ! agent_telemetry_capture_git START "$GIT_BIN" "$REPO_ROOT"; then
+  agent_telemetry_warning "could not observe start Git state"
+fi
+unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR
 
 unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
 unset JWT TOKEN_JSON

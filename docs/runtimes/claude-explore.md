@@ -63,6 +63,12 @@ Direct psql execution is non-interactive. The guard always injects `-X`, blocks 
 
 Normal application commands such as `make test`, `bundle exec …`, and `npm test` remain available. The runtime does not prove that application configuration points only at local services, and it does not comprehensively intercept generic HTTP clients or package managers.
 
+## Execution telemetry
+
+Normal fresh and resumed `claude-explore` workloads automatically emit one common local execution record. Help, runtime inspection, command classification, and malformed invocations do not. Each invocation receives a distinct run ID even when resuming one Claude session. Set `AGENT_TELEMETRY=0` to opt out, or use an absolute `AGENT_TELEMETRY_DIR` as the run-root override. Records are permission-restricted, retained until the user removes them, never uploaded automatically, and fail open without replacing Claude's or the runtime's meaningful status.
+
+The runtime records explicit supported model, effort, and session arguments as requested configuration. It does not infer effective values or configuration stability, scrape task text or Claude session state, enable hooks, or weaken any sandbox, settings, permission, or environment policy for observability. See [`../run-telemetry.md`](../run-telemetry.md) for the common schema, storage path, lifecycle, privacy boundary, and downstream run-ID contract.
+
 ## Diagnostics and inspection
 
 Intentional policy blocks begin with `CLAUDE_EXPLORE_BLOCKED` and exit 126. They report stable runtime, policy, category, normalized-operation, rule, reason, and safe-next-action identifiers without echoing credentials, prompts, complete argv, or database URIs. Runtime/installation failures exit 1, malformed runtime-owned calls exit 2, and internal guard failures exit 125. Normal Claude child status is preserved.
