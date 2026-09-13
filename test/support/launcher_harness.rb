@@ -33,7 +33,7 @@ class LauncherHarness
     :extra_prompt_file, :event_log, :codex_log, :started_marker,
     :signal_log, :key_file, :app_json, :token_json, :repository_json,
     :issue_json, :renewal_control_dir, :token_sequence_json,
-    :token_attempt_file, :helper_clock_file
+    :token_attempt_file, :helper_clock_file, :codex_version_env_log
 
   def initialize(telemetry: false)
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
@@ -54,6 +54,8 @@ class LauncherHarness
     @token_sequence_json = File.join(root, "token-sequence.json")
     @token_attempt_file = File.join(root, "token-attempts")
     @helper_clock_file = File.join(root, "helper-clock")
+    @codex_version_env_log = File.join(root, "codex-version-environment.json")
+    @codex_version_failure_marker = File.join(root, "codex-version-failure")
     @telemetry_root = File.join(root, "telemetry-runs")
     @telemetry_enabled = telemetry
     @synthetic_clock_file = File.join(root, "synthetic-clock")
@@ -378,6 +380,10 @@ class LauncherHarness
     File.write(File.join(root, "codex.release"), "release\n")
   end
 
+  def fail_codex_version
+    File.write(@codex_version_failure_marker, "fail\n")
+  end
+
   def codex_release_marker
     File.join(root, "codex.release")
   end
@@ -590,8 +596,10 @@ class LauncherHarness
       require "json"
 
       if ARGV == ["--version"]
-        puts ENV.fetch("FAKE_CODEX_VERSION", "codex-cli 1.2.3")
-        exit Integer(ENV.fetch("FAKE_CODEX_VERSION_EXIT", "0"), 10)
+        File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
+        exit 1 if File.exist?(#{@codex_version_failure_marker.dump})
+        puts "codex-cli 1.2.3"
+        exit 0
       end
 
       def state(name)

@@ -681,11 +681,11 @@ component_recommendations:
     it to repository evidence.
   prerequisite_gap_ids: []
 - component: agent_run_telemetry
-  state: adopt_now
+  state: evaluate_later
   confidence: low
   evidence_ids: []
-  rationale: The capability is not currently detected; adopt it incrementally using
-    repository evidence and native conventions.
+  rationale: Execution telemetry is coupled to a supported framework launcher and
+    should be evaluated with that launcher rather than adopted independently.
   prerequisite_gap_ids: []
 - component: architecture_scaffold
   state: specialise_now

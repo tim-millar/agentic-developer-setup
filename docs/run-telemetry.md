@@ -16,7 +16,7 @@ The default run root is:
 ${XDG_DATA_HOME:-$HOME/.local/share}/agent-development-framework/telemetry/runs/
 ```
 
-`AGENT_TELEMETRY_DIR` may specify an absolute run root directly, which is useful for deterministic tests and controlled environments. Relative overrides are rejected fail-open. An explicitly relative `XDG_DATA_HOME` is also rejected instead of being resolved beneath the current repository.
+`AGENT_TELEMETRY_DIR` may specify an absolute run root directly, which is useful for deterministic tests and controlled environments. Relative overrides are rejected fail-open, as is an effective run root at or beneath the current repository. An empty `XDG_DATA_HOME` is treated as unset and uses the `HOME` fallback; an explicitly relative non-empty value is rejected instead of being resolved beneath the current repository.
 
 Each run owns an independent directory:
 
@@ -65,7 +65,7 @@ The framework does not infer configuration from vendor defaults, subscription ti
 
 Git observations contain the attached branch or detached state, full HEAD SHA, dirty flag, and staged, unstaged, and untracked porcelain-entry counts. Status parsing is NUL-safe. The common record deliberately excludes file names, diffs, patches, line counts, quality judgements, and acceptance conclusions. Git state is `null` when the repository cannot be inspected reliably.
 
-Codex snapshots fetched issue context and explicit extra task instructions already supplied to the workload. A composite preserves their semantic order and boundaries. The generic base session prompt is excluded. Claude Explore normally does not possess the developer's interactive task text before starting Claude, so its task fields remain unavailable; it does not scrape transcripts, shell history, or private session files. A stored snapshot is historical: later edits to its issue or source prompt do not alter it.
+Codex snapshots fetched issue context and explicit extra task instructions already supplied to the workload. A composite preserves their semantic order and boundaries. The generic base session prompt is excluded. Claude Explore snapshots an explicit positional initial prompt as a local task; an interactive launch without one remains unavailable. It does not include generic runtime guidance or scrape transcripts, shell history, or private session files. A stored snapshot is historical: later edits to its issue or source prompt do not alter it.
 
 `calendar_elapsed_ms` spans `run_started_at` through `run_finished_at`. It intentionally includes interactive pauses, idle time, developer wait time, and machine sleep within the launcher invocation. It is not provider-active time, API compute time, token-generation time, or productivity time.
 

@@ -52,6 +52,51 @@ agent_telemetry_timestamp() {
   /bin/date -u '+%Y-%m-%dT%H:%M:%S.000Z'
 }
 
+agent_telemetry_epoch() {
+  /bin/date '+%s'
+}
+
+agent_telemetry_canonical_directory() {
+  local path=$1 probe leaf suffix="" canonical
+  case "$path" in /*) ;; *) return 1 ;; esac
+  probe=${path%/}
+  [[ -n "$probe" ]] || probe=/
+  while [[ ! -d "$probe" ]]; do
+    [[ ! -e "$probe" && ! -L "$probe" ]] || return 1
+    leaf=${probe##*/}
+    case "$leaf" in ""|.|..) return 1 ;; esac
+    suffix=/$leaf$suffix
+    probe=${probe%/*}
+    [[ -n "$probe" ]] || probe=/
+  done
+  canonical=$(cd "$probe" 2>/dev/null && pwd -P) || return 1
+  if [[ "$canonical" == / ]]; then
+    printf '%s' "${suffix:-/}"
+  else
+    printf '%s%s' "$canonical" "$suffix"
+  fi
+}
+
+agent_telemetry_git_scratch() {
+  local repository_root=$1 scratch_root scratch old_umask
+  repository_root=$(agent_telemetry_canonical_directory "$repository_root" 2>/dev/null) || return 1
+  old_umask=$(umask); umask 077
+  for scratch_root in /tmp /var/tmp; do
+    [[ -d "$scratch_root" && -w "$scratch_root" ]] || continue
+    scratch_root=$(agent_telemetry_canonical_directory "$scratch_root" 2>/dev/null) || continue
+    case "$scratch_root" in "$repository_root"|"$repository_root"/*) continue ;; esac
+    if [[ -x /usr/bin/mktemp ]]; then
+      scratch=$(/usr/bin/mktemp "$scratch_root/agent-telemetry-git-status.XXXXXX" 2>/dev/null) || scratch=""
+    elif [[ -x /bin/mktemp ]]; then
+      scratch=$(/bin/mktemp "$scratch_root/agent-telemetry-git-status.XXXXXX" 2>/dev/null) || scratch=""
+    fi
+    [[ -z "${scratch:-}" ]] || break
+  done
+  umask "$old_umask"
+  [[ -n "${scratch:-}" ]] || return 1
+  printf '%s' "$scratch"
+}
+
 agent_telemetry_sha256_file() {
   local path=$1 output
   if [[ -x /usr/bin/shasum ]]; then
@@ -222,15 +267,27 @@ agent_telemetry_random_hex() {
 
 agent_telemetry_start() {
   local client_id=$1 harness_id=$2 harness_version=$3 harness_path=$4 repository_hint=$5
-  local root timestamp random run_id candidate digest attempts=0 old_umask
+  local root repository_root timestamp random run_id candidate digest attempts=0 old_umask
   [[ "${AGENT_TELEMETRY:-1}" != 0 ]] || return 0
-  if [[ ${AGENT_TELEMETRY_DIR+x} ]]; then
-    root=${AGENT_TELEMETRY_DIR:-}
+  if [[ -n "${AGENT_TELEMETRY_DIR:-}" ]]; then
+    root=$AGENT_TELEMETRY_DIR
     case "$root" in /*) ;; *) agent_telemetry_warning "AGENT_TELEMETRY_DIR must be absolute; telemetry disabled"; return 0 ;; esac
-  elif [[ ${XDG_DATA_HOME+x} ]]; then
-    case "${XDG_DATA_HOME:-}" in /*) root=$XDG_DATA_HOME/agent-development-framework/telemetry/runs ;; *) agent_telemetry_warning "XDG_DATA_HOME must be absolute; telemetry disabled"; return 0 ;; esac
+  elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    case "$XDG_DATA_HOME" in /*) root=$XDG_DATA_HOME/agent-development-framework/telemetry/runs ;; *) agent_telemetry_warning "XDG_DATA_HOME must be absolute; telemetry disabled"; return 0 ;; esac
   else
     case "${HOME:-}" in /*) root=$HOME/.local/share/agent-development-framework/telemetry/runs ;; *) agent_telemetry_warning "HOME must be absolute; telemetry disabled"; return 0 ;; esac
+  fi
+  root=$(agent_telemetry_canonical_directory "$root") || { agent_telemetry_warning "could not safely resolve telemetry run root; telemetry disabled"; return 0; }
+  if [[ -n "$repository_hint" ]]; then
+    repository_root=$(agent_telemetry_canonical_directory "$repository_hint" 2>/dev/null || true)
+    if [[ -n "$repository_root" ]]; then
+      case "$root" in
+        "$repository_root"|"$repository_root"/*)
+          agent_telemetry_warning "telemetry run root must be outside the repository; telemetry disabled"
+          return 0
+          ;;
+      esac
+    fi
   fi
   digest=$(agent_telemetry_sha256_file "$harness_path") || { agent_telemetry_warning "could not identify execution harness; telemetry disabled"; return 0; }
   timestamp=$(/bin/date -u '+%Y%m%dT%H%M%SZ') || { agent_telemetry_warning "could not create run timestamp; telemetry disabled"; return 0; }
@@ -254,7 +311,10 @@ agent_telemetry_start() {
   AGENT_TELEMETRY_RUN_ID=$run_id
   AGENT_TELEMETRY_RUN_DIR=$candidate
   AGENT_TELEMETRY_RUN_FILE=$candidate/run.json
-  AGENT_TELEMETRY_STARTED_EPOCH=$(/bin/date '+%s')
+  if ! AGENT_TELEMETRY_STARTED_EPOCH=$(agent_telemetry_epoch 2>/dev/null) || ! [[ "$AGENT_TELEMETRY_STARTED_EPOCH" =~ ^[0-9]+$ ]]; then
+    AGENT_TELEMETRY_STARTED_EPOCH=""
+    agent_telemetry_warning "could not observe run start epoch"
+  fi
   AGENT_TELEMETRY_RUN_STARTED_AT=$(agent_telemetry_timestamp)
   AGENT_TELEMETRY_CLIENT_ID=$client_id
   AGENT_TELEMETRY_HARNESS_ID=$harness_id
@@ -321,7 +381,7 @@ agent_telemetry_capture_git() {
   head=$("$git_bin" -C "$root" rev-parse HEAD 2>/dev/null) || return 1
   branch=$("$git_bin" -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   if [[ -n "$branch" ]]; then detached=false; else detached=true; fi
-  status_file=$AGENT_TELEMETRY_RUN_DIR/.git-status.$$.$phase
+  status_file=$(agent_telemetry_git_scratch "$root") || return 1
   if ! (umask 077; "$git_bin" -C "$root" status --porcelain=v1 -z --untracked-files=all > "$status_file") 2>/dev/null; then
     /bin/rm -f -- "$status_file" 2>/dev/null || true
     return 1
@@ -380,8 +440,18 @@ agent_telemetry_finalize() {
   AGENT_TELEMETRY_TERMINATION_REASON=$reason
   if [[ -n "$git_bin" && -n "$root" ]]; then agent_telemetry_capture_git FINISH "$git_bin" "$root" || agent_telemetry_warning "could not observe finish Git state"; fi
   AGENT_TELEMETRY_RUN_FINISHED_AT=$(agent_telemetry_timestamp)
-  finished_epoch=$(/bin/date '+%s')
-  AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=$(((finished_epoch - AGENT_TELEMETRY_STARTED_EPOCH) * 1000))
+  finished_epoch=$(agent_telemetry_epoch 2>/dev/null || true)
+  if [[ "$AGENT_TELEMETRY_STARTED_EPOCH" =~ ^[0-9]+$ && "$finished_epoch" =~ ^[0-9]+$ ]]; then
+    if [[ "$finished_epoch" -ge "$AGENT_TELEMETRY_STARTED_EPOCH" ]]; then
+      AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=$(((finished_epoch - AGENT_TELEMETRY_STARTED_EPOCH) * 1000))
+    else
+      AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=0
+      agent_telemetry_warning "calendar clock moved backwards; elapsed time recorded as zero"
+    fi
+  else
+    AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=0
+    agent_telemetry_warning "could not observe terminal elapsed time; elapsed time recorded as zero"
+  fi
   agent_telemetry_write_record || true
 }
 
@@ -393,7 +463,6 @@ agent_telemetry_finalize_pending() {
     [[ -n "$AGENT_TELEMETRY_CHILD_EXIT_CODE" ]] || AGENT_TELEMETRY_CHILD_EXIT_CODE=$process_status
   elif [[ -n "$AGENT_TELEMETRY_CHILD_FINISHED_AT" ]]; then
     if [[ "$AGENT_TELEMETRY_CHILD_EXIT_CODE" -eq 0 ]]; then state=completed; reason=child_exited_successfully
-    elif [[ "$AGENT_TELEMETRY_CHILD_EXIT_CODE" -eq 127 ]]; then state=launch_failed; reason=child_launch_failed
     else state=runtime_failed; reason=child_exited_nonzero; fi
   elif [[ "$AGENT_TELEMETRY_LAUNCH_INTENT" == 1 ]]; then
     state=launch_failed; reason=child_launch_failed

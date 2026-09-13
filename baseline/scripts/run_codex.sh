@@ -99,12 +99,14 @@ trap cleanup EXIT
 handle_signal() {
   local signal="$1"
   local status="$2"
+  local child_status=0
 
   AGENT_TELEMETRY_SIGNAL="$signal"
 
   if [[ -n "$CODEX_PID" ]]; then
     kill -s "$signal" "$CODEX_PID" 2>/dev/null || true
-    wait "$CODEX_PID" 2>/dev/null || true
+    wait "$CODEX_PID" 2>/dev/null || child_status=$?
+    agent_telemetry_mark_child_finished "$child_status"
     CODEX_PID=""
   fi
 
@@ -357,6 +359,8 @@ codex_invocation_is_inspection() {
 
 telemetry_toml_scalar() {
   local value=$1
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
   if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then
     value=${value:1:${#value}-2}
   fi
@@ -440,7 +444,11 @@ CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
 GIT_BIN="$(command -v git)"
 
-if CODEX_VERSION_OUTPUT="$("$CODEX_BIN" --version 2>/dev/null)"; then
+CODEX_VERSION_ENV=("PATH=$PATH")
+for name in HOME LANG LC_ALL LC_CTYPE; do
+  if [[ -n "${!name:-}" ]]; then CODEX_VERSION_ENV+=("$name=${!name}"); fi
+done
+if CODEX_VERSION_OUTPUT="$("$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version 2>/dev/null)"; then
   CODEX_VERSION_OUTPUT=${CODEX_VERSION_OUTPUT%%$'\n'*}
   if [[ -n "$CODEX_VERSION_OUTPUT" ]]; then agent_telemetry_set_client_version "$CODEX_VERSION_OUTPUT"; fi
 fi

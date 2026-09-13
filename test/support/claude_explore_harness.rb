@@ -10,7 +10,7 @@ class ClaudeExploreHarness
   REPOSITORY_ROOT = File.expand_path("../..", __dir__)
   INSTALLER = File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore/install.sh")
 
-  attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target
+  attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target, :claude_version_env_log
 
   def initialize(prefix: "claude-explore-test-", telemetry: false)
     @root = Dir.mktmpdir(prefix)
@@ -19,6 +19,7 @@ class ClaudeExploreHarness
     FileUtils.mkdir_p([home, fake_bin])
     @claude_target = File.join(root, "claude-2.1.224")
     @claude_launcher = File.join(fake_bin, "claude")
+    @claude_version_env_log = File.join(root, "claude-version-environment.log")
     write_executable(claude_target, fake_claude("2.1.224"))
     File.symlink(claude_target, claude_launcher)
     %w[git psql].each { |name| write_executable(File.join(fake_bin, name), fake_delegate(name)) }
@@ -35,6 +36,7 @@ class ClaudeExploreHarness
       "FAKE_SETTINGS_COPY" => File.join(root, "settings.json"),
       "FAKE_MCP_COPY" => File.join(root, "mcp.json"),
       "FAKE_ENV_LOG" => File.join(root, "environment.log"),
+      "FAKE_VERSION_ENV_LOG" => claude_version_env_log,
       "FAKE_GIT_INJECTION_MARKER" => File.join(root, "git-injection"),
       "FAKE_PSQLRC_MARKER" => File.join(root, "psqlrc-ran"),
       "FAKE_PGPASS_MARKER" => File.join(root, "pgpass-used"),
@@ -184,6 +186,7 @@ class ClaudeExploreHarness
     <<~SH
       #!/bin/sh
       if [ "${1:-}" = "--version" ]; then
+        /usr/bin/env > "$FAKE_VERSION_ENV_LOG"
         echo "Claude Code ${FAKE_CLAUDE_VERSION:-#{default_version}}"
         exit "${FAKE_VERSION_EXIT:-0}"
       fi

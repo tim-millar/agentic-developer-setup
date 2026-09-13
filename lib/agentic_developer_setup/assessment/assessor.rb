@@ -667,6 +667,9 @@ module AgenticDeveloperSetup
         if name == "github_access_helper" && analysis[:facts][:ecosystems].empty?
           return ["not_applicable", "No supported project or GitHub-access requirement was established by static evidence.", []]
         end
+        if name == "agent_run_telemetry"
+          return ["evaluate_later", "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", []]
+        end
         if %w[agent_launcher claude_agent_entrypoint github_access_helper git_hooks].include?(name)
           return ["evaluate_later", "This optional runtime or hook component should be evaluated only if its access and workflow value is established.", []]
         end

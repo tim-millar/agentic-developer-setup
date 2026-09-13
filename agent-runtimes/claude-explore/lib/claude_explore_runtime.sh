@@ -124,7 +124,7 @@ function_environment_names() {
 
 claude_version() {
   local output name; local -a scrub_args
-  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
+  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u AGENT_TELEMETRY -u AGENT_TELEMETRY_DIR)
   while IFS= read -r name; do scrub_args+=( -u "$name" ); done <<EOF
 $CLAUDE_EXPLORE_ENV_UNSET
 EOF
@@ -642,6 +642,22 @@ observe_claude_requested_configuration() {
   done
 }
 
+observe_claude_task() {
+  local argument
+  while [ "$#" -gt 0 ]; do
+    argument=$1; shift
+    if word_in_list "$argument" "$CLAUDE_EXPLORE_CLAUDE_VALUE_FLAGS"; then
+      [ "$#" -gt 0 ] && shift
+      continue
+    fi
+    case "$argument" in
+      -*=*) ;;
+      -*) ;;
+      *) agent_telemetry_set_task local_prompt "" "$argument" || true; return 0 ;;
+    esac
+  done
+}
+
 runtime_exit_cleanup() {
   local status=$?
   cleanup_session || true
@@ -653,6 +669,7 @@ run_session() {
   local child_status name inspection=0; local -a injected_args=() launch_env=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
   classify_claude_args "$@" || return $?
   claude_invocation_is_inspection "$@" && inspection=1
+  trap runtime_exit_cleanup EXIT
   TELEMETRY_GIT_BIN=$(command -v git 2>/dev/null || true)
   if [ -n "$TELEMETRY_GIT_BIN" ]; then
     TELEMETRY_REPO_ROOT=$($TELEMETRY_GIT_BIN rev-parse --show-toplevel 2>/dev/null || pwd -P)
@@ -662,7 +679,7 @@ run_session() {
   if [ "$inspection" -eq 0 ]; then
     agent_telemetry_start claude-code agent-development-framework/claude-explore "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$RUNTIME_ROOT/bin/claude-explore" "$TELEMETRY_REPO_ROOT"
     observe_claude_requested_configuration "$@"
-    trap runtime_exit_cleanup EXIT
+    observe_claude_task "$@"
   fi
   validate_installed_runtime && validate_claude || return 1
   agent_telemetry_set_client_version "$CLAUDE_VERSION"

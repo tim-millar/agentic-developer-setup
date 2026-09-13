@@ -112,6 +112,15 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal "adopt_now", recommendation["state"]
   end
 
+  def test_missing_agent_run_telemetry_is_evaluated_with_its_launcher
+    result = assess
+    recommendation = result["component_recommendations"].find { |item| item["component"] == "agent_run_telemetry" }
+
+    assert_equal "evaluate_later", recommendation["state"]
+    assert_equal "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", recommendation["rationale"]
+    refute result["roadmap"].any? { |step| step["component"] == "agent_run_telemetry" }
+  end
+
   def test_bare_package_manifest_does_not_satisfy_command_interface
     write("package.json", "{\"name\":\"bare\"}\n")
 

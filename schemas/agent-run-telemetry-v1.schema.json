@@ -18,10 +18,23 @@
     "extensions": {"type": "object"}
   },
   "$defs": {
-    "observation": {
+    "runtime_observation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["evidence_kind", "value"],
+      "properties": {
+        "evidence_kind": {"enum": ["launcher_requested", "runtime_observed", "launcher_guaranteed", "unavailable", "not_applicable"]},
+        "value": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"evidence_kind": {"enum": ["unavailable", "not_applicable"]}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"evidence_kind": {"enum": ["launcher_requested", "runtime_observed", "launcher_guaranteed"]}}}, "then": {"properties": {"value": {"type": "string"}}}}
+      ]
+    },
+    "configuration_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_kind", "value", "source"],
       "properties": {
         "evidence_kind": {"enum": ["launcher_requested", "runtime_observed", "launcher_guaranteed", "unavailable", "not_applicable"]},
         "value": {"type": ["string", "null"]},
@@ -30,12 +43,6 @@
       "allOf": [
         {"if": {"properties": {"evidence_kind": {"enum": ["unavailable", "not_applicable"]}}}, "then": {"properties": {"value": {"type": "null"}}}},
         {"if": {"properties": {"evidence_kind": {"enum": ["launcher_requested", "runtime_observed", "launcher_guaranteed"]}}}, "then": {"properties": {"value": {"type": "string"}}}}
-      ]
-    },
-    "configuration_observation": {
-      "allOf": [
-        {"$ref": "#/$defs/observation"},
-        {"required": ["source"]}
       ]
     },
     "runtime": {
@@ -49,7 +56,7 @@
           "required": ["id", "version"],
           "properties": {
             "id": {"enum": ["codex-cli", "claude-code"]},
-            "version": {"$ref": "#/$defs/observation"}
+            "version": {"$ref": "#/$defs/runtime_observation"}
           }
         },
         "harness": {
@@ -62,7 +69,7 @@
             "revision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
           }
         },
-        "session": {"$ref": "#/$defs/observation"}
+        "session": {"$ref": "#/$defs/runtime_observation"}
       }
     },
     "configuration": {
