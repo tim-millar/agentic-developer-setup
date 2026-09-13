@@ -445,13 +445,22 @@ validate_claude() {
 }
 
 json_escape() {
-  local input=$1 output="" char i=0
+  local input=$1 output="" char escaped code i=0
+  local LC_ALL=C
   while [ "$i" -lt "${#input}" ]; do
     char=${input:$i:1}
     case "$char" in
       '"') output=$output'\"' ;; '\') output=$output'\\' ;;
       $'\b') output=$output'\b' ;; $'\f') output=$output'\f' ;; $'\n') output=$output'\n' ;; $'\r') output=$output'\r' ;; $'\t') output=$output'\t' ;;
-      *) output=$output$char ;;
+      *)
+        printf -v code '%d' "'$char"
+        if [ "$code" -lt 32 ]; then
+          printf -v escaped '\\u%04x' "$code"
+          output=$output$escaped
+        else
+          output=$output$char
+        fi
+        ;;
     esac
     i=$((i + 1))
   done

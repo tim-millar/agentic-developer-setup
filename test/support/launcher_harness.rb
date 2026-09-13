@@ -56,10 +56,12 @@ class LauncherHarness
     @helper_clock_file = File.join(root, "helper-clock")
     @codex_version_env_log = File.join(root, "codex-version-environment.json")
     @codex_version_failure_marker = File.join(root, "codex-version-failure")
+    @codex_version_output = File.join(root, "codex-version-output")
     @telemetry_root = File.join(root, "telemetry-runs")
     @telemetry_enabled = telemetry
     @synthetic_clock_file = File.join(root, "synthetic-clock")
     File.write(@synthetic_clock_file, Time.now.to_i.to_s)
+    File.binwrite(@codex_version_output, "codex-cli 1.2.3\n")
 
     [repository, home, tmpdir, @fake_bin, renewal_control_dir].each { |path| FileUtils.mkdir_p(path) }
     build_fakes
@@ -384,6 +386,44 @@ class LauncherHarness
     File.write(@codex_version_failure_marker, "fail\n")
   end
 
+  def set_codex_version_output(output)
+    File.binwrite(@codex_version_output, output)
+  end
+
+  def codex_version_probed?
+    File.exist?(codex_version_env_log)
+  end
+
+  def override_telemetry_clock(name, fail_on:)
+    raise ArgumentError, "unsupported telemetry clock" unless %w[timestamp epoch].include?(name)
+
+    counter = "#{helper_clock_file}-#{name}"
+    success = if name == "timestamp"
+      "/usr/bin/printf '2026-09-13T12:00:%02d.000Z' \"$count\""
+    else
+      "/usr/bin/printf '%s' \"$((100 + count))\""
+    end
+    append_telemetry_helper(<<~BASH)
+      agent_telemetry_#{name}() {
+        local count=0
+        if [[ -f #{counter.dump} ]]; then count=$(/bin/cat #{counter.dump} 2>/dev/null || /usr/bin/printf '0'); fi
+        count=$((count + 1))
+        /usr/bin/printf '%s' "$count" > #{counter.dump}
+        [[ "$count" -ne #{Integer(fail_on)} ]] || return 1
+        #{success}
+      }
+    BASH
+  end
+
+  def fail_telemetry_randomness
+    append_telemetry_helper("agent_telemetry_random_hex() { return 1; }\n")
+  end
+
+  def append_telemetry_helper(contents)
+    path = File.join(repository, "scripts", "agent_run_telemetry.sh")
+    File.open(path, "a") { |file| file.write(contents) }
+  end
+
   def codex_release_marker
     File.join(root, "codex.release")
   end
@@ -556,6 +596,9 @@ class LauncherHarness
         warn "synthetic Git status failure"
         exit 88
       end
+      if ARGV == ["rev-parse", "--abbrev-ref", "HEAD"] && ENV["FAKE_MUTATE_EXTRA_PROMPT_PATH"]
+        File.binwrite(ENV.fetch("FAKE_MUTATE_EXTRA_PROMPT_PATH"), ENV.fetch("FAKE_MUTATE_EXTRA_PROMPT_CONTENT"))
+      end
       exec "/usr/bin/git", *ARGV
     RUBY
 
@@ -598,7 +641,7 @@ class LauncherHarness
       if ARGV == ["--version"]
         File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
         exit 1 if File.exist?(#{@codex_version_failure_marker.dump})
-        puts "codex-cli 1.2.3"
+        STDOUT.write(File.binread(#{@codex_version_output.dump}))
         exit 0
       end
 

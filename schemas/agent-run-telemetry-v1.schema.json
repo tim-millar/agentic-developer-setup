@@ -17,6 +17,47 @@
     "termination": {"$ref": "#/$defs/termination"},
     "extensions": {"type": "object"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "started"}}, "required": ["state"]},
+      "then": {
+        "properties": {
+          "timing": {
+            "properties": {
+              "run_finished_at": {"type": "null"},
+              "calendar_elapsed_ms": {"type": "null"}
+            }
+          },
+          "termination": {
+            "properties": {
+              "child_exit_code": {"type": "null"},
+              "signal": {"type": "null"},
+              "reason": {"type": "null"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {"enum": ["completed", "preflight_failed", "launch_failed", "runtime_failed", "launcher_failed", "interrupted"]}
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "timing": {
+            "properties": {
+              "run_finished_at": {"$ref": "#/$defs/timestamp"},
+              "calendar_elapsed_ms": {"type": "integer", "minimum": 0}
+            }
+          },
+          "termination": {"properties": {"reason": {"type": "string"}}}
+        }
+      }
+    }
+  ],
   "$defs": {
     "runtime_observation": {
       "type": "object",
@@ -103,7 +144,17 @@
           "properties": {
             "kind": {"enum": ["github", "path_digest"]},
             "value": {"type": "string"}
-          }
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "github"}}, "required": ["kind"]},
+              "then": {"properties": {"value": {"pattern": "^[^\\s/@]+/[^\\s/]+$"}}}
+            },
+            {
+              "if": {"properties": {"kind": {"const": "path_digest"}}, "required": ["kind"]},
+              "then": {"properties": {"value": {"pattern": "^sha256:[0-9a-f]{64}$"}}}
+            }
+          ]
         },
         "start": {"oneOf": [{"$ref": "#/$defs/git_state"}, {"type": "null"}]},
         "finish": {"oneOf": [{"$ref": "#/$defs/git_state"}, {"type": "null"}]}
@@ -121,7 +172,14 @@
         "staged_count": {"type": "integer", "minimum": 0},
         "unstaged_count": {"type": "integer", "minimum": 0},
         "untracked_count": {"type": "integer", "minimum": 0}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"detached": {"const": true}}, "required": ["detached"]},
+          "then": {"properties": {"branch": {"type": "null"}}},
+          "else": {"properties": {"branch": {"type": "string"}}}
+        }
+      ]
     },
     "task": {
       "type": "object",
@@ -132,7 +190,27 @@
         "identifier": {"type": ["string", "null"]},
         "content_sha256": {"oneOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
         "snapshot": {"enum": ["task.txt", null]}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"source": {"const": "unavailable"}}, "required": ["source"]},
+          "then": {
+            "properties": {
+              "identifier": {"type": "null"},
+              "content_sha256": {"type": "null"},
+              "snapshot": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"snapshot": {"const": "task.txt"}}, "required": ["snapshot"]},
+          "then": {"properties": {"content_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}
+        },
+        {
+          "if": {"properties": {"content_sha256": {"type": "string"}}, "required": ["content_sha256"]},
+          "then": {"properties": {"snapshot": {"const": "task.txt"}}}
+        }
+      ]
     },
     "timing": {
       "type": "object",

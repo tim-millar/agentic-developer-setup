@@ -56,6 +56,34 @@ agent_telemetry_epoch() {
   /bin/date '+%s'
 }
 
+agent_telemetry_observe_timestamp() {
+  local value=""
+  value=$(agent_telemetry_timestamp 2>/dev/null) || return 1
+  [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]] || return 1
+  printf '%s' "$value"
+}
+
+agent_telemetry_observe_epoch() {
+  local value=""
+  value=$(agent_telemetry_epoch 2>/dev/null) || return 1
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$value"
+}
+
+agent_telemetry_discard_initial_run() {
+  AGENT_TELEMETRY_ACTIVE=0
+  [[ -z "$AGENT_TELEMETRY_RUN_FILE" ]] || /bin/rm -f -- "$AGENT_TELEMETRY_RUN_FILE" 2>/dev/null || true
+  [[ -z "$AGENT_TELEMETRY_RUN_DIR" ]] || /bin/rmdir -- "$AGENT_TELEMETRY_RUN_DIR" 2>/dev/null || true
+  AGENT_TELEMETRY_RUN_ID=""
+  AGENT_TELEMETRY_RUN_DIR=""
+  AGENT_TELEMETRY_RUN_FILE=""
+}
+
+agent_telemetry_disable_mutation() {
+  AGENT_TELEMETRY_ACTIVE=0
+  return 0
+}
+
 agent_telemetry_canonical_directory() {
   local path=$1 probe leaf suffix="" canonical
   case "$path" in /*) ;; *) return 1 ;; esac
@@ -267,7 +295,7 @@ agent_telemetry_random_hex() {
 
 agent_telemetry_start() {
   local client_id=$1 harness_id=$2 harness_version=$3 harness_path=$4 repository_hint=$5
-  local root repository_root timestamp random run_id candidate digest attempts=0 old_umask
+  local root repository_root timestamp random="" run_id="" candidate="" digest attempts=0 old_umask
   [[ "${AGENT_TELEMETRY:-1}" != 0 ]] || return 0
   if [[ -n "${AGENT_TELEMETRY_DIR:-}" ]]; then
     root=$AGENT_TELEMETRY_DIR
@@ -311,11 +339,15 @@ agent_telemetry_start() {
   AGENT_TELEMETRY_RUN_ID=$run_id
   AGENT_TELEMETRY_RUN_DIR=$candidate
   AGENT_TELEMETRY_RUN_FILE=$candidate/run.json
-  if ! AGENT_TELEMETRY_STARTED_EPOCH=$(agent_telemetry_epoch 2>/dev/null) || ! [[ "$AGENT_TELEMETRY_STARTED_EPOCH" =~ ^[0-9]+$ ]]; then
+  if ! AGENT_TELEMETRY_STARTED_EPOCH=$(agent_telemetry_observe_epoch); then
     AGENT_TELEMETRY_STARTED_EPOCH=""
     agent_telemetry_warning "could not observe run start epoch"
   fi
-  AGENT_TELEMETRY_RUN_STARTED_AT=$(agent_telemetry_timestamp)
+  if ! AGENT_TELEMETRY_RUN_STARTED_AT=$(agent_telemetry_observe_timestamp); then
+    agent_telemetry_warning "could not observe run start timestamp; telemetry disabled"
+    agent_telemetry_discard_initial_run
+    return 0
+  fi
   AGENT_TELEMETRY_CLIENT_ID=$client_id
   AGENT_TELEMETRY_HARNESS_ID=$harness_id
   AGENT_TELEMETRY_HARNESS_VERSION=$harness_version
@@ -429,19 +461,36 @@ agent_telemetry_set_task() {
 
 agent_telemetry_mark_preflight_complete() { AGENT_TELEMETRY_PREFLIGHT_COMPLETE=1; }
 agent_telemetry_mark_launch_intent() { AGENT_TELEMETRY_LAUNCH_INTENT=1; }
-agent_telemetry_mark_child_started() { AGENT_TELEMETRY_CHILD_STARTED_AT=$(agent_telemetry_timestamp); agent_telemetry_write_record || true; }
-agent_telemetry_mark_child_finished() { AGENT_TELEMETRY_CHILD_EXIT_CODE=$1; AGENT_TELEMETRY_CHILD_FINISHED_AT=$(agent_telemetry_timestamp); }
+agent_telemetry_mark_child_started() {
+  [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]] || return 0
+  if ! AGENT_TELEMETRY_CHILD_STARTED_AT=$(agent_telemetry_observe_timestamp); then
+    agent_telemetry_warning "could not observe child start timestamp; further telemetry disabled"
+    agent_telemetry_disable_mutation
+    return 0
+  fi
+  agent_telemetry_write_record || true
+  return 0
+}
+
+agent_telemetry_mark_child_finished() {
+  [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]] || return 0
+  AGENT_TELEMETRY_CHILD_EXIT_CODE=$1
+  if ! AGENT_TELEMETRY_CHILD_FINISHED_AT=$(agent_telemetry_observe_timestamp); then
+    agent_telemetry_warning "could not observe child finish timestamp; further telemetry disabled"
+    agent_telemetry_disable_mutation
+  fi
+  return 0
+}
 
 agent_telemetry_finalize() {
-  local state=$1 reason=$2 git_bin=$3 root=$4 finished_epoch
+  local state=$1 reason=$2 git_bin=$3 root=$4 finished_epoch="" run_finished_at=""
   [[ "$AGENT_TELEMETRY_ACTIVE" == 1 && "$AGENT_TELEMETRY_TERMINAL" == 0 ]] || return 0
-  AGENT_TELEMETRY_TERMINAL=1
-  AGENT_TELEMETRY_STATE=$state
-  AGENT_TELEMETRY_TERMINATION_REASON=$reason
-  if [[ -n "$git_bin" && -n "$root" ]]; then agent_telemetry_capture_git FINISH "$git_bin" "$root" || agent_telemetry_warning "could not observe finish Git state"; fi
-  AGENT_TELEMETRY_RUN_FINISHED_AT=$(agent_telemetry_timestamp)
-  finished_epoch=$(agent_telemetry_epoch 2>/dev/null || true)
-  if [[ "$AGENT_TELEMETRY_STARTED_EPOCH" =~ ^[0-9]+$ && "$finished_epoch" =~ ^[0-9]+$ ]]; then
+  if ! run_finished_at=$(agent_telemetry_observe_timestamp); then
+    agent_telemetry_warning "could not observe run finish timestamp; terminal telemetry not published"
+    agent_telemetry_disable_mutation
+    return 0
+  fi
+  if [[ "$AGENT_TELEMETRY_STARTED_EPOCH" =~ ^[0-9]+$ ]] && finished_epoch=$(agent_telemetry_observe_epoch); then
     if [[ "$finished_epoch" -ge "$AGENT_TELEMETRY_STARTED_EPOCH" ]]; then
       AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=$(((finished_epoch - AGENT_TELEMETRY_STARTED_EPOCH) * 1000))
     else
@@ -449,10 +498,17 @@ agent_telemetry_finalize() {
       agent_telemetry_warning "calendar clock moved backwards; elapsed time recorded as zero"
     fi
   else
-    AGENT_TELEMETRY_CALENDAR_ELAPSED_MS=0
-    agent_telemetry_warning "could not observe terminal elapsed time; elapsed time recorded as zero"
+    agent_telemetry_warning "could not observe terminal elapsed time; terminal telemetry not published"
+    agent_telemetry_disable_mutation
+    return 0
   fi
+  AGENT_TELEMETRY_TERMINAL=1
+  AGENT_TELEMETRY_STATE=$state
+  AGENT_TELEMETRY_TERMINATION_REASON=$reason
+  AGENT_TELEMETRY_RUN_FINISHED_AT=$run_finished_at
+  if [[ -n "$git_bin" && -n "$root" ]]; then agent_telemetry_capture_git FINISH "$git_bin" "$root" || agent_telemetry_warning "could not observe finish Git state"; fi
   agent_telemetry_write_record || true
+  return 0
 }
 
 agent_telemetry_finalize_pending() {

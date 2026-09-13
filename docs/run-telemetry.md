@@ -39,6 +39,8 @@ Records remain until the user removes them. The framework performs no automatic 
 ruby scripts/validate_run_telemetry.rb /absolute/path/to/run.json
 ```
 
+The JSON Schema is the portable structural and semantic v1 contract for invariants it can express. The repository validator enforces that contract and additionally checks normative semantic invariants that standard JSON Schema cannot conveniently express, including arithmetic consistency between Git's `dirty` flag and its staged, unstaged, and untracked entry counts. These validation layers are complementary parts of one v1 contract, not competing definitions.
+
 The common record separates these concepts:
 
 | Evidence | Meaning |

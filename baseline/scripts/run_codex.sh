@@ -367,6 +367,17 @@ telemetry_toml_scalar() {
   printf '%s' "$value"
 }
 
+telemetry_codex_version() {
+  local output=$1
+  [[ "${#output}" -le 128 ]] || return 1
+  [[ "$output" != *$'\n'* && "$output" != *$'\r'* && "$output" != *[[:cntrl:]]* ]] || return 1
+  if [[ "$output" =~ ^(codex-cli[[:space:]]+|codex[[:space:]]+)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
 observe_codex_requested_configuration() {
   local index=0 argument value assignment key
   while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
@@ -444,13 +455,15 @@ CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
 GIT_BIN="$(command -v git)"
 
-CODEX_VERSION_ENV=("PATH=$PATH")
-for name in HOME LANG LC_ALL LC_CTYPE; do
-  if [[ -n "${!name:-}" ]]; then CODEX_VERSION_ENV+=("$name=${!name}"); fi
-done
-if CODEX_VERSION_OUTPUT="$("$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version 2>/dev/null)"; then
-  CODEX_VERSION_OUTPUT=${CODEX_VERSION_OUTPUT%%$'\n'*}
-  if [[ -n "$CODEX_VERSION_OUTPUT" ]]; then agent_telemetry_set_client_version "$CODEX_VERSION_OUTPUT"; fi
+if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
+  CODEX_VERSION_ENV=("PATH=$PATH")
+  for name in HOME LANG LC_ALL LC_CTYPE; do
+    if [[ -n "${!name:-}" ]]; then CODEX_VERSION_ENV+=("$name=${!name}"); fi
+  done
+  if CODEX_VERSION_OUTPUT="$("$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version 2>/dev/null)" && \
+    CODEX_VERSION_VALUE=$(telemetry_codex_version "$CODEX_VERSION_OUTPUT"); then
+    agent_telemetry_set_client_version "$CODEX_VERSION_VALUE"
+  fi
 fi
 
 PROMPT_FILE="${PROMPT_FILE_OVERRIDE:-$PROMPT_FILE_DEFAULT}"
@@ -1571,8 +1584,7 @@ EOF
 
     if [[ -n "$EXTRA_PROMPT_FILE" ]]; then
       printf '\n----\n'
-      printf '%s\n' "Additional instructions:"
-      cat "$EXTRA_PROMPT_FILE"
+      printf '%s' "$EXTRA_TASK_CONTENT"
     fi
   )"
 fi

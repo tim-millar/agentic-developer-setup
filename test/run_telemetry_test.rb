@@ -48,7 +48,7 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_valid_telemetry(record)
     assert_equal "completed", record.fetch("state")
     assert_equal "codex-cli", record.dig("runtime", "client", "id")
-    assert_equal({"evidence_kind" => "runtime_observed", "value" => "codex-cli 1.2.3"}, record.dig("runtime", "client", "version"))
+    assert_equal({"evidence_kind" => "runtime_observed", "value" => "1.2.3"}, record.dig("runtime", "client", "version"))
     assert_equal "agent-development-framework/codex", record.dig("runtime", "harness", "id")
     assert_equal 1, record.dig("runtime", "harness", "version")
     expected_revision = "sha256:#{Digest::SHA256.file(@harness.launcher).hexdigest}"
@@ -214,6 +214,42 @@ class CodexRunTelemetryTest < Minitest::Test
     assert observed.key?("PATH")
   end
 
+  def test_version_observation_accepts_only_bounded_version_shaped_output
+    ["codex-cli 1.2.3\n", "codex 1.2.3\n", "1.2.3\n"].each do |output|
+      replace_harness
+      @harness.set_codex_version_output(output)
+      result = @harness.run
+      assert result.status.success?, result.stderr
+      assert_equal "1.2.3", @harness.telemetry_records.fetch(0).dig("runtime", "client", "version", "value")
+    end
+
+    ["warning: token=synthetic-secret\n", "codex 1.2.3 synthetic-secret\n", "codex 1.2.3\nsynthetic-secret\n", "codex #{"1" * 140}\n"].each do |output|
+      replace_harness
+      @harness.set_codex_version_output(output)
+      result = @harness.run
+      assert result.status.success?, result.stderr
+      record = @harness.telemetry_records.fetch(0)
+      assert_unavailable record.dig("runtime", "client", "version")
+      refute_includes JSON.generate(record), "synthetic-secret"
+    end
+  end
+
+  def test_inactive_telemetry_skips_the_version_probe
+    opted_out = @harness.run(env: {"AGENT_TELEMETRY" => "0"})
+    assert opted_out.status.success?, opted_out.stderr
+    refute @harness.codex_version_probed?
+    assert_empty @harness.telemetry_run_directories
+    refute_includes opted_out.stderr, "AGENT_TELEMETRY_WARNING:"
+
+    replace_harness
+    storage_file = File.join(@harness.root, "not-a-directory")
+    File.write(storage_file, "collision")
+    failed_open = @harness.run(env: {"AGENT_TELEMETRY_DIR" => File.join(storage_file, "runs")})
+    assert failed_open.status.success?, failed_open.stderr
+    refute @harness.codex_version_probed?
+    assert_includes failed_open.stderr, "AGENT_TELEMETRY_WARNING:"
+  end
+
   def test_forwarded_configuration_trims_simple_toml_scalar_whitespace
     invocations = [
       ["-c", 'model="o3"'],
@@ -275,6 +311,84 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_includes failure.stderr, "AGENT_TELEMETRY_WARNING: telemetry run root must be outside the repository"
     refute File.exist?(File.join(@harness.repository, ".agent-telemetry"))
     assert_empty @harness.repository_git("status", "--porcelain")
+  end
+
+  def test_timestamp_failures_preserve_workload_results_and_valid_prior_records
+    scenarios = [
+      [1, "17", nil, "run start timestamp"],
+      [2, "0", "started", "child start timestamp"],
+      [3, "17", "started", "child finish timestamp"],
+      [4, "0", "started", "run finish timestamp"]
+    ]
+
+    scenarios.each do |failure_call, child_exit, retained_state, warning|
+      replace_harness
+      @harness.override_telemetry_clock("timestamp", fail_on: failure_call)
+      result = @harness.run("--allow-dirty", env: {"FAKE_CODEX_EXIT" => child_exit})
+
+      assert_equal Integer(child_exit, 10), result.status.exitstatus, result.stderr
+      assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe #{warning}"
+      if retained_state
+        record = @harness.telemetry_records.fetch(0)
+        assert_equal retained_state, record.fetch("state")
+        assert_valid_telemetry(record)
+      else
+        assert_empty @harness.telemetry_run_directories
+      end
+      refute @harness.process_alive?(@harness.fake_codex_pid)
+    end
+  end
+
+  def test_unavailable_start_or_finish_epoch_preserves_started_record_without_fake_zero
+    [[1, "0"], [2, "17"]].each do |failure_call, child_exit|
+      replace_harness
+      @harness.override_telemetry_clock("epoch", fail_on: failure_call)
+      result = @harness.run("--allow-dirty", env: {"FAKE_CODEX_EXIT" => child_exit})
+
+      assert_equal Integer(child_exit, 10), result.status.exitstatus, result.stderr
+      assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe terminal elapsed time"
+      record = @harness.telemetry_records.fetch(0)
+      assert_equal "started", record.fetch("state")
+      assert_nil record.dig("timing", "calendar_elapsed_ms")
+      assert_valid_telemetry(record)
+      refute @harness.process_alive?(@harness.fake_codex_pid)
+    end
+  end
+
+  def test_random_entropy_failure_is_fail_open_for_success_and_runtime_failure
+    @harness.fail_telemetry_randomness
+
+    success = @harness.run("--allow-dirty")
+    failure = @harness.run("--allow-dirty", env: {"FAKE_CODEX_EXIT" => "19"})
+
+    assert success.status.success?, success.stderr
+    assert_equal 19, failure.status.exitstatus
+    assert_includes success.stderr, "AGENT_TELEMETRY_WARNING: could not create a unique telemetry run directory"
+    assert_includes failure.stderr, "AGENT_TELEMETRY_WARNING: could not create a unique telemetry run directory"
+    assert_empty @harness.telemetry_run_directories
+    refute @harness.codex_version_probed?
+  end
+
+  def test_extra_prompt_is_read_once_for_snapshot_and_delivered_prompt
+    original = "original task instructions"
+    mutation = "mutated task instructions"
+    path = @harness.write_repository_file("docs/EXTRA_PROMPT.txt", original)
+    @harness.commit_all("Add mutable prompt fixture")
+
+    result = @harness.run(
+      "--extra-prompt-file", "docs/EXTRA_PROMPT.txt",
+      env: {"FAKE_MUTATE_EXTRA_PROMPT_PATH" => path, "FAKE_MUTATE_EXTRA_PROMPT_CONTENT" => mutation}
+    )
+
+    assert result.status.success?, result.stderr
+    run_directory = @harness.telemetry_run_directories.fetch(0)
+    snapshot = File.binread(File.join(run_directory, "task.txt"))
+    delivered_prompt = @harness.invocation.fetch("args").last
+    assert_equal "Additional instructions:\n#{original}", snapshot
+    assert_includes delivered_prompt, snapshot
+    refute_includes delivered_prompt, mutation
+    refute_includes snapshot, mutation
+    assert_equal "sha256:#{Digest::SHA256.hexdigest(snapshot)}", @harness.telemetry_records.fetch(0).dig("task", "content_sha256")
   end
 
   def test_finalisation_failure_does_not_replace_success_or_the_started_record
@@ -484,6 +598,20 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
     assert_empty @harness.telemetry_run_directories
   end
 
+  def test_control_character_in_telemetry_path_is_json_escaped_without_changing_security_settings
+    telemetry_root = File.join(@harness.root, "telemetry-\x01-root")
+    _stdout, stderr, status = @harness.runtime(extra_env: {"AGENT_TELEMETRY_DIR" => telemetry_root})
+
+    assert status.success?, stderr
+    settings_text = File.binread(@harness.env.fetch("FAKE_SETTINGS_COPY"))
+    settings = JSON.parse(settings_text)
+    run_directory = File.realpath(Dir[File.join(telemetry_root, "run-*")].fetch(0))
+    assert_includes settings.dig("sandbox", "filesystem", "denyWrite"), run_directory
+    assert_includes settings_text, "\\u0001"
+    assert_equal true, settings.fetch("disableAllHooks")
+    assert_equal true, settings.dig("sandbox", "enabled")
+  end
+
   private
 
   def replace_harness
@@ -506,7 +634,7 @@ class RunTelemetrySchemaTest < Minitest::Test
     assert_equal false, schema.fetch("additionalProperties")
     baseline = File.binread(File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__))
     claude = File.binread(File.expand_path("../agent-runtimes/claude-explore/lib/agent_run_telemetry.sh", __dir__))
-    assert_equal baseline.rstrip, claude.rstrip
+    assert_equal baseline, claude
     runtime_observation = schema.dig("$defs", "runtime_observation")
     configuration_observation = schema.dig("$defs", "configuration_observation")
     assert_equal %w[evidence_kind value], runtime_observation.fetch("required")
@@ -518,6 +646,25 @@ class RunTelemetrySchemaTest < Minitest::Test
     assert_equal "#/$defs/runtime_observation", schema.dig("$defs", "runtime", "properties", "client", "properties", "version", "$ref")
     assert_equal "#/$defs/runtime_observation", schema.dig("$defs", "runtime", "properties", "session", "$ref")
     assert_equal "#/$defs/configuration_observation", schema.dig("$defs", "configuration_pair", "properties", "requested", "$ref")
+    started_contract, terminal_contract = schema.fetch("allOf")
+    assert_equal "started", started_contract.dig("if", "properties", "state", "const")
+    assert_equal "null", started_contract.dig("then", "properties", "timing", "properties", "run_finished_at", "type")
+    assert_equal "null", started_contract.dig("then", "properties", "termination", "properties", "reason", "type")
+    assert_includes terminal_contract.dig("if", "properties", "state", "enum"), "completed"
+    assert_equal "#/$defs/timestamp", terminal_contract.dig("then", "properties", "timing", "properties", "run_finished_at", "$ref")
+    assert_equal "integer", terminal_contract.dig("then", "properties", "timing", "properties", "calendar_elapsed_ms", "type")
+    assert_equal "string", terminal_contract.dig("then", "properties", "termination", "properties", "reason", "type")
+    git_contract = schema.dig("$defs", "git_state", "allOf").fetch(0)
+    assert_equal true, git_contract.dig("if", "properties", "detached", "const")
+    assert_equal "null", git_contract.dig("then", "properties", "branch", "type")
+    assert_equal "string", git_contract.dig("else", "properties", "branch", "type")
+    identity_contracts = schema.dig("$defs", "repository", "properties", "identity", "allOf")
+    assert_equal %w[github path_digest], identity_contracts.map { |contract| contract.dig("if", "properties", "kind", "const") }
+    task_contracts = schema.dig("$defs", "task", "allOf")
+    assert_equal "unavailable", task_contracts.fetch(0).dig("if", "properties", "source", "const")
+    assert_equal "null", task_contracts.fetch(0).dig("then", "properties", "snapshot", "type")
+    assert_equal "string", task_contracts.fetch(1).dig("then", "properties", "content_sha256", "type")
+    assert_equal "task.txt", task_contracts.fetch(2).dig("then", "properties", "snapshot", "const")
   end
 
   def test_validator_rejects_malformed_or_later_semantics_and_ignores_extensions
@@ -548,6 +695,46 @@ class RunTelemetrySchemaTest < Minitest::Test
 
     validator = AgentRunTelemetry::Validator.new(valid_started_record)
     assert validator.validate, validator.errors.join("\n")
+  end
+
+  def test_validator_and_schema_contract_cover_lifecycle_git_identity_and_task_invariants
+    assert AgentRunTelemetry::Validator.new(valid_started_record).validate
+    assert AgentRunTelemetry::Validator.new(valid_terminal_record).validate
+
+    record = valid_started_record
+    record["timing"]["run_finished_at"] = "2026-09-13T12:00:01.000Z"
+    refute_valid(record, "started record cannot contain terminal timing")
+
+    record = valid_terminal_record
+    record["timing"]["run_finished_at"] = nil
+    refute_valid(record, "timing.run_finished_at")
+
+    record = valid_terminal_record
+    record["termination"]["reason"] = nil
+    refute_valid(record, "termination.reason")
+
+    record = valid_started_record
+    record["repository"]["start"] = valid_git_state.merge("detached" => true)
+    refute_valid(record, "detached state requires a null branch")
+
+    record = valid_started_record
+    record["repository"]["start"] = valid_git_state.merge("branch" => nil)
+    refute_valid(record, "attached state requires a branch")
+
+    record = valid_started_record
+    record["repository"]["identity"]["value"] = "not-a-digest"
+    refute_valid(record, "repository.identity.value")
+
+    record = valid_started_record
+    record["task"]["snapshot"] = "task.txt"
+    refute_valid(record, "task.content_sha256")
+    validator = AgentRunTelemetry::Validator.new(record)
+    refute validator.validate
+    assert validator.errors.any? { |error| error.include?("unavailable task evidence") }
+
+    record = valid_started_record
+    record["task"].merge!("source" => "local_prompt", "content_sha256" => "sha256:#{"2" * 64}", "snapshot" => nil)
+    refute_valid(record, "task.snapshot")
   end
 
   def test_launch_intent_without_child_start_is_launch_failed
@@ -639,6 +826,31 @@ class RunTelemetrySchemaTest < Minitest::Test
       "timing" => {"run_started_at" => "2026-09-13T12:00:00.000Z", "child_started_at" => nil, "child_finished_at" => nil, "run_finished_at" => nil, "calendar_elapsed_ms" => nil},
       "termination" => {"child_exit_code" => nil, "signal" => nil, "reason" => nil},
       "extensions" => {}
+    }
+  end
+
+  def valid_terminal_record
+    record = Marshal.load(Marshal.dump(valid_started_record))
+    record["state"] = "completed"
+    record["timing"].merge!(
+      "child_started_at" => "2026-09-13T12:00:00.000Z",
+      "child_finished_at" => "2026-09-13T12:00:01.000Z",
+      "run_finished_at" => "2026-09-13T12:00:01.000Z",
+      "calendar_elapsed_ms" => 1000
+    )
+    record["termination"].merge!("child_exit_code" => 0, "reason" => "child_exited_successfully")
+    record
+  end
+
+  def valid_git_state
+    {
+      "branch" => "main",
+      "detached" => false,
+      "head_sha" => "a" * 40,
+      "dirty" => false,
+      "staged_count" => 0,
+      "unstaged_count" => 0,
+      "untracked_count" => 0
     }
   end
 
