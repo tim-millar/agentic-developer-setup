@@ -852,7 +852,10 @@ class RunTelemetrySchemaTest < Minitest::Test
       File.write(File.join(repository, "untracked.txt"), "new\n")
       File.write(control, "before\nafter\nfinal\n")
       helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
-      git_bin = `command -v git`.strip
+      git_bin = ENV.fetch("PATH").split(File::PATH_SEPARATOR)
+        .map { |directory| File.join(directory, "git") }
+        .find { |path| File.file?(path) && File.executable?(path) }
+      refute_nil git_bin
       File.write(script, <<~BASH)
         #!/usr/bin/env bash
         source #{helper.dump}
