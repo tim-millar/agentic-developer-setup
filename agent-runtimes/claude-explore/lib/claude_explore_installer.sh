@@ -65,7 +65,7 @@ validate_claude_launcher() {
   [ "$name" = 0 ] || [ "$name" = "$(id -u)" ] || die "Claude target has an untrusted owner"
   mode=$(file_mode "$target") || die "cannot inspect Claude target"
   [ $((8#$mode & 022)) -eq 0 ] || die "Claude target is group/world writable"
-  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
+  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u AGENT_TELEMETRY -u AGENT_TELEMETRY_DIR)
   while IFS= read -r name; do scrub_args+=( -u "$name" ); done <<EOF
 $CLAUDE_EXPLORE_ENV_UNSET
 EOF

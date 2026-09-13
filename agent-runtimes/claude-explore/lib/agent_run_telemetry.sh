@@ -384,7 +384,7 @@ agent_telemetry_set_requested_configuration() {
 }
 
 agent_telemetry_observe_repository() {
-  local git_bin=$1 root=$2 remote remainder owner repository canonical digest
+  local git_bin=$1 root=$2 remote remainder="" owner="" repository="" canonical digest
   [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]] || return 0
   if [[ -n "$git_bin" ]]; then remote=$("$git_bin" -C "$root" remote get-url origin 2>/dev/null || true); else remote=""; fi
   case "$remote" in
@@ -393,13 +393,15 @@ agent_telemetry_observe_repository() {
     ssh://git@github.com/*) remainder=${remote#ssh://git@github.com/} ;;
     *) remainder="" ;;
   esac
-  if [[ -n "$remainder" ]]; then
-    owner=${remainder%%/*}; repository=${remainder#*/}; repository=${repository%.git}
-    if [[ -n "$owner" && -n "$repository" && "$repository" != */* ]]; then
-      AGENT_TELEMETRY_REPOSITORY_KIND=github
-      AGENT_TELEMETRY_REPOSITORY_VALUE=$owner/$repository
-      return 0
-    fi
+  if [[ "$remainder" =~ ^([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})[.]git$ ]]; then
+    owner=${BASH_REMATCH[1]}; repository=${BASH_REMATCH[2]}
+  elif [[ "$remainder" =~ ^([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})$ ]]; then
+    owner=${BASH_REMATCH[1]}; repository=${BASH_REMATCH[2]}
+  fi
+  if [[ -n "$owner" && -n "$repository" && "$repository" != *.git ]]; then
+    AGENT_TELEMETRY_REPOSITORY_KIND=github
+    AGENT_TELEMETRY_REPOSITORY_VALUE=$owner/$repository
+    return 0
   fi
   canonical=$(cd "$root" 2>/dev/null && pwd -P) || return 1
   digest=$(printf '%s' "$canonical" | agent_telemetry_sha256_stdin) || return 1
@@ -445,7 +447,11 @@ agent_telemetry_set_task() {
   local source=$1 identifier=$2 content=$3 temporary digest
   [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]] || return 0
   temporary=$AGENT_TELEMETRY_RUN_DIR/.task.txt.tmp.$$
-  if ! (umask 077; printf '%s' "$content" > "$temporary") 2>/dev/null; then agent_telemetry_warning "could not stage task snapshot"; return 1; fi
+  if ! (umask 077; printf '%s' "$content" > "$temporary") 2>/dev/null; then
+    /bin/rm -f -- "$temporary" 2>/dev/null || true
+    agent_telemetry_warning "could not stage task snapshot"
+    return 1
+  fi
   digest=$(agent_telemetry_sha256_file "$temporary") || { /bin/rm -f -- "$temporary"; agent_telemetry_warning "could not digest task snapshot"; return 1; }
   if ! /bin/chmod 600 "$temporary" 2>/dev/null || ! /bin/mv "$temporary" "$AGENT_TELEMETRY_RUN_DIR/task.txt" 2>/dev/null; then
     /bin/rm -f -- "$temporary" 2>/dev/null || true

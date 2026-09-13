@@ -148,7 +148,7 @@
           "allOf": [
             {
               "if": {"properties": {"kind": {"const": "github"}}, "required": ["kind"]},
-              "then": {"properties": {"value": {"pattern": "^[^\\s/@]+/[^\\s/]+$"}}}
+              "then": {"properties": {"value": {"pattern": "^[A-Za-z0-9_.-]{1,100}/(?![A-Za-z0-9_.-]*[.]git(?![\\s\\S]))[A-Za-z0-9_.-]{1,100}(?![\\s\\S])"}}}
             },
             {
               "if": {"properties": {"kind": {"const": "path_digest"}}, "required": ["kind"]},

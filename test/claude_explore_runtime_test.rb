@@ -73,6 +73,20 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes @harness.read(@harness.metadata), "claude_launcher_path=#{@harness.claude_launcher}\n"
   end
 
+  def test_installer_version_probe_strips_telemetry_controls
+    _stdout, stderr, status = @harness.install(
+      extra_env: {
+        "AGENT_TELEMETRY" => "0",
+        "AGENT_TELEMETRY_DIR" => "/tmp/synthetic-private-telemetry-path"
+      }
+    )
+
+    assert status.success?, stderr
+    environment = @harness.read(@harness.claude_version_env_log).lines(chomp: true)
+    refute environment.any? { |entry| entry.start_with?("AGENT_TELEMETRY=") }
+    refute environment.any? { |entry| entry.start_with?("AGENT_TELEMETRY_DIR=") }
+  end
+
   def test_missing_old_unparseable_recursive_and_broken_launchers_fail_closed
     _stdout, stderr, status = @harness.install(extra_env: {"FAKE_CLAUDE_VERSION" => "2.1.223"})
     refute status.success?

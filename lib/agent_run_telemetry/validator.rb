@@ -15,6 +15,7 @@ module AgentRunTelemetry
     SHA256 = /\Asha256:[0-9a-f]{64}\z/
     SHA = /\A[0-9a-f]{40,64}\z/
     TIMESTAMP = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z/
+    GITHUB_REPOSITORY = /\A[A-Za-z0-9_.-]{1,100}\/(?![A-Za-z0-9_.-]*[.]git\z)[A-Za-z0-9_.-]{1,100}\z/
 
     attr_reader :errors
 
@@ -92,7 +93,7 @@ module AgentRunTelemetry
         exact_keys(identity, "repository.identity", %w[kind value])
         enum(identity["kind"], "repository.identity.kind", %w[github path_digest])
         if identity["kind"] == "github"
-          pattern(identity["value"], "repository.identity.value", /\A[^\s\/@]+\/[^\s\/]+\z/)
+          pattern(identity["value"], "repository.identity.value", GITHUB_REPOSITORY)
         elsif identity["kind"] == "path_digest"
           pattern(identity["value"], "repository.identity.value", SHA256)
         end
@@ -173,8 +174,11 @@ module AgentRunTelemetry
       %w[staged_count unstaged_count untracked_count].each { |name| nonnegative_integer(state[name], "#{location}.#{name}") }
       error(location, "attached state requires a branch") if state["detached"] == false && state["branch"].nil?
       error(location, "detached state requires a null branch") if state["detached"] == true && state["branch"]
-      expected_dirty = state.values_at("staged_count", "unstaged_count", "untracked_count").compact.sum.positive?
-      error("#{location}.dirty", "does not match status counts") if [true, false].include?(state["dirty"]) && state["dirty"] != expected_dirty
+      counts = state.values_at("staged_count", "unstaged_count", "untracked_count")
+      if counts.all? { |count| count.is_a?(Integer) && count >= 0 }
+        expected_dirty = counts.sum.positive?
+        error("#{location}.dirty", "does not match status counts") if [true, false].include?(state["dirty"]) && state["dirty"] != expected_dirty
+      end
     end
 
     def exact_keys(object, location, keys)

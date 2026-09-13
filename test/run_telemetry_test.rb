@@ -4,6 +4,7 @@ require "digest"
 require "json"
 require "minitest/autorun"
 require "open3"
+require "rbconfig"
 require "timeout"
 require_relative "../lib/agent_run_telemetry/validator"
 require_relative "support/claude_explore_harness"
@@ -697,6 +698,13 @@ class RunTelemetrySchemaTest < Minitest::Test
     assert_equal "string", git_contract.dig("else", "properties", "branch", "type")
     identity_contracts = schema.dig("$defs", "repository", "properties", "identity", "allOf")
     assert_equal %w[github path_digest], identity_contracts.map { |contract| contract.dig("if", "properties", "kind", "const") }
+    github_identity_pattern = identity_contracts.fetch(0).dig("then", "properties", "value", "pattern")
+    assert_equal "^[A-Za-z0-9_.-]{1,100}/(?![A-Za-z0-9_.-]*[.]git(?![\\s\\S]))[A-Za-z0-9_.-]{1,100}(?![\\s\\S])", github_identity_pattern
+    github_identity_regexp = Regexp.new(github_identity_pattern)
+    assert_match github_identity_regexp, "example-owner/example-repo"
+    ["example-owner/example-repo?token=value", "example-owner/example-repo#fragment", "example-owner/example-repo/extra", "example-owner/example-repo\n"].each do |identity|
+      refute_match github_identity_regexp, identity
+    end
     task_contracts = schema.dig("$defs", "task", "allOf")
     assert_equal "unavailable", task_contracts.fetch(0).dig("if", "properties", "source", "const")
     assert_equal "null", task_contracts.fetch(0).dig("then", "properties", "snapshot", "type")
@@ -774,6 +782,57 @@ class RunTelemetrySchemaTest < Minitest::Test
     refute_valid(record, "task.snapshot")
   end
 
+  def test_validator_accepts_only_strict_github_repository_identities
+    record = valid_started_record
+    record["repository"]["identity"] = {"kind" => "github", "value" => "example-owner/example-repo"}
+    validator = AgentRunTelemetry::Validator.new(record)
+    assert validator.validate, validator.errors.join("\n")
+
+    [
+      "example-owner/example-repo?token=synthetic-secret",
+      "example-owner/example-repo#fragment",
+      "example-owner/example-repo/extra",
+      "example-owner/example-repo.git",
+      "example-owner/repo@github",
+      "example-owner/example-repo\n"
+    ].each do |identity|
+      record = valid_started_record
+      record["repository"]["identity"] = {"kind" => "github", "value" => identity}
+      refute_valid(record, "repository.identity.value")
+    end
+  end
+
+  def test_validator_reports_invalid_git_counts_without_raising
+    record = valid_started_record
+    record["repository"]["start"] = valid_git_state.merge("staged_count" => "1")
+    validator = AgentRunTelemetry::Validator.new(record)
+    refute validator.validate
+    assert validator.errors.any? { |error| error.include?("repository.start.staged_count") }, validator.errors.join("\n")
+
+    record = valid_started_record
+    record["repository"]["start"] = valid_git_state.merge("unstaged_count" => -1)
+    validator = AgentRunTelemetry::Validator.new(record)
+    refute validator.validate
+    assert validator.errors.any? { |error| error.include?("repository.start.unstaged_count") }, validator.errors.join("\n")
+  end
+
+  def test_validator_cli_reports_malformed_git_counts_without_a_backtrace
+    Dir.mktmpdir("telemetry-validator-cli-") do |root|
+      record = valid_started_record
+      record["repository"]["start"] = valid_git_state.merge("staged_count" => "1")
+      path = File.join(root, "run.json")
+      File.binwrite(path, JSON.generate(record))
+      validator_script = File.expand_path("../scripts/validate_run_telemetry.rb", __dir__)
+
+      stdout, stderr, status = Open3.capture3(RbConfig.ruby, validator_script, path)
+
+      refute status.success?
+      assert_empty stdout
+      assert_includes stderr, "repository.start.staged_count: must be a non-negative integer"
+      refute_match(/TypeError|Traceback|from .*validator\.rb/, stderr)
+    end
+  end
+
   def test_launch_intent_without_child_start_is_launch_failed
     result, record = run_helper_scenario(<<~BASH)
       agent_telemetry_mark_preflight_complete
@@ -832,6 +891,68 @@ class RunTelemetrySchemaTest < Minitest::Test
     end
   end
 
+  def test_repository_observation_promotes_only_strict_supported_github_remotes
+    valid_remotes = [
+      "https://github.com/example-owner/example-repo",
+      "https://github.com/example-owner/example-repo.git",
+      "git@github.com:example-owner/example-repo",
+      "git@github.com:example-owner/example-repo.git",
+      "ssh://git@github.com/example-owner/example-repo",
+      "ssh://git@github.com/example-owner/example-repo.git"
+    ]
+    valid_remotes.each do |remote|
+      status, record, stderr, _artifacts, _path_digest = run_repository_observation(remote)
+
+      assert_equal 23, status.exitstatus, stderr
+      assert_equal({"kind" => "github", "value" => "example-owner/example-repo"}, record.dig("repository", "identity"))
+      validator = AgentRunTelemetry::Validator.new(record)
+      assert validator.validate, validator.errors.join("\n")
+    end
+
+    malformed_remotes = [
+      "https://github.com/example-owner/example-repo.git?token=synthetic-secret",
+      "https://github.com/example-owner/example-repo.git#fragment",
+      "https://github.com/example-owner/example-repo/extra"
+    ]
+    malformed_remotes.each do |remote|
+      status, record, stderr, artifacts, path_digest = run_repository_observation(remote)
+
+      assert_equal 23, status.exitstatus, stderr
+      assert_equal({"kind" => "path_digest", "value" => path_digest}, record.dig("repository", "identity"))
+      refute_includes artifacts.values.join, "synthetic-secret"
+      validator = AgentRunTelemetry::Validator.new(record)
+      assert validator.validate, validator.errors.join("\n")
+    end
+  end
+
+  def test_partial_task_snapshot_write_is_removed_without_changing_workload_status
+    task_content = "synthetic-task-content-that-must-not-remain"
+    result, record, stderr, artifacts = run_helper_scenario(<<~BASH, include_artifacts: true)
+      task_content=#{task_content.dump}
+      printf() {
+        if [[ "$1" == "%s" && "${2:-}" == "$task_content" ]]; then
+          builtin printf '%s' 'synthetic-task-content-that-must-not-remain'
+          return 1
+        fi
+        builtin printf "$@"
+      }
+      agent_telemetry_set_task local_prompt "" "$task_content" || :
+      unset -f printf
+      agent_telemetry_finalize_pending 17 "" ""
+      exit 17
+    BASH
+
+    assert_equal 17, result.exitstatus
+    assert_equal "preflight_failed", record.fetch("state")
+    assert_equal "unavailable", record.dig("task", "source")
+    assert_includes stderr, "AGENT_TELEMETRY_WARNING: could not stage task snapshot"
+    refute artifacts.key?("task.txt")
+    refute artifacts.keys.any? { |name| name.start_with?(".task.txt.tmp.") }
+    refute_includes artifacts.values.join, task_content
+    validator = AgentRunTelemetry::Validator.new(record)
+    assert validator.validate, validator.errors.join("\n")
+  end
+
   def test_git_capture_preserves_inherited_fd_8_and_status_counts
     Dir.mktmpdir("telemetry-fd-scenario-") do |root|
       repository = File.join(root, "repository")
@@ -852,10 +973,7 @@ class RunTelemetrySchemaTest < Minitest::Test
       File.write(File.join(repository, "untracked.txt"), "new\n")
       File.write(control, "before\nafter\nfinal\n")
       helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
-      git_bin = ENV.fetch("PATH").split(File::PATH_SEPARATOR)
-        .map { |directory| File.join(directory, "git") }
-        .find { |path| File.file?(path) && File.executable?(path) }
-      refute_nil git_bin
+      git_bin = "git"
       File.write(script, <<~BASH)
         #!/usr/bin/env bash
         source #{helper.dump}
@@ -991,6 +1109,38 @@ class RunTelemetrySchemaTest < Minitest::Test
     assert status.success?, stderr
   end
 
+  def run_repository_observation(remote)
+    Dir.mktmpdir("telemetry-repository-identity-") do |root|
+      repository = File.join(root, "repository")
+      telemetry = File.join(root, "telemetry")
+      script = File.join(root, "observe.sh")
+      FileUtils.mkdir_p(repository)
+      git(repository, "init", "-q", "-b", "main")
+      git(repository, "remote", "add", "origin", remote)
+      helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
+      File.write(script, <<~BASH)
+        #!/usr/bin/env bash
+        source #{helper.dump}
+        AGENT_TELEMETRY=1
+        AGENT_TELEMETRY_DIR=#{telemetry.dump}
+        agent_telemetry_start codex-cli agent-development-framework/codex 1 #{helper.dump} #{repository.dump}
+        agent_telemetry_observe_repository git #{repository.dump} || exit 90
+        agent_telemetry_finalize_pending 23 "" ""
+        exit 23
+      BASH
+      File.chmod(0o700, script)
+      _stdout, stderr, status = Open3.capture3("/bin/bash", script)
+      directory = Dir[File.join(telemetry, "run-*")].fetch(0)
+      artifacts = Dir.children(directory).to_h do |name|
+        path = File.join(directory, name)
+        [name, File.file?(path) ? File.binread(path) : ""]
+      end
+      record = JSON.parse(artifacts.fetch("run.json"))
+      path_digest = "sha256:#{Digest::SHA256.hexdigest(File.realpath(repository))}"
+      [status, record, stderr, artifacts, path_digest]
+    end
+  end
+
   def run_initial_helper(repository_hint:, telemetry:, exit_status:, finalize: false)
     helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
     script = File.join(File.dirname(telemetry), "initial-#{File.basename(telemetry)}.sh")
@@ -1011,7 +1161,7 @@ class RunTelemetrySchemaTest < Minitest::Test
     [status, record, stderr]
   end
 
-  def run_helper_scenario(body, include_stderr: false)
+  def run_helper_scenario(body, include_stderr: false, include_artifacts: false)
     Dir.mktmpdir("telemetry-helper-scenario-") do |root|
       repository = File.join(root, "repository")
       telemetry = File.join(root, "telemetry")
@@ -1030,6 +1180,13 @@ class RunTelemetrySchemaTest < Minitest::Test
       _stdout, stderr, status = Open3.capture3("/bin/bash", script)
       directory = Dir[File.join(telemetry, "run-*")].fetch(0)
       record = JSON.parse(File.binread(File.join(directory, "run.json")))
+      if include_artifacts
+        artifacts = Dir.children(directory).to_h do |name|
+          path = File.join(directory, name)
+          [name, File.file?(path) ? File.binread(path) : ""]
+        end
+        return [status, record, stderr, artifacts]
+      end
       return [status, record, stderr] if include_stderr
 
       [status, record]
