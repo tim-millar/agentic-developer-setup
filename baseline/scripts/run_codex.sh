@@ -57,9 +57,14 @@ RENEWAL_RESULT_FILE=""
 SESSION_SHUTDOWN_FILE=""
 DEBUG_PROMPT_PATH=""
 CODEX_PID=""
+CODEX_VERSION_PROBE_DIR=""
+CODEX_VERSION_PROBE_PID=""
+CODEX_VERSION_CAPTURE_PID=""
 HOST_ENV_DIR=""
 GIT_BIN=""
 
+CODEX_VERSION_PROBE_TIMEOUT_SECONDS=5
+CODEX_VERSION_PROBE_MAX_BYTES=128
 GITHUB_REFRESH_INTERVAL_SECONDS=2700
 GITHUB_RETRY_INTERVAL_SECONDS=300
 GITHUB_RENEWAL_CONNECT_TIMEOUT_SECONDS=10
@@ -74,9 +79,28 @@ REPO_ID=""
 REPO_FULL_NAME="${EXPECTED_OWNER}/${EXPECTED_REPO}"
 DEFAULT_BRANCH=""
 
+cleanup_codex_version_probe() {
+  local pid
+
+  for pid in "$CODEX_VERSION_PROBE_PID" "$CODEX_VERSION_CAPTURE_PID"; do
+    [[ -n "$pid" ]] || continue
+    kill -TERM "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  CODEX_VERSION_PROBE_PID=""
+  CODEX_VERSION_CAPTURE_PID=""
+
+  if [[ -n "$CODEX_VERSION_PROBE_DIR" && -d "$CODEX_VERSION_PROBE_DIR" ]]; then
+    rm -rf "$CODEX_VERSION_PROBE_DIR" 2>/dev/null || true
+  fi
+  CODEX_VERSION_PROBE_DIR=""
+}
+
 cleanup() {
   local status=$?
 
+  cleanup_codex_version_probe
   agent_telemetry_finalize_pending "$status" "$GIT_BIN" "$REPO_ROOT"
 
   if [[ -n "$SESSION_SHUTDOWN_FILE" && -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]]; then
@@ -378,6 +402,108 @@ telemetry_codex_version() {
   return 1
 }
 
+probe_codex_version() {
+  local capture_status=0 deadline output_bytes output_file output_pipe
+  local probe_status=0 timed_out=0
+  local dd_bin="" mkfifo_bin="" wc_bin=""
+
+  mkfifo_bin=$(command -v mkfifo 2>/dev/null) || mkfifo_bin=""
+  dd_bin=$(command -v dd 2>/dev/null) || dd_bin=""
+  wc_bin=$(command -v wc 2>/dev/null) || wc_bin=""
+  [[ -n "$mkfifo_bin" && -n "$dd_bin" && -n "$wc_bin" ]] || return 1
+
+  CODEX_VERSION_PROBE_DIR=""
+  if ! CODEX_VERSION_PROBE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/codex.version.XXXXXX" 2>/dev/null); then
+    CODEX_VERSION_PROBE_DIR=""
+    return 1
+  fi
+  if ! "$CHMOD_BIN" 700 "$CODEX_VERSION_PROBE_DIR" 2>/dev/null; then
+    cleanup_codex_version_probe
+    return 1
+  fi
+
+  output_pipe="$CODEX_VERSION_PROBE_DIR/stdout.pipe"
+  output_file="$CODEX_VERSION_PROBE_DIR/stdout"
+  if ! "$mkfifo_bin" "$output_pipe" 2>/dev/null; then
+    cleanup_codex_version_probe
+    return 1
+  fi
+
+  # Capture one byte beyond the accepted limit so truncated output cannot be
+  # mistaken for a complete version response.
+  (
+    umask 077
+    exec "$dd_bin" if="$output_pipe" of="$output_file" bs=1 count=$((CODEX_VERSION_PROBE_MAX_BYTES + 1)) 2>/dev/null
+  ) &
+  CODEX_VERSION_CAPTURE_PID=$!
+  (
+    umask 077
+    exec "$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version > "$output_pipe" 2>/dev/null
+  ) &
+  CODEX_VERSION_PROBE_PID=$!
+
+  deadline=$((SECONDS + CODEX_VERSION_PROBE_TIMEOUT_SECONDS))
+  while kill -0 "$CODEX_VERSION_PROBE_PID" 2>/dev/null; do
+    if [[ -n "$CODEX_VERSION_CAPTURE_PID" ]] && ! kill -0 "$CODEX_VERSION_CAPTURE_PID" 2>/dev/null; then
+      wait "$CODEX_VERSION_CAPTURE_PID" 2>/dev/null || capture_status=$?
+      CODEX_VERSION_CAPTURE_PID=""
+    fi
+    if [[ "$SECONDS" -ge "$deadline" ]]; then
+      timed_out=1
+      break
+    fi
+    if ! /bin/sleep 0.1 2>/dev/null; then
+      timed_out=1
+      break
+    fi
+  done
+  if [[ "$timed_out" == 1 ]]; then
+    cleanup_codex_version_probe
+    return 1
+  fi
+
+  wait "$CODEX_VERSION_PROBE_PID" 2>/dev/null || probe_status=$?
+  CODEX_VERSION_PROBE_PID=""
+  if [[ -n "$CODEX_VERSION_CAPTURE_PID" ]]; then
+    while kill -0 "$CODEX_VERSION_CAPTURE_PID" 2>/dev/null; do
+      if [[ "$SECONDS" -ge "$deadline" ]]; then
+        timed_out=1
+        break
+      fi
+      if ! /bin/sleep 0.1 2>/dev/null; then
+        timed_out=1
+        break
+      fi
+    done
+    if [[ "$timed_out" == 1 ]]; then
+      cleanup_codex_version_probe
+      return 1
+    fi
+
+    wait "$CODEX_VERSION_CAPTURE_PID" 2>/dev/null || capture_status=$?
+    CODEX_VERSION_CAPTURE_PID=""
+  fi
+  if [[ "$probe_status" -ne 0 || "$capture_status" -ne 0 || ! -f "$output_file" ]]; then
+    cleanup_codex_version_probe
+    return 1
+  fi
+
+  output_bytes=$(LC_ALL=C "$wc_bin" -c < "$output_file" 2>/dev/null) || output_bytes=""
+  output_bytes=${output_bytes//[[:space:]]/}
+  if [[ ! "$output_bytes" =~ ^[0-9]+$ || "$output_bytes" -gt "$CODEX_VERSION_PROBE_MAX_BYTES" ]]; then
+    cleanup_codex_version_probe
+    return 1
+  fi
+
+  CODEX_VERSION_OUTPUT=$(< "$output_file")
+  cleanup_codex_version_probe
+  if CODEX_VERSION_VALUE=$(telemetry_codex_version "$CODEX_VERSION_OUTPUT"); then
+    return 0
+  fi
+  CODEX_VERSION_VALUE=""
+  return 1
+}
+
 observe_codex_requested_configuration() {
   local index=0 argument value assignment key
   while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
@@ -460,8 +586,8 @@ if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
   for name in HOME LANG LC_ALL LC_CTYPE; do
     if [[ -n "${!name:-}" ]]; then CODEX_VERSION_ENV+=("$name=${!name}"); fi
   done
-  if CODEX_VERSION_OUTPUT="$("$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version 2>/dev/null)" && \
-    CODEX_VERSION_VALUE=$(telemetry_codex_version "$CODEX_VERSION_OUTPUT"); then
+  CODEX_VERSION_VALUE=""
+  if probe_codex_version; then
     agent_telemetry_set_client_version "$CODEX_VERSION_VALUE"
   fi
 fi

@@ -117,7 +117,9 @@ class CodexRunTelemetryTest < Minitest::Test
   end
 
   def test_signal_interruption_is_terminal_and_preserves_exit_status
-    stdin, stdout, stderr, wait_thread = @harness.spawn(env: {"FAKE_CODEX_WAIT" => "1"})
+    stdin, stdout, stderr, wait_thread = @harness.spawn(
+      env: {"FAKE_CODEX_WAIT" => "1", "FAKE_CODEX_SIGNAL_EXIT" => "41"}
+    )
     wait_for(@harness.started_marker)
     Process.kill("TERM", wait_thread.pid)
     status = wait_thread.value
@@ -130,8 +132,39 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_equal "interrupted", record.fetch("state")
     assert_equal "TERM", record.dig("termination", "signal")
     refute_nil record.dig("timing", "child_finished_at")
-    assert_equal 143, record.dig("termination", "child_exit_code")
+    assert_equal 41, record.dig("termination", "child_exit_code")
   ensure
+    [stdin, stdout, stderr].compact.each { |io| io.close unless io.closed? }
+  end
+
+  def test_signal_during_version_probe_leaves_child_status_unavailable_and_cleans_probe
+    @harness.hang_codex_version
+    stdin, stdout, stderr, wait_thread = @harness.spawn
+    Timeout.timeout(8) do
+      sleep 0.02 until @harness.codex_version_probe_pid
+    end
+    probe_pid = @harness.codex_version_probe_pid
+
+    Process.kill("TERM", wait_thread.pid)
+    status = wait_thread.value
+    stdin.close
+    stdout.read
+    diagnostic = stderr.read
+
+    assert_equal 143, status.exitstatus, diagnostic
+    record = @harness.telemetry_records.fetch(0)
+    assert_valid_telemetry(record)
+    assert_equal "interrupted", record.fetch("state")
+    assert_equal "TERM", record.dig("termination", "signal")
+    assert_nil record.dig("termination", "child_exit_code")
+    assert_nil record.dig("timing", "child_started_at")
+    refute @harness.process_alive?(probe_pid)
+    assert_empty @harness.codex_version_probe_temporary_paths
+  ensure
+    if wait_thread&.alive?
+      Process.kill("KILL", wait_thread.pid)
+      wait_thread.value
+    end
     [stdin, stdout, stderr].compact.each { |io| io.close unless io.closed? }
   end
 
@@ -233,6 +266,61 @@ class CodexRunTelemetryTest < Minitest::Test
       assert_unavailable record.dig("runtime", "client", "version")
       refute_includes JSON.generate(record), "synthetic-secret"
     end
+  end
+
+  def test_version_probe_rejects_oversized_output_without_accepting_a_valid_prefix
+    @harness.set_codex_version_output("codex 1.2.3\n#{"x" * 256}")
+
+    result = @harness.run
+
+    assert result.status.success?, result.stderr
+    assert_unavailable @harness.telemetry_records.fetch(0).dig("runtime", "client", "version")
+    assert_equal 1, @harness.codex_invocations.length
+    assert_empty @harness.codex_version_probe_temporary_paths
+  end
+
+  def test_streaming_version_probe_is_bounded_terminated_and_reaped
+    @harness.stream_codex_version
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    result = @harness.run
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+    assert result.status.success?, result.stderr
+    assert_operator elapsed, :<, 10
+    assert_unavailable @harness.telemetry_records.fetch(0).dig("runtime", "client", "version")
+    assert_equal 1, @harness.codex_invocations.length
+    refute @harness.process_alive?(@harness.codex_version_probe_pid)
+    assert_empty @harness.codex_version_probe_temporary_paths
+  end
+
+  def test_hanging_version_probe_times_out_without_blocking_the_workload
+    @harness.hang_codex_version
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    result = @harness.run
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+    assert result.status.success?, result.stderr
+    assert_operator elapsed, :<, 10
+    assert_unavailable @harness.telemetry_records.fetch(0).dig("runtime", "client", "version")
+    assert_equal 1, @harness.codex_invocations.length
+    refute @harness.process_alive?(@harness.codex_version_probe_pid)
+    assert_empty @harness.codex_version_probe_temporary_paths
+  end
+
+  def test_nonzero_version_probe_is_fail_open_and_workload_still_runs
+    @harness.fail_codex_version
+
+    result = @harness.run(env: {"FAKE_CODEX_EXIT" => "17"})
+
+    assert_equal 17, result.status.exitstatus, result.stderr
+    record = @harness.telemetry_records.fetch(0)
+    assert_equal "runtime_failed", record.fetch("state")
+    assert_equal 17, record.dig("termination", "child_exit_code")
+    assert_unavailable record.dig("runtime", "client", "version")
+    assert_equal 1, @harness.codex_invocations.length
+    assert_empty @harness.codex_version_probe_temporary_paths
   end
 
   def test_inactive_telemetry_skips_the_version_probe
@@ -843,6 +931,26 @@ class RunTelemetrySchemaTest < Minitest::Test
 
     assert_equal 23, result.exitstatus
     assert_equal "launch_failed", record.fetch("state")
+    assert_nil record.dig("timing", "child_started_at")
+    assert_nil record.dig("timing", "child_finished_at")
+    validator = AgentRunTelemetry::Validator.new(record)
+    assert validator.validate, validator.errors.join("\n")
+  end
+
+  def test_interrupted_without_observed_child_completion_does_not_invent_child_status
+    result, record = run_helper_scenario(<<~BASH)
+      agent_telemetry_mark_preflight_complete
+      agent_telemetry_mark_launch_intent
+      AGENT_TELEMETRY_SIGNAL=INT
+      agent_telemetry_finalize_pending 130 "" ""
+      exit 130
+    BASH
+
+    assert_equal 130, result.exitstatus
+    assert_equal "interrupted", record.fetch("state")
+    assert_equal "signal", record.dig("termination", "reason")
+    assert_equal "INT", record.dig("termination", "signal")
+    assert_nil record.dig("termination", "child_exit_code")
     assert_nil record.dig("timing", "child_started_at")
     assert_nil record.dig("timing", "child_finished_at")
     validator = AgentRunTelemetry::Validator.new(record)

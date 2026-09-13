@@ -517,11 +517,10 @@ agent_telemetry_finalize() {
 }
 
 agent_telemetry_finalize_pending() {
-  local process_status=$1 git_bin=$2 root=$3 state reason
+  local git_bin=$2 root=$3 state reason
   [[ "$AGENT_TELEMETRY_ACTIVE" == 1 && "$AGENT_TELEMETRY_TERMINAL" == 0 ]] || return 0
   if [[ -n "$AGENT_TELEMETRY_SIGNAL" ]]; then
     state=interrupted; reason=signal
-    [[ -n "$AGENT_TELEMETRY_CHILD_EXIT_CODE" ]] || AGENT_TELEMETRY_CHILD_EXIT_CODE=$process_status
   elif [[ -n "$AGENT_TELEMETRY_CHILD_FINISHED_AT" ]]; then
     if [[ "$AGENT_TELEMETRY_CHILD_EXIT_CODE" -eq 0 ]]; then state=completed; reason=child_exited_successfully
     else state=runtime_failed; reason=child_exited_nonzero; fi

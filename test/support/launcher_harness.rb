@@ -56,7 +56,10 @@ class LauncherHarness
     @helper_clock_file = File.join(root, "helper-clock")
     @codex_version_env_log = File.join(root, "codex-version-environment.json")
     @codex_version_failure_marker = File.join(root, "codex-version-failure")
+    @codex_version_hang_marker = File.join(root, "codex-version-hang")
+    @codex_version_stream_marker = File.join(root, "codex-version-stream")
     @codex_version_output = File.join(root, "codex-version-output")
+    @codex_version_probe_pid_file = File.join(root, "codex-version-probe.pid")
     @telemetry_root = File.join(root, "telemetry-runs")
     @telemetry_enabled = telemetry
     @synthetic_clock_file = File.join(root, "synthetic-clock")
@@ -386,12 +389,28 @@ class LauncherHarness
     File.write(@codex_version_failure_marker, "fail\n")
   end
 
+  def hang_codex_version
+    File.write(@codex_version_hang_marker, "hang\n")
+  end
+
+  def stream_codex_version
+    File.write(@codex_version_stream_marker, "stream\n")
+  end
+
   def set_codex_version_output(output)
     File.binwrite(@codex_version_output, output)
   end
 
   def codex_version_probed?
     File.exist?(codex_version_env_log)
+  end
+
+  def codex_version_probe_pid
+    marker_pid(@codex_version_probe_pid_file)
+  end
+
+  def codex_version_probe_temporary_paths
+    Dir[File.join(tmpdir, "codex.version.*")]
   end
 
   def override_telemetry_clock(name, fail_on:)
@@ -640,7 +659,19 @@ class LauncherHarness
 
       if ARGV == ["--version"]
         File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
+        File.write(#{@codex_version_probe_pid_file.dump}, Process.pid.to_s)
         exit 1 if File.exist?(#{@codex_version_failure_marker.dump})
+        sleep 30 if File.exist?(#{@codex_version_hang_marker.dump})
+        if File.exist?(#{@codex_version_stream_marker.dump})
+          loop do
+            begin
+              STDOUT.write("codex 1.2.3\n" + ("x" * 4096))
+              STDOUT.flush
+            rescue Errno::EPIPE
+              sleep 0.01
+            end
+          end
+        end
         STDOUT.write(File.binread(#{@codex_version_output.dump}))
         exit 0
       end
@@ -691,12 +722,12 @@ class LauncherHarness
         Signal.trap("INT") do
           File.open(ENV.fetch("FAKE_SIGNAL_LOG"), "a", 0o600) { |file| file.puts("INT") }
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:INT") }
-          exit 130
+          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "130"), 10)
         end
         Signal.trap("TERM") do
           File.open(ENV.fetch("FAKE_SIGNAL_LOG"), "a", 0o600) { |file| file.puts("TERM") }
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:TERM") }
-          exit 143
+          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "143"), 10)
         end
         File.write(ENV.fetch("FAKE_CODEX_STARTED"), Process.pid.to_s)
         sleep 0.01 until File.exist?(ENV.fetch("FAKE_CODEX_RELEASE"))
