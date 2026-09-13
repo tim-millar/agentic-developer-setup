@@ -586,6 +586,42 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
     assert_equal 1, record.dig("repository", "finish", "untracked_count")
   end
 
+  def test_telemetry_git_discovery_ignores_inherited_repository_routing
+    repository_a = File.join(@harness.root, "repository-a")
+    repository_b = File.join(@harness.root, "repository-b")
+    [repository_a, repository_b].each_with_index do |repository, index|
+      FileUtils.mkdir_p(repository)
+      git(repository, "init", "-q", "-b", "main")
+      git(repository, "config", "user.name", "Telemetry Fixture")
+      git(repository, "config", "user.email", "telemetry@example.test")
+      File.write(File.join(repository, "README.md"), "fixture #{index}\n")
+      git(repository, "add", "README.md")
+      git(repository, "commit", "-q", "-m", "Initial #{index}")
+    end
+    expected_head = git(repository_a, "rev-parse", "HEAD")
+    expected_identity = "sha256:#{Digest::SHA256.hexdigest(File.realpath(repository_a))}"
+    routing_environments = [
+      {"GIT_DIR" => File.join(repository_b, ".git")},
+      {"GIT_WORK_TREE" => repository_b},
+      {"GIT_CONFIG_COUNT" => "1", "GIT_CONFIG_KEY_0" => "core.worktree", "GIT_CONFIG_VALUE_0" => repository_b}
+    ]
+
+    routing_environments.each do |environment|
+      previous_directories = @harness.telemetry_run_directories
+      _stdout, stderr, status = @harness.runtime(chdir: repository_a, extra_env: environment)
+
+      assert status.success?, stderr
+      directory = (@harness.telemetry_run_directories - previous_directories).fetch(0)
+      record = JSON.parse(File.binread(File.join(directory, "run.json")))
+      assert_equal expected_identity, record.dig("repository", "identity", "value")
+      assert_equal expected_head, record.dig("repository", "start", "head_sha")
+      assert_equal expected_head, record.dig("repository", "finish", "head_sha")
+      environment.each_key do |name|
+        refute_includes @harness.read(@harness.env.fetch("FAKE_ENV_LOG")), "#{name}="
+      end
+    end
+  end
+
   def test_relative_storage_and_opt_out_preserve_runtime_behaviour
     _stdout, stderr, status = @harness.runtime(extra_env: {"AGENT_TELEMETRY_DIR" => "relative"})
     assert status.success?, stderr
@@ -622,8 +658,9 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
   end
 
   def git(repository, *arguments)
-    _stdout, stderr, status = Open3.capture3("git", *arguments, chdir: repository)
+    stdout, stderr, status = Open3.capture3("git", *arguments, chdir: repository)
     assert status.success?, stderr
+    stdout.strip
   end
 end
 
@@ -753,6 +790,92 @@ class RunTelemetrySchemaTest < Minitest::Test
     assert validator.validate, validator.errors.join("\n")
   end
 
+  def test_initial_repository_identity_uses_the_same_canonical_root_for_real_and_symlink_paths
+    Dir.mktmpdir("telemetry-canonical-repository-") do |root|
+      repository = File.join(root, "repository")
+      repository_link = File.join(root, "repository-link")
+      FileUtils.mkdir_p(repository)
+      File.symlink(repository, repository_link)
+      identities = [repository, repository_link].each_with_index.map do |hint, index|
+        status, record, stderr = run_initial_helper(
+          repository_hint: hint,
+          telemetry: File.join(root, "telemetry-#{index}"),
+          exit_status: 23,
+          finalize: true
+        )
+
+        assert_equal 23, status.exitstatus, stderr
+        assert_equal "preflight_failed", record.fetch("state")
+        record.dig("repository", "identity", "value")
+      end
+
+      expected = "sha256:#{Digest::SHA256.hexdigest(File.realpath(repository))}"
+      assert_equal [expected, expected], identities
+    end
+  end
+
+  def test_repository_canonicalization_failure_disables_telemetry_without_changing_status
+    Dir.mktmpdir("telemetry-invalid-repository-") do |root|
+      blocking_file = File.join(root, "not-a-directory")
+      File.write(blocking_file, "fixture")
+      telemetry = File.join(root, "telemetry")
+      status, record, stderr = run_initial_helper(
+        repository_hint: File.join(blocking_file, "repository"),
+        telemetry: telemetry,
+        exit_status: 17
+      )
+
+      assert_equal 17, status.exitstatus
+      assert_nil record
+      assert_empty Dir[File.join(telemetry, "run-*")]
+      assert_includes stderr, "AGENT_TELEMETRY_WARNING: could not safely resolve repository root; telemetry disabled"
+    end
+  end
+
+  def test_git_capture_preserves_inherited_fd_8_and_status_counts
+    Dir.mktmpdir("telemetry-fd-scenario-") do |root|
+      repository = File.join(root, "repository")
+      telemetry = File.join(root, "telemetry")
+      control = File.join(root, "control.txt")
+      script = File.join(root, "capture.sh")
+      FileUtils.mkdir_p(repository)
+      git(repository, "init", "-q", "-b", "main")
+      git(repository, "config", "user.name", "Telemetry Fixture")
+      git(repository, "config", "user.email", "telemetry@example.test")
+      File.write(File.join(repository, "staged.txt"), "base\n")
+      File.write(File.join(repository, "unstaged.txt"), "base\n")
+      git(repository, "add", "staged.txt", "unstaged.txt")
+      git(repository, "commit", "-q", "-m", "Initial")
+      File.write(File.join(repository, "staged.txt"), "changed\n")
+      git(repository, "add", "staged.txt")
+      File.write(File.join(repository, "unstaged.txt"), "changed\n")
+      File.write(File.join(repository, "untracked.txt"), "new\n")
+      File.write(control, "before\nafter\nfinal\n")
+      helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
+      git_bin = `command -v git`.strip
+      File.write(script, <<~BASH)
+        #!/usr/bin/env bash
+        source #{helper.dump}
+        AGENT_TELEMETRY=1
+        AGENT_TELEMETRY_DIR=#{telemetry.dump}
+        agent_telemetry_start codex-cli agent-development-framework/codex 1 #{helper.dump} #{repository.dump}
+        exec 8< #{control.dump}
+        IFS= read -r first <&8
+        agent_telemetry_capture_git START #{git_bin.dump} #{repository.dump} || exit 91
+        IFS= read -r second <&8 || exit 92
+        IFS= read -r third <&8 || exit 93
+        printf '%s|%s|%s|%s|%s|%s|%s\n' "$first" "$second" "$third" \
+          "$AGENT_TELEMETRY_GIT_START_STAGED" "$AGENT_TELEMETRY_GIT_START_UNSTAGED" \
+          "$AGENT_TELEMETRY_GIT_START_UNTRACKED" "$AGENT_TELEMETRY_GIT_START_DIRTY"
+      BASH
+      File.chmod(0o700, script)
+      stdout, stderr, status = Open3.capture3("/bin/bash", script)
+
+      assert status.success?, stderr
+      assert_equal %w[before after final 1 1 1 true], stdout.strip.split("|")
+    end
+  end
+
   def test_git_scratch_is_allocated_outside_repository_and_run_directory
     Dir.mktmpdir("telemetry-scratch-scenario-") do |root|
       repository = File.join(root, "repository")
@@ -858,6 +981,31 @@ class RunTelemetrySchemaTest < Minitest::Test
     validator = AgentRunTelemetry::Validator.new(record)
     refute validator.validate
     assert validator.errors.any? { |error| error.include?(expected_error) }, validator.errors.join("\n")
+  end
+
+  def git(repository, *arguments)
+    _stdout, stderr, status = Open3.capture3("git", *arguments, chdir: repository)
+    assert status.success?, stderr
+  end
+
+  def run_initial_helper(repository_hint:, telemetry:, exit_status:, finalize: false)
+    helper = File.expand_path("../baseline/scripts/agent_run_telemetry.sh", __dir__)
+    script = File.join(File.dirname(telemetry), "initial-#{File.basename(telemetry)}.sh")
+    finalization = finalize ? "agent_telemetry_finalize_pending #{Integer(exit_status)} \"\" \"\"" : ":"
+    File.write(script, <<~BASH)
+      #!/usr/bin/env bash
+      source #{helper.dump}
+      AGENT_TELEMETRY=1
+      AGENT_TELEMETRY_DIR=#{telemetry.dump}
+      agent_telemetry_start codex-cli agent-development-framework/codex 1 #{helper.dump} #{repository_hint.dump}
+      #{finalization}
+      exit #{Integer(exit_status)}
+    BASH
+    File.chmod(0o700, script)
+    _stdout, stderr, status = Open3.capture3("/bin/bash", script)
+    directory = Dir[File.join(telemetry, "run-*")].first
+    record = JSON.parse(File.binread(File.join(directory, "run.json"))) if directory
+    [status, record, stderr]
   end
 
   def run_helper_scenario(body, include_stderr: false)

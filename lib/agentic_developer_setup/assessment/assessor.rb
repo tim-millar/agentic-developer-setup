@@ -631,10 +631,13 @@ module AgenticDeveloperSetup
 
       def component_recommendations(states, analysis, gap_ids, tier)
         by_name = states.to_h { |item| [item["component"], item] }
+        launcher_present = %w[framework_exact framework_like repository_native].include?(by_name.dig("agent_launcher", "state"))
         @catalogue.components.map do |component|
           name = component["name"]
           detected = by_name[name]
-          state, rationale, prereqs = if detected
+          state, rationale, prereqs = if name == "agent_run_telemetry" && (!detected || !launcher_present)
+            ["evaluate_later", "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", []]
+          elsif detected
             component_state_for_detected(detected)
           else
             component_state_for_missing(component, analysis, gap_ids, tier)
@@ -666,9 +669,6 @@ module AgenticDeveloperSetup
         name = component["name"]
         if name == "github_access_helper" && analysis[:facts][:ecosystems].empty?
           return ["not_applicable", "No supported project or GitHub-access requirement was established by static evidence.", []]
-        end
-        if name == "agent_run_telemetry"
-          return ["evaluate_later", "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", []]
         end
         if %w[agent_launcher claude_agent_entrypoint github_access_helper git_hooks].include?(name)
           return ["evaluate_later", "This optional runtime or hook component should be evaluated only if its access and workflow value is established.", []]

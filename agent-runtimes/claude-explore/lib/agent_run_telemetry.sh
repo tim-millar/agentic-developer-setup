@@ -295,7 +295,7 @@ agent_telemetry_random_hex() {
 
 agent_telemetry_start() {
   local client_id=$1 harness_id=$2 harness_version=$3 harness_path=$4 repository_hint=$5
-  local root repository_root timestamp random="" run_id="" candidate="" digest attempts=0 old_umask
+  local root repository_root="" timestamp random="" run_id="" candidate="" digest attempts=0 old_umask
   [[ "${AGENT_TELEMETRY:-1}" != 0 ]] || return 0
   if [[ -n "${AGENT_TELEMETRY_DIR:-}" ]]; then
     root=$AGENT_TELEMETRY_DIR
@@ -307,15 +307,16 @@ agent_telemetry_start() {
   fi
   root=$(agent_telemetry_canonical_directory "$root") || { agent_telemetry_warning "could not safely resolve telemetry run root; telemetry disabled"; return 0; }
   if [[ -n "$repository_hint" ]]; then
-    repository_root=$(agent_telemetry_canonical_directory "$repository_hint" 2>/dev/null || true)
-    if [[ -n "$repository_root" ]]; then
-      case "$root" in
-        "$repository_root"|"$repository_root"/*)
-          agent_telemetry_warning "telemetry run root must be outside the repository; telemetry disabled"
-          return 0
-          ;;
-      esac
-    fi
+    repository_root=$(agent_telemetry_canonical_directory "$repository_hint" 2>/dev/null) || {
+      agent_telemetry_warning "could not safely resolve repository root; telemetry disabled"
+      return 0
+    }
+    case "$root" in
+      "$repository_root"|"$repository_root"/*)
+        agent_telemetry_warning "telemetry run root must be outside the repository; telemetry disabled"
+        return 0
+        ;;
+    esac
   fi
   digest=$(agent_telemetry_sha256_file "$harness_path") || { agent_telemetry_warning "could not identify execution harness; telemetry disabled"; return 0; }
   timestamp=$(/bin/date -u '+%Y%m%dT%H%M%SZ') || { agent_telemetry_warning "could not create run timestamp; telemetry disabled"; return 0; }
@@ -352,8 +353,8 @@ agent_telemetry_start() {
   AGENT_TELEMETRY_HARNESS_ID=$harness_id
   AGENT_TELEMETRY_HARNESS_VERSION=$harness_version
   AGENT_TELEMETRY_HARNESS_REVISION=$digest
-  if [[ -n "$repository_hint" ]]; then
-    digest=$(printf '%s' "$repository_hint" | agent_telemetry_sha256_stdin) || digest=""
+  if [[ -n "$repository_root" ]]; then
+    digest=$(printf '%s' "$repository_root" | agent_telemetry_sha256_stdin) || digest=""
   fi
   AGENT_TELEMETRY_REPOSITORY_VALUE=$digest
   if [[ -z "$AGENT_TELEMETRY_REPOSITORY_VALUE" ]] || ! agent_telemetry_write_record; then
@@ -418,18 +419,16 @@ agent_telemetry_capture_git() {
     /bin/rm -f -- "$status_file" 2>/dev/null || true
     return 1
   fi
-  exec 8< "$status_file"
-  while IFS= read -r -d '' record <&8; do
+  while IFS= read -r -d '' record; do
     xy=${record:0:2}; x=${xy:0:1}; y=${xy:1:1}
     if [[ "$xy" == '??' ]]; then
       untracked=$((untracked + 1))
     else
       [[ "$x" == ' ' || "$x" == '?' ]] || staged=$((staged + 1))
       [[ "$y" == ' ' || "$y" == '?' ]] || unstaged=$((unstaged + 1))
-      if [[ "$x" == R || "$x" == C || "$y" == R || "$y" == C ]]; then IFS= read -r -d '' record <&8 || true; fi
+      if [[ "$x" == R || "$x" == C || "$y" == R || "$y" == C ]]; then IFS= read -r -d '' record || true; fi
     fi
-  done
-  exec 8<&-
+  done < "$status_file"
   /bin/rm -f -- "$status_file" 2>/dev/null || true
   [[ "$staged" -eq 0 && "$unstaged" -eq 0 && "$untracked" -eq 0 ]] || dirty=true
   printf -v "AGENT_TELEMETRY_GIT_${phase}_AVAILABLE" '%s' 1

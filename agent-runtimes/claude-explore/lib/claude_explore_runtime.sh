@@ -337,6 +337,11 @@ scrub_git_environment() {
   scrub_prefixed_environment "$CLAUDE_EXPLORE_GIT_ENV_PREFIXES"
 }
 
+telemetry_git() (
+  scrub_git_environment
+  exec "$TELEMETRY_GIT_TARGET" "$@"
+)
+
 internal_guard() {
   local guard_dir=$1 command=$2 session_dir; shift 2
   classify_command "$command" "$@" || return $?
@@ -679,10 +684,12 @@ run_session() {
   classify_claude_args "$@" || return $?
   claude_invocation_is_inspection "$@" && inspection=1
   trap runtime_exit_cleanup EXIT
-  TELEMETRY_GIT_BIN=$(command -v git 2>/dev/null || true)
-  if [ -n "$TELEMETRY_GIT_BIN" ]; then
-    TELEMETRY_REPO_ROOT=$($TELEMETRY_GIT_BIN rev-parse --show-toplevel 2>/dev/null || pwd -P)
+  TELEMETRY_GIT_TARGET=$(command -v git 2>/dev/null || true)
+  if [ -n "$TELEMETRY_GIT_TARGET" ]; then
+    TELEMETRY_GIT_BIN=telemetry_git
+    TELEMETRY_REPO_ROOT=$(telemetry_git rev-parse --show-toplevel 2>/dev/null || pwd -P)
   else
+    TELEMETRY_GIT_BIN=""
     TELEMETRY_REPO_ROOT=$(pwd -P)
   fi
   if [ "$inspection" -eq 0 ]; then
