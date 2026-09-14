@@ -127,6 +127,8 @@ The baseline framework is agent-runtime-aware rather than agent-agnostic. Shared
 
 The current public baseline includes the Codex launcher at `scripts/run_codex.sh`. That launcher is intended for Codex sessions, prompt assembly, repository-scoped execution, validation workflow support, and optional GitHub App access. Do not assume it is a generic wrapper for every coding agent.
 
+Normal fresh and resumed Codex workloads automatically write one permission-restricted local telemetry run beneath `${XDG_DATA_HOME:-$HOME/.local/share}/agent-development-framework/telemetry/runs/`. Set `AGENT_TELEMETRY=0` to opt out, or set the absolute `AGENT_TELEMETRY_DIR` override for a controlled run root. Telemetry is fail-open, never changes the meaningful workload exit status, and does not upload records. Requested model/reasoning configuration is distinct from authoritative initial-effective configuration; unavailable effective values must remain unavailable rather than being inferred from defaults or profiles. Refer to the framework's run-telemetry documentation and schema when adopting or specialising this launcher.
+
 If another coding agent is supported in this repository, document its separate launcher, access policy, prompt expectations, and runtime-specific constraints here.
 
 ### Codex launcher repository identity check

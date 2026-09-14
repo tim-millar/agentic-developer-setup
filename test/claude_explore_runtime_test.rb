@@ -73,6 +73,45 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes @harness.read(@harness.metadata), "claude_launcher_path=#{@harness.claude_launcher}\n"
   end
 
+  def test_installer_version_probe_strips_telemetry_controls
+    _stdout, stderr, status = @harness.install(
+      extra_env: {
+        "AGENT_TELEMETRY" => "0",
+        "AGENT_TELEMETRY_DIR" => "/tmp/synthetic-private-telemetry-path"
+      }
+    )
+
+    assert status.success?, stderr
+    environment = @harness.read(@harness.claude_version_env_log).lines(chomp: true)
+    refute environment.any? { |entry| entry.start_with?("AGENT_TELEMETRY=") }
+    refute environment.any? { |entry| entry.start_with?("AGENT_TELEMETRY_DIR=") }
+  end
+
+  def test_installer_syntax_checks_each_staged_script_before_activation
+    malformed_paths = %w[
+      lib/agent_run_telemetry.sh
+      lib/claude_explore_runtime.sh
+      policy.sh
+      bin/claude-explore
+      lib/claude_explore_guard.sh
+    ]
+
+    malformed_paths.each do |relative_path|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      source = @harness.copy_runtime_source
+      File.open(File.join(source, relative_path), "a") { |file| file.write("\nif\n") }
+
+      _stdout, stderr, status = @harness.install_from(File.join(source, "install.sh"))
+
+      refute status.success?, "expected #{relative_path} to fail syntax validation"
+      assert_includes stderr, "staged runtime failed syntax validation"
+      refute File.exist?(@harness.installed_launcher)
+      refute File.exist?(File.join(@harness.data_root, "current"))
+      assert_empty Dir[File.join(@harness.data_root, ".stage.*")]
+    end
+  end
+
   def test_missing_old_unparseable_recursive_and_broken_launchers_fail_closed
     _stdout, stderr, status = @harness.install(extra_env: {"FAKE_CLAUDE_VERSION" => "2.1.223"})
     refute status.success?
@@ -632,6 +671,73 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     runtime_source = File.read(File.join(ClaudeExploreHarness::REPOSITORY_ROOT, "agent-runtimes/claude-explore/lib/claude_explore_runtime.sh"))
     assert_includes runtime_source, "kill -INT \"$CHILD_PID\""
     assert_includes runtime_source, "kill -TERM \"$CHILD_PID\""
+  end
+
+  def test_signal_before_child_creation_ignores_inherited_child_pid
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    ready = File.join(@harness.root, "early-signal-ready")
+    release = File.join(@harness.root, "early-signal-release")
+    @harness.replace_installed_runtime_text(
+      "lib/claude_explore_runtime.sh",
+      "  strip_environment || { cleanup_session; runtime_error \"could not apply environment policy\"; return 1; }\n",
+      <<~BASH.chomp + "\n"
+        : > "$FAKE_EARLY_SIGNAL_READY"
+        while [ ! -e "$FAKE_EARLY_SIGNAL_RELEASE" ]; do /bin/sleep 0.01; done
+        [ -z "${AGENT_TELEMETRY_SIGNAL:-}" ] || return 143
+        strip_environment || { cleanup_session; runtime_error "could not apply environment policy"; return 1; }
+      BASH
+    )
+    unrelated_pid = Process.spawn("/bin/sleep", "30")
+    process_env = @harness.env.merge(
+      "CHILD_PID" => unrelated_pid.to_s,
+      "FAKE_EARLY_SIGNAL_READY" => ready,
+      "FAKE_EARLY_SIGNAL_RELEASE" => release
+    )
+    stdin, stdout, stderr, wait_thread = Open3.popen3(
+      process_env,
+      @harness.installed_launcher,
+      chdir: ClaudeExploreHarness::REPOSITORY_ROOT
+    )
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 8
+    until File.exist?(ready)
+      flunk "runtime did not reach the early-signal fixture" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      sleep 0.02
+    end
+
+    Process.kill("TERM", wait_thread.pid)
+    File.write(release, "release\n")
+    status = wait_thread.value
+    stdin.close
+    stdout.read
+    diagnostic = stderr.read
+
+    assert_equal 143, status.exitstatus, diagnostic
+    assert Process.kill(0, unrelated_pid), "inherited CHILD_PID must not be signaled"
+    refute File.exist?(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+    record = @harness.telemetry_records.fetch(0)
+    assert_equal "interrupted", record.fetch("state")
+    assert_equal "TERM", record.dig("termination", "signal")
+    assert_nil record.dig("termination", "child_exit_code")
+  ensure
+    if wait_thread&.alive?
+      Process.kill("KILL", wait_thread.pid)
+      wait_thread.value
+    end
+    if unrelated_pid
+      begin
+        Process.kill("KILL", unrelated_pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      begin
+        Process.wait(unrelated_pid)
+      rescue Errno::ECHILD
+        nil
+      end
+    end
+    [stdin, stdout, stderr].compact.each { |io| io.close unless io.closed? }
   end
 
   def test_unsafe_sessions_parent_fails_before_claude_starts

@@ -96,6 +96,7 @@ class LauncherTest < Minitest::Test
     FileUtils.mkdir_p(outside)
     launcher = File.join(outside, "run_codex.sh")
     FileUtils.cp(LauncherHarness::BASELINE_LAUNCHER, launcher, preserve: true)
+    FileUtils.cp(LauncherHarness::TELEMETRY_HELPER, File.join(outside, "agent_run_telemetry.sh"), preserve: true)
 
     stdout, stderr, status = Open3.capture3(
       @harness.base_env,

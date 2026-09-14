@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "open3"
 require "rbconfig"
 require "tmpdir"
@@ -9,15 +10,16 @@ class ClaudeExploreHarness
   REPOSITORY_ROOT = File.expand_path("../..", __dir__)
   INSTALLER = File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore/install.sh")
 
-  attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target
+  attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target, :claude_version_env_log
 
-  def initialize(prefix: "claude-explore-test-")
+  def initialize(prefix: "claude-explore-test-", telemetry: false)
     @root = Dir.mktmpdir(prefix)
     @home = File.join(root, "home")
     @fake_bin = File.join(root, "fake-bin")
     FileUtils.mkdir_p([home, fake_bin])
     @claude_target = File.join(root, "claude-2.1.224")
     @claude_launcher = File.join(fake_bin, "claude")
+    @claude_version_env_log = File.join(root, "claude-version-environment.log")
     write_executable(claude_target, fake_claude("2.1.224"))
     File.symlink(claude_target, claude_launcher)
     %w[git psql].each { |name| write_executable(File.join(fake_bin, name), fake_delegate(name)) }
@@ -27,11 +29,14 @@ class ClaudeExploreHarness
       "XDG_CONFIG_HOME" => File.join(root, "config"),
       "XDG_RUNTIME_DIR" => File.join(root, "run"),
       "PATH" => "#{fake_bin}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "AGENT_TELEMETRY_DIR" => File.join(root, "telemetry-runs"),
+      "AGENT_TELEMETRY" => telemetry ? "1" : "0",
       "FAKE_CLAUDE_LOG" => File.join(root, "claude.log"),
       "FAKE_DELEGATE_LOG" => File.join(root, "delegate.log"),
       "FAKE_SETTINGS_COPY" => File.join(root, "settings.json"),
       "FAKE_MCP_COPY" => File.join(root, "mcp.json"),
       "FAKE_ENV_LOG" => File.join(root, "environment.log"),
+      "FAKE_VERSION_ENV_LOG" => claude_version_env_log,
       "FAKE_GIT_INJECTION_MARKER" => File.join(root, "git-injection"),
       "FAKE_PSQLRC_MARKER" => File.join(root, "psqlrc-ran"),
       "FAKE_PGPASS_MARKER" => File.join(root, "pgpass-used"),
@@ -55,12 +60,12 @@ class ClaudeExploreHarness
     run(arguments, extra_env: extra_env)
   end
 
-  def runtime(*arguments, extra_env: {})
-    run([installed_launcher, *arguments], extra_env: extra_env)
+  def runtime(*arguments, extra_env: {}, chdir: REPOSITORY_ROOT)
+    run([installed_launcher, *arguments], extra_env: extra_env, chdir: chdir)
   end
 
-  def run(command, extra_env: {})
-    Open3.capture3(env.merge(extra_env), *command, chdir: REPOSITORY_ROOT)
+  def run(command, extra_env: {}, chdir: REPOSITORY_ROOT)
+    Open3.capture3(env.merge(extra_env), *command, chdir: chdir)
   end
 
   def installed_launcher
@@ -86,6 +91,17 @@ class ClaudeExploreHarness
     return unless settings_index && arguments[settings_index + 1]
 
     File.dirname(arguments[settings_index + 1])
+  end
+
+  def telemetry_run_directories
+    Dir[File.join(env.fetch("AGENT_TELEMETRY_DIR"), "run-*")].sort
+  end
+
+  def telemetry_records
+    telemetry_run_directories.filter_map do |directory|
+      path = File.join(directory, "run.json")
+      JSON.parse(File.binread(path)) if File.file?(path)
+    end
   end
 
   def current_runtime
@@ -170,6 +186,7 @@ class ClaudeExploreHarness
     <<~SH
       #!/bin/sh
       if [ "${1:-}" = "--version" ]; then
+        /usr/bin/env > "$FAKE_VERSION_ENV_LOG"
         echo "Claude Code ${FAKE_CLAUDE_VERSION:-#{default_version}}"
         exit "${FAKE_VERSION_EXIT:-0}"
       fi
@@ -184,6 +201,13 @@ class ClaudeExploreHarness
         [ "$argument" = --mcp-config ] && previous=mcp
       done
       /usr/bin/env > "$FAKE_ENV_LOG"
+      case "${FAKE_CLAUDE_GIT_ACTION:-}" in
+        untracked) printf 'created by fake Claude\n' > child-untracked.txt ;;
+        commit)
+          printf 'created by fake Claude\n' > child-commit.txt
+          git add child-commit.txt && git commit -q -m 'Fake Claude commit' || exit 91
+          ;;
+      esac
       case "${FAKE_INNER_SCENARIO:-}" in
         blocked) "$FAKE_COMMAND" ; exit $? ;;
         git-allowed) git status ; exit $? ;;

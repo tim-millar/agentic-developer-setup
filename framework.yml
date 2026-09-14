@@ -143,6 +143,12 @@ baseline:
       target_path: scripts/run_codex.sh
       description: Helper script for launching a Codex session with repo-local context.
 
+    - name: agent_run_telemetry
+      category: agent-telemetry-helper
+      source_path: baseline/scripts/agent_run_telemetry.sh
+      target_path: scripts/agent_run_telemetry.sh
+      description: Bash-only helper used by the Codex launcher to persist common execution telemetry.
+
     - name: github_access_helper
       category: github-access-helper
       source_path: baseline/scripts/mint_gh_app_token.sh
@@ -196,6 +202,9 @@ agent_runtimes:
         - role: prompt
           source_path: baseline/docs/AGENT_PROMPT.txt
           target_path: docs/AGENT_PROMPT.txt
+        - role: telemetry
+          source_path: baseline/scripts/agent_run_telemetry.sh
+          target_path: scripts/agent_run_telemetry.sh
       supported_platforms:
         - macos
         - linux
@@ -206,6 +215,7 @@ agent_runtimes:
       capabilities:
         - repository prompt assembly
         - optional repository-scoped GitHub App access
+        - automatic local execution telemetry
       limitations:
         - runtime behaviour is specific to Codex
       configuration:
@@ -236,6 +246,8 @@ agent_runtimes:
           source_path: agent-runtimes/claude-explore/install.sh
         - role: policy
           source_path: agent-runtimes/claude-explore/policy.sh
+        - role: telemetry
+          source_path: agent-runtimes/claude-explore/lib/agent_run_telemetry.sh
       supported_platforms:
         - macos
         - linux
@@ -249,6 +261,7 @@ agent_runtimes:
         - supervised local repository exploration and editing
         - local Git commits under guarded command policy
         - deterministic local PostgreSQL access
+        - automatic local execution telemetry
       limitations:
         - reduced-authority guardrail rather than same-user containment
         - finite command and credential deny lists
@@ -280,6 +293,7 @@ adoption_tiers:
     includes:
       - Makefile
       - scripts/run_codex.sh
+      - scripts/agent_run_telemetry.sh
       - lefthook.yml
       - .github/workflows/ci.yml
   - id: tier-3

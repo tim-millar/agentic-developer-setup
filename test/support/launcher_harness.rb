@@ -9,6 +9,7 @@ require "tmpdir"
 class LauncherHarness
   REPOSITORY_ROOT = File.expand_path("../..", __dir__)
   BASELINE_LAUNCHER = File.join(REPOSITORY_ROOT, "baseline", "scripts", "run_codex.sh")
+  TELEMETRY_HELPER = File.join(REPOSITORY_ROOT, "baseline", "scripts", "agent_run_telemetry.sh")
   OWNER = "example-owner"
   REPOSITORY = "example-repository"
   APP_ID = "12345"
@@ -32,9 +33,10 @@ class LauncherHarness
     :extra_prompt_file, :event_log, :codex_log, :started_marker,
     :signal_log, :key_file, :app_json, :token_json, :repository_json,
     :issue_json, :renewal_control_dir, :token_sequence_json,
-    :token_attempt_file, :helper_clock_file
+    :token_attempt_file, :helper_clock_file, :codex_version_env_log,
+    :codex_version_stdin_log
 
-  def initialize
+  def initialize(telemetry: false)
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
     @repository = File.join(root, "adopted-repository")
     @home = File.join(root, "home")
@@ -53,8 +55,19 @@ class LauncherHarness
     @token_sequence_json = File.join(root, "token-sequence.json")
     @token_attempt_file = File.join(root, "token-attempts")
     @helper_clock_file = File.join(root, "helper-clock")
+    @codex_version_env_log = File.join(root, "codex-version-environment.json")
+    @codex_version_stdin_log = File.join(root, "codex-version-stdin")
+    @codex_version_failure_marker = File.join(root, "codex-version-failure")
+    @codex_version_hang_marker = File.join(root, "codex-version-hang")
+    @codex_version_stream_marker = File.join(root, "codex-version-stream")
+    @codex_version_output = File.join(root, "codex-version-output")
+    @codex_version_probe_pid_file = File.join(root, "codex-version-probe.pid")
+    @codex_version_read_stdin_marker = File.join(root, "codex-version-read-stdin")
+    @telemetry_root = File.join(root, "telemetry-runs")
+    @telemetry_enabled = telemetry
     @synthetic_clock_file = File.join(root, "synthetic-clock")
     File.write(@synthetic_clock_file, Time.now.to_i.to_s)
+    File.binwrite(@codex_version_output, "codex-cli 1.2.3\n")
 
     [repository, home, tmpdir, @fake_bin, renewal_control_dir].each { |path| FileUtils.mkdir_p(path) }
     build_fakes
@@ -78,6 +91,8 @@ class LauncherHarness
       "EXPECTED_OWNER" => OWNER,
       "EXPECTED_REPO" => REPOSITORY,
       "CODEX_BIN" => File.join(@fake_bin, "codex"),
+      "AGENT_TELEMETRY_DIR" => @telemetry_root,
+      "AGENT_TELEMETRY" => @telemetry_enabled ? "1" : "0",
       "GITHUB_ACCESS_MODE" => "disabled",
       "AGENT_NAME" => "test-agent",
       "AGENT_GIT_MODE" => "developer-author",
@@ -163,6 +178,10 @@ class LauncherHarness
     git("commit", "-q", "-m", message)
   end
 
+  def repository_git(*arguments)
+    git(*arguments)
+  end
+
   def set_origin(url)
     git("remote", "set-url", "origin", url)
   end
@@ -175,6 +194,17 @@ class LauncherHarness
     return [] unless File.exist?(codex_log)
 
     File.readlines(codex_log, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
+  end
+
+  def telemetry_run_directories
+    Dir[File.join(@telemetry_root, "run-*")].sort
+  end
+
+  def telemetry_records
+    telemetry_run_directories.filter_map do |directory|
+      path = File.join(directory, "run.json")
+      JSON.parse(File.binread(path)) if File.file?(path)
+    end
   end
 
   def invocation
@@ -358,6 +388,76 @@ class LauncherHarness
     File.write(File.join(root, "codex.release"), "release\n")
   end
 
+  def fail_codex_version
+    File.write(@codex_version_failure_marker, "fail\n")
+  end
+
+  def hang_codex_version
+    File.write(@codex_version_hang_marker, "hang\n")
+  end
+
+  def stream_codex_version
+    File.write(@codex_version_stream_marker, "stream\n")
+  end
+
+  def set_codex_version_output(output)
+    File.binwrite(@codex_version_output, output)
+  end
+
+  def make_codex_version_read_stdin
+    File.write(@codex_version_read_stdin_marker, "read\n")
+  end
+
+  def codex_version_probed?
+    File.exist?(codex_version_env_log)
+  end
+
+  def codex_version_probe_pid
+    marker_pid(@codex_version_probe_pid_file)
+  end
+
+  def codex_version_probe_temporary_paths
+    Dir[File.join(tmpdir, "codex.version.*")]
+  end
+
+  def override_telemetry_clock(name, fail_on:)
+    raise ArgumentError, "unsupported telemetry clock" unless %w[timestamp epoch].include?(name)
+
+    counter = "#{helper_clock_file}-#{name}"
+    success = if name == "timestamp"
+      "/usr/bin/printf '2026-09-13T12:00:%02d.000Z' \"$count\""
+    else
+      "/usr/bin/printf '%s' \"$((100 + count))\""
+    end
+    append_telemetry_helper(<<~BASH)
+      agent_telemetry_#{name}() {
+        local count=0
+        if [[ -f #{counter.dump} ]]; then count=$(/bin/cat #{counter.dump} 2>/dev/null || /usr/bin/printf '0'); fi
+        count=$((count + 1))
+        /usr/bin/printf '%s' "$count" > #{counter.dump}
+        [[ "$count" -ne #{Integer(fail_on)} ]] || return 1
+        #{success}
+      }
+    BASH
+  end
+
+  def fail_telemetry_randomness
+    append_telemetry_helper("agent_telemetry_random_hex() { return 1; }\n")
+  end
+
+  def append_telemetry_helper(contents)
+    path = File.join(repository, "scripts", "agent_run_telemetry.sh")
+    File.open(path, "a") { |file| file.write(contents) }
+  end
+
+  def replace_launcher_text(before, after)
+    contents = File.read(launcher)
+    raise "test replacement was not found" unless contents.include?(before)
+
+    File.write(launcher, contents.sub(before, after))
+    File.chmod(0o755, launcher)
+  end
+
   def codex_release_marker
     File.join(root, "codex.release")
   end
@@ -486,6 +586,7 @@ class LauncherHarness
     @prompt_file = File.join(repository, "docs", "AGENT_PROMPT.txt")
     @extra_prompt_file = File.join(repository, "docs", "EXTRA_PROMPT.txt")
     FileUtils.cp(BASELINE_LAUNCHER, launcher, preserve: true)
+    FileUtils.cp(TELEMETRY_HELPER, File.join(repository, "scripts", "agent_run_telemetry.sh"), preserve: true)
     File.chmod(0o755, launcher)
     File.write(prompt_file, "Base prompt for launcher tests.\n")
 
@@ -523,6 +624,18 @@ class LauncherHarness
   end
 
   def build_fakes
+    executable("git", <<~RUBY)
+      #!#{RbConfig.ruby}
+      if ENV["FAKE_GIT_STATUS_FAILURE"] == "1" && ARGV.include?("--porcelain=v1")
+        warn "synthetic Git status failure"
+        exit 88
+      end
+      if ARGV == ["rev-parse", "--abbrev-ref", "HEAD"] && ENV["FAKE_MUTATE_EXTRA_PROMPT_PATH"]
+        File.binwrite(ENV.fetch("FAKE_MUTATE_EXTRA_PROMPT_PATH"), ENV.fetch("FAKE_MUTATE_EXTRA_PROMPT_CONTENT"))
+      end
+      exec "/usr/bin/git", *ARGV
+    RUBY
+
     executable("chmod", <<~RUBY)
       #!#{RbConfig.ruby}
       if ENV["FAKE_FAIL_READY_CHMOD"] == "1" && ARGV.last.include?("/renewal-worker.ready")
@@ -559,6 +672,28 @@ class LauncherHarness
       #!#{RbConfig.ruby}
       require "json"
 
+      if ARGV == ["--version"]
+        File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
+        File.write(#{@codex_version_probe_pid_file.dump}, Process.pid.to_s)
+        if File.exist?(#{@codex_version_read_stdin_marker.dump})
+          File.binwrite(#{@codex_version_stdin_log.dump}, STDIN.read)
+        end
+        exit 1 if File.exist?(#{@codex_version_failure_marker.dump})
+        sleep 30 if File.exist?(#{@codex_version_hang_marker.dump})
+        if File.exist?(#{@codex_version_stream_marker.dump})
+          loop do
+            begin
+              STDOUT.write("codex 1.2.3\n" + ("x" * 4096))
+              STDOUT.flush
+            rescue Errno::EPIPE
+              sleep 0.01
+            end
+          end
+        end
+        STDOUT.write(File.binread(#{@codex_version_output.dump}))
+        exit 0
+      end
+
       def state(name)
         return "unset" unless ENV.key?(name)
         return "empty" if ENV[name].empty?
@@ -593,20 +728,29 @@ class LauncherHarness
       record["stdin"] = STDIN.read if ENV["FAKE_CODEX_READ_STDIN"] == "1"
       File.open(ENV.fetch("FAKE_CODEX_LOG"), "a", 0o600) { |file| file.puts(JSON.generate(record)) }
       File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:start") }
-      File.write(ENV.fetch("FAKE_CODEX_STARTED"), Process.pid.to_s)
+      case ENV["FAKE_CODEX_GIT_ACTION"]
+      when "untracked"
+        File.binwrite("child-untracked.txt", "created by fake Codex\n")
+      when "commit"
+        File.binwrite("child-commit.txt", "created by fake Codex\n")
+        system("git", "add", "child-commit.txt") && system("git", "commit", "-q", "-m", "Fake Codex commit") or exit 91
+      end
 
       if ENV["FAKE_CODEX_WAIT"] == "1"
         Signal.trap("INT") do
           File.open(ENV.fetch("FAKE_SIGNAL_LOG"), "a", 0o600) { |file| file.puts("INT") }
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:INT") }
-          exit 130
+          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "130"), 10)
         end
         Signal.trap("TERM") do
           File.open(ENV.fetch("FAKE_SIGNAL_LOG"), "a", 0o600) { |file| file.puts("TERM") }
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:TERM") }
-          exit 143
+          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "143"), 10) unless ENV["FAKE_CODEX_IGNORE_TERM"] == "1"
         end
+        File.write(ENV.fetch("FAKE_CODEX_STARTED"), Process.pid.to_s)
         sleep 0.01 until File.exist?(ENV.fetch("FAKE_CODEX_RELEASE"))
+      else
+        File.write(ENV.fetch("FAKE_CODEX_STARTED"), Process.pid.to_s)
       end
 
       exit Integer(ENV.fetch("FAKE_CODEX_EXIT", "0"), 10)

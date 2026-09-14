@@ -112,6 +112,57 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal "adopt_now", recommendation["state"]
   end
 
+  def test_missing_agent_run_telemetry_is_evaluated_with_its_launcher
+    result = assess
+    recommendations = result["component_recommendations"].to_h { |item| [item["component"], item] }
+    recommendation = recommendations.fetch("agent_run_telemetry")
+
+    assert_equal "evaluate_later", recommendations.fetch("agent_launcher")["state"]
+    assert_equal "evaluate_later", recommendation["state"]
+    assert_equal "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", recommendation["rationale"]
+    refute result["roadmap"].any? { |step| step["component"] == "agent_run_telemetry" }
+  end
+
+  def test_detected_agent_run_telemetry_without_launcher_is_still_evaluated_later
+    telemetry_source = File.join(AssessmentTestSupport::ROOT, "baseline/scripts/agent_run_telemetry.sh")
+    scenarios = {
+      "framework_exact" => File.binread(telemetry_source),
+      "framework_like" => "#!/bin/bash\n# repository-specific telemetry helper\n"
+    }
+
+    scenarios.each_with_index do |(expected_detection, content), index|
+      write("scripts/agent_run_telemetry.sh", content)
+      if index.zero?
+        init_git
+        commit_target("scripts/agent_run_telemetry.sh")
+      end
+      result = assess
+      detected = result.dig("framework_adoption", "detected_components").find { |item| item["component"] == "agent_run_telemetry" }
+      recommendation = result["component_recommendations"].find { |item| item["component"] == "agent_run_telemetry" }
+
+      assert_equal expected_detection, detected["state"]
+      assert_equal "evaluate_later", recommendation["state"]
+      assert_equal "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", recommendation["rationale"]
+      refute result["roadmap"].any? { |step| step["component"] == "agent_run_telemetry" }
+    end
+  end
+
+  def test_detected_agent_run_telemetry_uses_normal_semantics_when_launcher_is_present
+    launcher_source = File.join(AssessmentTestSupport::ROOT, "baseline/scripts/run_codex.sh")
+    telemetry_source = File.join(AssessmentTestSupport::ROOT, "baseline/scripts/agent_run_telemetry.sh")
+    write("scripts/run_codex.sh", File.binread(launcher_source))
+    write("scripts/agent_run_telemetry.sh", File.binread(telemetry_source))
+    init_git
+    commit_target("scripts/run_codex.sh", "scripts/agent_run_telemetry.sh")
+
+    exact = assess["component_recommendations"].find { |item| item["component"] == "agent_run_telemetry" }
+    assert_equal "adopt_now", exact["state"]
+
+    write("scripts/agent_run_telemetry.sh", "#!/bin/bash\n# repository-specific telemetry helper\n")
+    framework_like = assess["component_recommendations"].find { |item| item["component"] == "agent_run_telemetry" }
+    assert_equal "specialise_now", framework_like["state"]
+  end
+
   def test_bare_package_manifest_does_not_satisfy_command_interface
     write("package.json", "{\"name\":\"bare\"}\n")
 
@@ -465,6 +516,13 @@ class AssessmentAssessorTest < Minitest::Test
   end
 
   private
+
+  def commit_target(*paths)
+    _stdout, stderr, status = Open3.capture3("git", "-C", @target, "add", *paths)
+    assert status.success?, stderr
+    _stdout, stderr, status = Open3.capture3("git", "-C", @target, "commit", "-m", "Add assessment fixtures")
+    assert status.success?, stderr
+  end
 
   def context_file(sensitive_paths: [], criticality: nil, deployment_impact: nil, known_setup_constraints: [])
     path = File.join(@temporary_root, "context.yml")

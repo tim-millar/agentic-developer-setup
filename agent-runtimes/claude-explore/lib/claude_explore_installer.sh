@@ -65,7 +65,7 @@ validate_claude_launcher() {
   [ "$name" = 0 ] || [ "$name" = "$(id -u)" ] || die "Claude target has an untrusted owner"
   mode=$(file_mode "$target") || die "cannot inspect Claude target"
   [ $((8#$mode & 022)) -eq 0 ] || die "Claude target is group/world writable"
-  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH)
+  scrub_args=(-u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH -u AGENT_TELEMETRY -u AGENT_TELEMETRY_DIR)
   while IFS= read -r name; do scrub_args+=( -u "$name" ); done <<EOF
 $CLAUDE_EXPLORE_ENV_UNSET
 EOF
@@ -148,23 +148,35 @@ validate_source() {
     safe_executable "$SOURCE_ROOT/$path" || die "source executable runtime is incomplete or unsafe: $path"
     case "$($REALPATH_BIN "$SOURCE_ROOT/$path")" in "$SOURCE_ROOT"/*) ;; *) die "source file resolves outside runtime: $path" ;; esac
   done
+  safe_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" || die "source telemetry helper is incomplete or unsafe"
   safe_file "$SOURCE_ROOT/policy.sh" || die "source policy is incomplete or unsafe"
 }
 
 stage_runtime() {
+  local path syntax_valid=1
+
   STAGE=$(mktemp -d "$DATA_ROOT/.stage.XXXXXX") || die "cannot create private staging directory"
   chmod 700 "$STAGE" || die "cannot protect private staging directory"
   mkdir "$STAGE/bin" "$STAGE/lib" || die "cannot build staged runtime"
   cp "$SOURCE_ROOT/bin/claude-explore" "$STAGE/bin/claude-explore" || die "cannot stage runtime launcher"
   cp "$SOURCE_ROOT/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_runtime.sh" || die "cannot stage runtime library"
   cp "$SOURCE_ROOT/lib/claude_explore_guard.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot stage guard"
+  cp "$SOURCE_ROOT/lib/agent_run_telemetry.sh" "$STAGE/lib/agent_run_telemetry.sh" || die "cannot stage telemetry helper"
   cp "$SOURCE_ROOT/policy.sh" "$STAGE/policy.sh" || die "cannot stage policy"
   chmod 700 "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot protect executable runtime files"
-  chmod 600 "$STAGE/policy.sh" || die "cannot protect policy"
-  /bin/sh -n "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh" && \
-    /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH /bin/bash --noprofile --norc -p -n "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/policy.sh" || {
-      rm -rf "$STAGE"; rm -f "${STAGED_METADATA:-}"; die "staged runtime failed syntax validation";
-    }
+  chmod 600 "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || die "cannot protect policy and telemetry files"
+  for path in "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh"; do
+    /bin/sh -n "$path" || { syntax_valid=0; break; }
+  done
+  if [ "$syntax_valid" -eq 1 ]; then
+    for path in "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh"; do
+      /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH \
+        /bin/bash --noprofile --norc -p -n "$path" || { syntax_valid=0; break; }
+    done
+  fi
+  [ "$syntax_valid" -eq 1 ] || {
+    rm -rf "$STAGE"; rm -f "${STAGED_METADATA:-}"; die "staged runtime failed syntax validation";
+  }
 }
 
 rollback_activation() {

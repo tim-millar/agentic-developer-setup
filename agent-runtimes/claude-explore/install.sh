@@ -34,6 +34,7 @@ trusted_file "$SOURCE_ROOT/install.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/claude_explore_installer.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/claude_explore_runtime.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/claude_explore_guard.sh" executable &&
+  trusted_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" policy &&
   trusted_file "$SOURCE_ROOT/policy.sh" policy || {
     echo "claude-explore installer: source runtime content is missing or unsafe" >&2
     exit 1

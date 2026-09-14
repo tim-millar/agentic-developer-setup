@@ -322,6 +322,8 @@ Different coding agents have different interfaces, strengths, failure modes, and
 
 The public runtimes are Codex and Claude Code Explore. Codex remains a repository-distributed launcher for deterministic implementation, prompt construction, and optional GitHub App access. `claude-explore` is a globally installed, reduced-authority runtime for supervised local exploration. It combines a fixed framework policy, Claude Code's required native sandbox and permission controls, startup-argument classification, credential/environment reduction, and guarded command resolution. See [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md).
 
+Normal workloads through either supported framework launcher automatically emit local, permission-restricted execution telemetry. Each fresh or resumed launcher invocation receives a distinct canonical run ID; arbitrary direct `codex` or `claude` invocation is outside this guarantee. See [`docs/run-telemetry.md`](docs/run-telemetry.md) for storage, opt-out, schema, lifecycle, privacy, and observability semantics.
+
 The launcher also requests preservation of the host command `PATH` used by Codex. An adopting repository may provide an optional non-symlink regular file at `scripts/agent_host_env.sh` to select already-installed host tools; without it, the inherited `PATH` is preserved explicitly. The hook runs in an isolated credential-sanitised Bash subprocess, returns only `PATH`, and does not alter the parent launcher's command resolution. Launcher sessions disable Codex login-shell startup and shell-profile environment reconstruction, and forwarded Codex configuration cannot override those settings or `shell_environment_policy`; unrelated forwarded configuration remains supported.
 
 The launcher does not weaken user, project, managed, or organisation environment filtering, broaden inheritance, disable secret filtering, or rewrite persistent Codex configuration. An effective higher-authority Codex policy that filters out `PATH` is therefore incompatible with launcher PATH preservation; any resulting Codex configuration failure is reported rather than bypassed. This mechanism is independent of application ecosystem and execution model, and trusted repository hooks are not an operating-system sandbox.
@@ -357,6 +359,7 @@ See also:
 - `framework.yml` for machine-readable framework metadata
 - `docs/validation.md` for framework self-validation
 - [`docs/repository-assessment.md`](docs/repository-assessment.md) for the read-only adoption assessment workflow
+- [`docs/run-telemetry.md`](docs/run-telemetry.md) for automatic local execution evidence and the common run schema
 - `docs/launcher-testing.md` for the offline baseline launcher test architecture
 - [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md) for installation, policy, diagnostics, limitations, and smoke testing
 - `adapters/README.md` for adapter taxonomy and composition guidance
