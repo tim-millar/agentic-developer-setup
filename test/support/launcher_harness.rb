@@ -33,7 +33,8 @@ class LauncherHarness
     :extra_prompt_file, :event_log, :codex_log, :started_marker,
     :signal_log, :key_file, :app_json, :token_json, :repository_json,
     :issue_json, :renewal_control_dir, :token_sequence_json,
-    :token_attempt_file, :helper_clock_file, :codex_version_env_log
+    :token_attempt_file, :helper_clock_file, :codex_version_env_log,
+    :codex_version_stdin_log
 
   def initialize(telemetry: false)
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
@@ -55,11 +56,13 @@ class LauncherHarness
     @token_attempt_file = File.join(root, "token-attempts")
     @helper_clock_file = File.join(root, "helper-clock")
     @codex_version_env_log = File.join(root, "codex-version-environment.json")
+    @codex_version_stdin_log = File.join(root, "codex-version-stdin")
     @codex_version_failure_marker = File.join(root, "codex-version-failure")
     @codex_version_hang_marker = File.join(root, "codex-version-hang")
     @codex_version_stream_marker = File.join(root, "codex-version-stream")
     @codex_version_output = File.join(root, "codex-version-output")
     @codex_version_probe_pid_file = File.join(root, "codex-version-probe.pid")
+    @codex_version_read_stdin_marker = File.join(root, "codex-version-read-stdin")
     @telemetry_root = File.join(root, "telemetry-runs")
     @telemetry_enabled = telemetry
     @synthetic_clock_file = File.join(root, "synthetic-clock")
@@ -401,6 +404,10 @@ class LauncherHarness
     File.binwrite(@codex_version_output, output)
   end
 
+  def make_codex_version_read_stdin
+    File.write(@codex_version_read_stdin_marker, "read\n")
+  end
+
   def codex_version_probed?
     File.exist?(codex_version_env_log)
   end
@@ -441,6 +448,14 @@ class LauncherHarness
   def append_telemetry_helper(contents)
     path = File.join(repository, "scripts", "agent_run_telemetry.sh")
     File.open(path, "a") { |file| file.write(contents) }
+  end
+
+  def replace_launcher_text(before, after)
+    contents = File.read(launcher)
+    raise "test replacement was not found" unless contents.include?(before)
+
+    File.write(launcher, contents.sub(before, after))
+    File.chmod(0o755, launcher)
   end
 
   def codex_release_marker
@@ -660,6 +675,9 @@ class LauncherHarness
       if ARGV == ["--version"]
         File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
         File.write(#{@codex_version_probe_pid_file.dump}, Process.pid.to_s)
+        if File.exist?(#{@codex_version_read_stdin_marker.dump})
+          File.binwrite(#{@codex_version_stdin_log.dump}, STDIN.read)
+        end
         exit 1 if File.exist?(#{@codex_version_failure_marker.dump})
         sleep 30 if File.exist?(#{@codex_version_hang_marker.dump})
         if File.exist?(#{@codex_version_stream_marker.dump})
@@ -727,7 +745,7 @@ class LauncherHarness
         Signal.trap("TERM") do
           File.open(ENV.fetch("FAKE_SIGNAL_LOG"), "a", 0o600) { |file| file.puts("TERM") }
           File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:signal:TERM") }
-          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "143"), 10)
+          exit Integer(ENV.fetch("FAKE_CODEX_SIGNAL_EXIT", "143"), 10) unless ENV["FAKE_CODEX_IGNORE_TERM"] == "1"
         end
         File.write(ENV.fetch("FAKE_CODEX_STARTED"), Process.pid.to_s)
         sleep 0.01 until File.exist?(ENV.fetch("FAKE_CODEX_RELEASE"))

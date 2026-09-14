@@ -137,6 +137,45 @@ class CodexRunTelemetryTest < Minitest::Test
     [stdin, stdout, stderr].compact.each { |io| io.close unless io.closed? }
   end
 
+  def test_signal_handler_retries_an_interrupted_wait_before_recording_child_completion
+    @harness.replace_launcher_text(
+      "trap 'handle_signal INT 130' INT\n",
+      "trap ':' USR1\ntrap 'handle_signal INT 130' INT\n"
+    )
+    stdin, stdout, stderr, wait_thread = @harness.spawn(
+      "--allow-dirty",
+      env: {
+        "FAKE_CODEX_WAIT" => "1",
+        "FAKE_CODEX_IGNORE_TERM" => "1",
+        "FAKE_CODEX_EXIT" => "37"
+      }
+    )
+    wait_for(@harness.started_marker)
+    Process.kill("TERM", wait_thread.pid)
+    Timeout.timeout(8) { sleep 0.02 until @harness.signals.include?("TERM") }
+    Process.kill("USR1", wait_thread.pid)
+    sleep 0.05
+    @harness.release_codex
+
+    status = wait_thread.value
+    stdin.close
+    stdout.read
+    diagnostic = stderr.read
+    assert_equal 143, status.exitstatus, diagnostic
+    record = @harness.telemetry_records.fetch(0)
+    assert_valid_telemetry(record)
+    assert_equal "interrupted", record.fetch("state")
+    assert_equal "TERM", record.dig("termination", "signal")
+    assert_equal 37, record.dig("termination", "child_exit_code")
+  ensure
+    @harness&.release_codex
+    if wait_thread&.alive?
+      Process.kill("KILL", wait_thread.pid)
+      wait_thread.value
+    end
+    [stdin, stdout, stderr].compact.each { |io| io.close unless io.closed? }
+  end
+
   def test_signal_during_version_probe_leaves_child_status_unavailable_and_cleans_probe
     @harness.hang_codex_version
     stdin, stdout, stderr, wait_thread = @harness.spawn
@@ -246,6 +285,21 @@ class CodexRunTelemetryTest < Minitest::Test
     sensitive_names.each { |name| refute observed.key?(name), "expected #{name} to be absent from Codex --version" }
     assert_equal @harness.home, observed.fetch("HOME")
     assert observed.key?("PATH")
+  end
+
+  def test_version_probe_cannot_consume_workload_stdin
+    workload_stdin = "input reserved for the interactive workload\n"
+    @harness.make_codex_version_read_stdin
+
+    result = @harness.run(
+      env: {"FAKE_CODEX_READ_STDIN" => "1"},
+      stdin_data: workload_stdin
+    )
+
+    assert result.status.success?, result.stderr
+    assert_equal "", File.binread(@harness.codex_version_stdin_log)
+    assert_equal workload_stdin, @harness.codex_invocations.fetch(0).fetch("stdin")
+    assert_equal "1.2.3", @harness.telemetry_records.fetch(0).dig("runtime", "client", "version", "value")
   end
 
   def test_version_observation_accepts_only_bounded_version_shaped_output

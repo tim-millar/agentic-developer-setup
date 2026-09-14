@@ -129,9 +129,15 @@ handle_signal() {
 
   if [[ -n "$CODEX_PID" ]]; then
     kill -s "$signal" "$CODEX_PID" 2>/dev/null || true
-    wait "$CODEX_PID" 2>/dev/null || child_status=$?
-    agent_telemetry_mark_child_finished "$child_status"
-    CODEX_PID=""
+    while [[ -n "$CODEX_PID" ]]; do
+      child_status=0
+      wait "$CODEX_PID" 2>/dev/null || child_status=$?
+      if [[ "$child_status" -gt 128 ]] && kill -0 "$CODEX_PID" 2>/dev/null; then
+        continue
+      fi
+      agent_telemetry_mark_child_finished "$child_status"
+      CODEX_PID=""
+    done
   fi
 
   exit "$status"
@@ -438,7 +444,7 @@ probe_codex_version() {
   CODEX_VERSION_CAPTURE_PID=$!
   (
     umask 077
-    exec "$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version > "$output_pipe" 2>/dev/null
+    exec "$ENV_BIN" -i "${CODEX_VERSION_ENV[@]}" "$CODEX_BIN" --version < /dev/null > "$output_pipe" 2>/dev/null
   ) &
   CODEX_VERSION_PROBE_PID=$!
 

@@ -703,8 +703,9 @@ run_session() {
     agent_telemetry_warning "could not observe repository identity"
   fi
   make_session || { cleanup_session; runtime_error "could not create private session state"; return 1; }
-  trap 'AGENT_TELEMETRY_SIGNAL=INT; kill -INT "$CHILD_PID" 2>/dev/null || :' INT
-  trap 'AGENT_TELEMETRY_SIGNAL=TERM; kill -TERM "$CHILD_PID" 2>/dev/null || :' TERM
+  CHILD_PID=""
+  trap 'AGENT_TELEMETRY_SIGNAL=INT; [ -z "$CHILD_PID" ] || kill -INT "$CHILD_PID" 2>/dev/null || :' INT
+  trap 'AGENT_TELEMETRY_SIGNAL=TERM; [ -z "$CHILD_PID" ] || kill -TERM "$CHILD_PID" 2>/dev/null || :' TERM
   strip_environment || { cleanup_session; runtime_error "could not apply environment policy"; return 1; }
   injected_args=(--settings "$SETTINGS_FILE")
   [ "$CLAUDE_EXPLORE_STRICT_MCP_CONFIG" = true ] && injected_args+=(--strict-mcp-config --mcp-config "$MCP_FILE")

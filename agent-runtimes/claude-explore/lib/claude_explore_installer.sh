@@ -153,6 +153,8 @@ validate_source() {
 }
 
 stage_runtime() {
+  local path syntax_valid=1
+
   STAGE=$(mktemp -d "$DATA_ROOT/.stage.XXXXXX") || die "cannot create private staging directory"
   chmod 700 "$STAGE" || die "cannot protect private staging directory"
   mkdir "$STAGE/bin" "$STAGE/lib" || die "cannot build staged runtime"
@@ -163,10 +165,18 @@ stage_runtime() {
   cp "$SOURCE_ROOT/policy.sh" "$STAGE/policy.sh" || die "cannot stage policy"
   chmod 700 "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot protect executable runtime files"
   chmod 600 "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || die "cannot protect policy and telemetry files"
-  /bin/sh -n "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh" && \
-    /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH /bin/bash --noprofile --norc -p -n "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || {
-      rm -rf "$STAGE"; rm -f "${STAGED_METADATA:-}"; die "staged runtime failed syntax validation";
-    }
+  for path in "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh"; do
+    /bin/sh -n "$path" || { syntax_valid=0; break; }
+  done
+  if [ "$syntax_valid" -eq 1 ]; then
+    for path in "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh"; do
+      /usr/bin/env -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS -u CDPATH \
+        /bin/bash --noprofile --norc -p -n "$path" || { syntax_valid=0; break; }
+    done
+  fi
+  [ "$syntax_valid" -eq 1 ] || {
+    rm -rf "$STAGE"; rm -f "${STAGED_METADATA:-}"; die "staged runtime failed syntax validation";
+  }
 }
 
 rollback_activation() {
