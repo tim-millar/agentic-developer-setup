@@ -113,6 +113,12 @@ baseline:
       target_path: docs/ARCHITECTURE.md
       description: Architecture documentation scaffold for target repository structure and decisions.
 
+    - name: review_policy
+      category: review-policy
+      source_path: baseline/REVIEW.md
+      target_path: REVIEW.md
+      description: Repository-owned code-review policy defining priorities, substantive findings, low-value findings, context sources, and evidence expectations.
+
     - name: commit_metadata
       category: commit-metadata
       source_path: baseline/docs/COMMITS.md
@@ -282,6 +288,7 @@ adoption_tiers:
     includes:
       - AGENTS.md
       - CLAUDE.md
+      - REVIEW.md
       - docs/DEVELOPMENT.md
       - .github/PULL_REQUEST_TEMPLATE.md
       - .github/ISSUE_TEMPLATE/agent-ready-implementation.md

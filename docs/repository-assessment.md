@@ -58,7 +58,10 @@ documentation such as `README*`, `CONTRIBUTING*`, `SECURITY*`, `AGENTS.md`,
 `CLAUDE.md`, `Makefile`, package manifests and lockfiles, Python and Node/TypeScript
 configuration, recognised test/lint/format/type-check configuration, hooks,
 workspace metadata, `.gitignore`, GitHub Actions workflows, and recognised
-architecture, development, domain, testing, and operations documents.
+architecture, development, domain, testing, operations, and root `REVIEW.md`
+documents. Root `REVIEW.md` is a recognised inspection path for generic
+framework-component detection; the assessor does not semantically evaluate
+review-policy prose or infer equivalent alternatives.
 
 It does not recursively read arbitrary source code. Dependency, generated,
 build, and cache areas are excluded, including `.git`, `node_modules`,
@@ -205,6 +208,10 @@ The dimensions mean:
 * `local_setup_reproducibility`: documented prerequisites and dependency or
   runtime identity.
 
+`review_handoff` concerns the existence of a review evidence surface. The
+optional `review_policy` component is assessed separately through the generic
+component catalogue; it does not add or redefine a readiness dimension.
+
 Deterministic-validation readiness counts substantive local capabilities only:
 tests, linting, static type checking, build/compile checks, and explicit
 standard verification such as `make check` or `make verify`. Supporting
@@ -271,7 +278,7 @@ CI, hook, runtime, and access controls; Phase 3 is reserved for later
 operationalisation. The current component mapping places
 `agent_instructions`, `development_guide`, `testing_strategy`,
 `architecture_scaffold`, `domain_context`, and `command_interface` in Phase 1.
-Issue/review templates, `ci_workflow`, `git_hooks`, `agent_launcher`, and
+`review_policy`, issue/review templates, `ci_workflow`, `git_hooks`, `agent_launcher`, and
 `github_access_helper` are Phase 2 actions. Deferred operational work is only
 emitted in Phase 3 when the current recommendation logic supplies a roadmap
 item. Blocking gaps remain Phase 0. Component recommendations that are

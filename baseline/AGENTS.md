@@ -29,6 +29,16 @@ When work begins from a GitHub issue, treat the issue as a primary source of tru
 - Use existing commands and automation rather than improvising new workflows
 - Do not invent new architecture when the current architecture already provides a clear path
 
+## Review tasks
+
+If the target repository contains `REVIEW.md` and the agent is performing a
+review task, the agent must read and apply that document as the repository's
+canonical review policy. Review should remain focused on the change under
+review and within the current task or issue scope.
+
+The recommended `REVIEW.md` component is conditional: its absence does not
+prevent other framework work or make the document mandatory for every adopter.
+
 ## Required Workflow
 
 Agents performing implementation must follow this workflow unless explicitly instructed otherwise:

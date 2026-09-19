@@ -80,6 +80,7 @@ The fixture intentionally omits the following optional or later-stage concerns:
 
 - `CLAUDE.md`, because agent-client entrypoints are independent optional concerns.
 - `scripts/run_codex.sh` and `docs/AGENT_PROMPT.txt`, because agent runtime authority and session entrypoints are independent of repository-readiness documentation.
+- `REVIEW.md`, because the review-policy component is recommended and this selected fixture deliberately omits it rather than adopting it solely to suppress an assessment recommendation.
 - `docs/COMMITS.md`, because commit-guidance adoption is unnecessary for this compact example.
 - `lefthook.yml`, because hooks would add a host prerequisite without materially improving this fixture.
 - GitHub App runtime/helper artefacts, because this example requires no repository credentials or agent runtime access.

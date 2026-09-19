@@ -50,9 +50,13 @@ The `baseline/` directory contains the shared artefacts that define the default 
 
 In this source repository, baseline artefacts live under `baseline/`. When adopted into an application repository, they are intended to land at the target paths described in `framework.yml`.
 
+The recommended `baseline/REVIEW.md -> REVIEW.md` component provides a
+reusable, repository-owned review contract that adopters can specialise.
+
 These include target-repository documents and automation such as:
 
 - `AGENTS.md`
+- `REVIEW.md`
 - `docs/AGENT_PROMPT.txt`
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT.md`
@@ -183,6 +187,7 @@ Potential adapter specialisations (when implementations are available):
 
    ```text
    baseline/AGENTS.md             -> AGENTS.md
+   baseline/REVIEW.md             -> REVIEW.md
    baseline/docs/DEVELOPMENT.md   -> docs/DEVELOPMENT.md
    baseline/docs/TESTING.md       -> docs/TESTING.md
    baseline/Makefile              -> Makefile
@@ -264,6 +269,7 @@ This repository is intended to be usable directly by coding agents and LLMs.
 This framework source repository uses a minimal self-hosted agent harness:
 
 - root `AGENTS.md` defines the operating contract for work on this repository
+- root `REVIEW.md` defines the canonical review policy for this repository
 - root `.ruby-version` and `scripts/agent_host_env.sh` define and validate the required host Ruby
 - root `docs/AGENT_PROMPT.txt` provides the repository-specific session bootstrap
 - root `scripts/run_codex.sh` is the supported Codex entrypoint

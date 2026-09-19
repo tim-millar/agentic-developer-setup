@@ -35,6 +35,7 @@ module AgenticDeveloperSetup
         "domain_context" => {"phase" => 1, "title" => "Document domain context for adoption"},
         "command_interface" => {"phase" => 1, "title" => "Establish a stable repository command interface"},
         "agent_prompt" => {"phase" => 1, "title" => "Document the agent session brief and repository orientation"},
+        "review_policy" => {"phase" => 2, "title" => "Establish repository review policy"},
         "agent_ready_issue_template" => {"phase" => 2, "title" => "Establish the agent-ready task workflow"},
         "bug_report_issue_template" => {"phase" => 2, "title" => "Establish the defect-report workflow"},
         "discovery_or_shaping_issue_template" => {"phase" => 2, "title" => "Establish the discovery and shaping workflow"},

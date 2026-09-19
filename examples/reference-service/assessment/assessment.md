@@ -67,6 +67,7 @@ Alternative conditions:
 | `github_access_helper` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
 | `issue_template_config` | `adopt_now` | `high` | Current framework content is present; retain it and review its applicability. |
 | `pull_request_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `review_policy` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `testing_strategy` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 
 ## Key gaps
@@ -124,22 +125,27 @@ No adoption-specific risks were recorded from the inspected evidence.
   - Prerequisites: none
   - Current framework content is present; retain it and review its applicability.
 
-- **Phase 2 — Establish the agent-ready task workflow** (`STEP-010`, component `agent_ready_issue_template`)
+- **Phase 2 — Establish repository review policy** (`STEP-010`, component `review_policy`)
+  - Gaps: none
+  - Prerequisites: none
+  - The capability is not currently detected; adopt it incrementally using repository evidence and native conventions.
+
+- **Phase 2 — Establish the agent-ready task workflow** (`STEP-011`, component `agent_ready_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the defect-report workflow** (`STEP-011`, component `bug_report_issue_template`)
+- **Phase 2 — Establish the defect-report workflow** (`STEP-012`, component `bug_report_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-012`, component `discovery_or_shaping_issue_template`)
+- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-013`, component `discovery_or_shaping_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the human review handoff** (`STEP-013`, component `pull_request_template`)
+- **Phase 2 — Establish the human review handoff** (`STEP-014`, component `pull_request_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
