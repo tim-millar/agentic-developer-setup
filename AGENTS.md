@@ -404,6 +404,17 @@ Agents must not:
 
 Prefer the smallest complete change that satisfies the supplied task.
 
+## Review tasks
+
+When an agent is explicitly asked to perform code review, it must read the
+root `REVIEW.md`, apply it as the canonical review policy, preserve the
+current task or issue scope, and focus on defects introduced by or materially
+interacting with the work under review.
+
+The existence of `REVIEW.md` does not require an implementation agent to
+perform a separate review pass. It governs review tasks when such a review is
+requested or is otherwise part of the current workflow.
+
 ## Out-of-scope discoveries
 
 During work, agents may discover:

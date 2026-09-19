@@ -28,6 +28,7 @@ module AgenticDeveloperSetup
         /\ASECURITY(?:\..*)?\z/i,
         /\AAGENTS\.md\z/i,
         /\ACLAUDE\.md\z/i,
+        /\AREVIEW\.md\z/i,
         /\AMakefile(?:\..*)?\z/i,
         /\Apackage\.json\z/i,
         /\A(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml)\z/i,

@@ -34,7 +34,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -488,6 +488,18 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("repository structure: AGENTS.md", "file does not exist")
   end
 
+  def test_missing_root_review_policy_file_fails
+    FileUtils.rm(File.join(@fixture_root, "REVIEW.md"))
+
+    assert_fails("repository structure: REVIEW.md", "file does not exist")
+  end
+
+  def test_missing_baseline_review_policy_file_fails
+    FileUtils.rm(File.join(@fixture_root, "baseline/REVIEW.md"))
+
+    assert_fails("baseline.recommended[review_policy].source_path", "file does not exist")
+  end
+
   def test_missing_root_prompt_file_fails
     FileUtils.rm(File.join(@fixture_root, "docs/AGENT_PROMPT.txt"))
 
@@ -626,10 +638,10 @@ class FrameworkValidationTest < Minitest::Test
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
-      AGENTS.md README.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      AGENTS.md README.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
-      baseline/issues/implementation.md prompts/bootstrap.md
+      baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))
     write_metadata(valid_metadata)
@@ -666,7 +678,9 @@ class FrameworkValidationTest < Minitest::Test
           baseline_entry("telemetry", "agent-telemetry-helper", "baseline/scripts/agent_run_telemetry.sh", "bin/agent-run-telemetry"),
           baseline_entry("issue_template", "issue-template", "baseline/issues/implementation.md", "target/issues/implementation.md")
         ],
-        "recommended" => []
+        "recommended" => [
+          baseline_entry("review_policy", "review-policy", "baseline/REVIEW.md", "REVIEW.md")
+        ]
       },
       "agent_runtimes" => {
         "philosophy" => "Runtime-specific launchers.",
@@ -706,7 +720,7 @@ class FrameworkValidationTest < Minitest::Test
         ]
       },
       "adoption_tiers" => [
-        {"id" => "tier-1", "name" => "starter", "description" => "Starter tier.", "includes" => ["bin/codex"]}
+        {"id" => "tier-1", "name" => "starter", "description" => "Starter tier.", "includes" => ["bin/codex", "REVIEW.md"]}
       ],
       "adapters" => {
         "taxonomy" => [

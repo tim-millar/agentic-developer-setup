@@ -82,6 +82,24 @@ class AssessmentAssessorTest < Minitest::Test
     refute components.key?("issue_template_config")
   end
 
+  def test_review_policy_uses_generic_framework_path_detection
+    write("REVIEW.md", "Repository-specific review policy.\n")
+
+    component = assess["framework_adoption"]["detected_components"].find { |item| item["component"] == "review_policy" }
+
+    assert_equal "framework_like", component["state"]
+    assert_equal ["REVIEW.md"], component["paths"]
+  end
+
+  def test_review_policy_can_be_framework_exact
+    source = File.join(AssessmentTestSupport::ROOT, "baseline/REVIEW.md")
+    write("REVIEW.md", File.binread(source))
+
+    component = assess["framework_adoption"]["detected_components"].find { |item| item["component"] == "review_policy" }
+
+    assert_equal "framework_exact", component["state"]
+  end
+
   def test_each_other_issue_template_component_requires_its_own_evidence
     write(".github/ISSUE_TEMPLATE/implementation.md", "# Implementation\nAcceptance criteria and non-goals\n")
     write(".github/ISSUE_TEMPLATE/questions.md", "# Discovery\nProblem statement and open questions\n")
@@ -363,6 +381,7 @@ class AssessmentAssessorTest < Minitest::Test
     assert_equal 1, roadmap.find { |item| item["component"] == "agent_instructions" }["phase"]
     assert_equal 1, roadmap.find { |item| item["component"] == "command_interface" }["phase"]
     assert_equal 2, roadmap.find { |item| item["component"] == "bug_report_issue_template" }["phase"]
+    assert_equal 2, roadmap.find { |item| item["component"] == "review_policy" }["phase"]
     refute roadmap.any? { |item| item["title"].start_with?("Review and") }
   end
 
