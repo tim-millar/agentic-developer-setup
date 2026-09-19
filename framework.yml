@@ -95,6 +95,12 @@ baseline:
       description: Testing and validation expectations for the target repository.
 
   recommended:
+    - name: review_policy
+      category: review-policy
+      source_path: baseline/REVIEW.md
+      target_path: REVIEW.md
+      description: Repository-owned code-review policy defining priorities, important findings, low-value findings, context sources, and evidence expectations.
+
     - name: claude_agent_entrypoint
       category: claude-agent-entrypoint
       source_path: baseline/CLAUDE.md

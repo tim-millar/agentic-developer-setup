@@ -157,6 +157,14 @@ If a subdirectory defines its own `AGENTS.md` or other local instructions, read 
 
 Do not require absent or planned documentation as though it already exists. When a task introduces a new document, distinguish clearly between the current repository and its intended post-change state.
 
+### Review tasks
+
+For a code-review task, read and apply the root `REVIEW.md` policy. Use it for
+review priorities, `Important`/`Nit` classification, do-not-report guidance,
+context sources, and evidence expectations. Review the applicable branch or
+change against its stated task and repository contracts, and keep the policy
+distinct from the pull-request template's author-to-reviewer handoff.
+
 ## Task specifications and working modes
 
 This repository supports more than one agent-assisted working mode.

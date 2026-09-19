@@ -53,6 +53,7 @@ In this source repository, baseline artefacts live under `baseline/`. When adopt
 These include target-repository documents and automation such as:
 
 - `AGENTS.md`
+- `REVIEW.md`
 - `docs/AGENT_PROMPT.txt`
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT.md`
@@ -183,6 +184,7 @@ Potential adapter specialisations (when implementations are available):
 
    ```text
    baseline/AGENTS.md             -> AGENTS.md
+   baseline/REVIEW.md             -> REVIEW.md
    baseline/docs/DEVELOPMENT.md   -> docs/DEVELOPMENT.md
    baseline/docs/TESTING.md       -> docs/TESTING.md
    baseline/Makefile              -> Makefile
@@ -264,6 +266,7 @@ This repository is intended to be usable directly by coding agents and LLMs.
 This framework source repository uses a minimal self-hosted agent harness:
 
 - root `AGENTS.md` defines the operating contract for work on this repository
+- root `REVIEW.md` defines the canonical review policy for this repository
 - root `.ruby-version` and `scripts/agent_host_env.sh` define and validate the required host Ruby
 - root `docs/AGENT_PROMPT.txt` provides the repository-specific session bootstrap
 - root `scripts/run_codex.sh` is the supported Codex entrypoint
@@ -277,6 +280,13 @@ Launch Codex from the repository root with:
 Self-hosted Codex sessions validate the exact Ruby version declared by `.ruby-version` before starting. Prepare your shell/toolchain first; the launcher does not invoke a Ruby version manager automatically.
 
 These root files govern this repository only. The corresponding files under `baseline/` remain the reusable framework source artefacts declared in `framework.yml`. The root launcher supplies repository-specific location and identity defaults, then delegates to the executable canonical implementation at `baseline/scripts/run_codex.sh` rather than duplicating its behaviour. Keeping that baseline launcher executable supports both direct delegation here and direct use when the artefact is adopted into another repository.
+
+The root `REVIEW.md` is specialised for this public framework repository. The
+provider-neutral `baseline/REVIEW.md` is a recommended adoption component that
+target repositories may specialise for their own domain, architecture, and
+risk surfaces. The root review policy and `.github/PULL_REQUEST_TEMPLATE.md`
+serve different roles: repository review policy versus author-to-reviewer
+handoff evidence.
 
 Typical agent workflows include:
 

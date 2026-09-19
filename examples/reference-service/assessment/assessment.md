@@ -67,6 +67,7 @@ Alternative conditions:
 | `github_access_helper` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
 | `issue_template_config` | `adopt_now` | `high` | Current framework content is present; retain it and review its applicability. |
 | `pull_request_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
+| `review_policy` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `testing_strategy` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 
 ## Key gaps

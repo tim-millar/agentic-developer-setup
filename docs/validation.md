@@ -2,7 +2,7 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness and review policy/handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
@@ -94,9 +94,17 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
-- `baseline/AGENTS.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
+- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- `baseline/AGENTS.md`, `baseline/REVIEW.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
+
+`REVIEW.md` is the canonical repository-owned review policy. The root file is
+specialised for this framework source repository and is required by its
+self-hosted structure check; `baseline/REVIEW.md` is a generic recommended
+component that adopters may copy to the declared target path and specialise.
+The root policy and baseline policy are intentionally not required to have
+identical prose. `.github/PULL_REQUEST_TEMPLATE.md` remains a separate
+author-to-reviewer evidence handoff.
 
 The root `scripts/agent_host_env.sh` hook validates before Codex starts that the inherited host `PATH` resolves the exact Ruby version declared by `.ruby-version`. It validates the environment only: it does not select or install Ruby, invoke a version manager, or modify `PATH`. Developers must prepare the host shell/toolchain before launching a self-hosted Codex session.
 

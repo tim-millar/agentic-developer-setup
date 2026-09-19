@@ -786,6 +786,13 @@ component_recommendations:
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
   prerequisite_gap_ids: []
+- component: review_policy
+  state: adopt_now
+  confidence: low
+  evidence_ids: []
+  rationale: The capability is not currently detected; adopt it incrementally using
+    repository evidence and native conventions.
+  prerequisite_gap_ids: []
 - component: testing_strategy
   state: specialise_now
   confidence: medium

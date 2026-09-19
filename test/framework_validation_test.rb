@@ -29,12 +29,22 @@ class FrameworkValidationTest < Minitest::Test
     assert_empty stderr
   end
 
+  def test_review_policy_is_a_recommended_baseline_component
+    metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"))
+    component = metadata.fetch("baseline").fetch("recommended").find { |entry| entry["name"] == "review_policy" }
+
+    refute_nil component
+    assert_equal "review-policy", component["category"]
+    assert_equal "baseline/REVIEW.md", component["source_path"]
+    assert_equal "REVIEW.md", component["target_path"]
+  end
+
   def test_valid_isolated_repository_passes_validation_from_another_directory
     assert_passes("valid isolated repository")
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -488,6 +498,12 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("repository structure: AGENTS.md", "file does not exist")
   end
 
+  def test_missing_root_review_policy_fails
+    FileUtils.rm(File.join(@fixture_root, "REVIEW.md"))
+
+    assert_fails("repository structure: REVIEW.md", "file does not exist")
+  end
+
   def test_missing_root_prompt_file_fails
     FileUtils.rm(File.join(@fixture_root, "docs/AGENT_PROMPT.txt"))
 
@@ -626,9 +642,10 @@ class FrameworkValidationTest < Minitest::Test
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
-      AGENTS.md README.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      AGENTS.md REVIEW.md README.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
+      baseline/REVIEW.md
       baseline/issues/implementation.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))

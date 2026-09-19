@@ -18,6 +18,12 @@ If working in a subdirectory that contains its own `AGENTS.md` or architecture/d
 
 If instructions conflict, the more specific local instructions take precedence over this top-level file.
 
+For a code-review task, when the target repository has a `REVIEW.md`, agents
+must read and apply it as that repository's canonical review policy. Use it for
+review priorities, finding classification, do-not-report guidance, context
+sources, and evidence expectations. Do not require `REVIEW.md` when the target
+repository has not adopted it.
+
 When work begins from a GitHub issue, treat the issue as a primary source of truth for scope, acceptance criteria, non-goals, and constraints.
 
 ## Core Working Principles
