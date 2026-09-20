@@ -205,7 +205,6 @@ module AgentRunOutcomes
       mode, selected = parse_arguments(arguments)
       return 0 if ENV["AGENT_TELEMETRY"] == "0"
       raise Failure.new("local_io", "telemetry root is unavailable") unless root
-      raise Failure.new("invalid_source_record", "current repository has no GitHub origin") unless repository
 
       records = records_for(mode, selected)
       records = records.first(3) if mode == :automatic
@@ -411,7 +410,11 @@ module AgentRunOutcomes
         begin
           run = load_run(path)
           identity = run.dig("repository", "identity")
-          matches = identity["kind"] == "github" ? identity["value"].casecmp?(repository) : identity["value"] == @path_identity
+          matches = if identity["kind"] == "github"
+            repository && identity["value"].casecmp?(repository)
+          else
+            identity["value"] == @path_identity
+          end
           if mode == :selected && !matches
             raise Failure.new("invalid_source_record", "selected run belongs to another repository")
           end

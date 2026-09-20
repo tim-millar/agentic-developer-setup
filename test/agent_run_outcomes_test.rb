@@ -96,6 +96,7 @@ class AgentRunOutcomesTest < Minitest::Test
   def test_path_digest_is_not_applicable_without_github_queries
     digest = "sha256:#{Digest::SHA256.hexdigest(File.realpath(@repository))}"
     run_id = create_run(identity_kind: "path_digest", identity_value: digest)
+    git("remote", "remove", "origin")
     result = reconcile("--run", run_id)
     assert result.status.success?, result.stderr
     outcome = read_outcome(run_id)
