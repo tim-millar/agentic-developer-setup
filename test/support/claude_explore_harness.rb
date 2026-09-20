@@ -126,7 +126,7 @@ class ClaudeExploreHarness
     FileUtils.cp_r(source, destination, preserve: true)
     if version
       policy = File.join(destination, "policy.sh")
-      contents = File.read(policy).sub("CLAUDE_EXPLORE_RUNTIME_VERSION=1", "CLAUDE_EXPLORE_RUNTIME_VERSION=#{version}")
+      contents = File.read(policy).sub(/CLAUDE_EXPLORE_RUNTIME_VERSION=\d+/, "CLAUDE_EXPLORE_RUNTIME_VERSION=#{version}")
       File.write(policy, contents)
       File.chmod(0o600, policy)
     end

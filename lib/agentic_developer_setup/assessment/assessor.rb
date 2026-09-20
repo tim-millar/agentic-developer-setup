@@ -638,6 +638,8 @@ module AgenticDeveloperSetup
           detected = by_name[name]
           state, rationale, prereqs = if name == "agent_run_telemetry" && (!detected || !launcher_present)
             ["evaluate_later", "Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently.", []]
+          elsif name == "agent_run_outcomes" && (!detected || !launcher_present)
+            ["evaluate_later", "Outcome reconciliation is coupled to execution telemetry and a supported framework launcher and should be evaluated with them rather than adopted independently.", []]
           elsif detected
             component_state_for_detected(detected)
           else

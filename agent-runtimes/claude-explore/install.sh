@@ -18,6 +18,7 @@ else
   exit 1
 fi
 SOURCE_ROOT=$($REALPATH_BIN "$SCRIPT_DIR" 2>/dev/null) || exit 1
+OUTCOME_SOURCE=$($REALPATH_BIN "$SOURCE_ROOT/lib/agent_run_outcomes.sh" 2>/dev/null) || exit 1
 file_mode() { if /usr/bin/stat -f '%Lp' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%Lp' "$1"; else /usr/bin/stat -c '%a' "$1"; fi; }
 file_uid() { if /usr/bin/stat -f '%u' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%u' "$1"; else /usr/bin/stat -c '%u' "$1"; fi; }
 trusted_file() {
@@ -35,6 +36,7 @@ trusted_file "$SOURCE_ROOT/install.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/claude_explore_runtime.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/claude_explore_guard.sh" executable &&
   trusted_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" policy &&
+  trusted_file "$OUTCOME_SOURCE" executable &&
   trusted_file "$SOURCE_ROOT/policy.sh" policy || {
     echo "claude-explore installer: source runtime content is missing or unsafe" >&2
     exit 1

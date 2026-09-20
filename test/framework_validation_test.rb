@@ -34,10 +34,17 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
+  end
+
+  def test_root_codex_wrapper_snapshots_the_canonical_outcome_implementation
+    wrapper = File.read(File.join(REPOSITORY_ROOT, "scripts", "run_codex.sh"))
+
+    assert_includes wrapper, 'AGENT_OUTCOME_RECONCILER_PATH="$REPO_ROOT/baseline/scripts/agent_run_outcomes.sh"'
+    refute_includes wrapper, 'AGENT_OUTCOME_RECONCILER_PATH="$SCRIPT_DIR/agent_run_outcomes.sh"'
   end
 
   def test_target_paths_are_not_checked_for_existence
@@ -634,11 +641,12 @@ class FrameworkValidationTest < Minitest::Test
   private
 
   def build_fixture
-    %w[docs scripts .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
+    %w[docs scripts schemas .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
       AGENTS.md README.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      docs/run-outcomes.md scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md

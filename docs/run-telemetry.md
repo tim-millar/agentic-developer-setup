@@ -27,7 +27,7 @@ runs/
     task.txt        # only when pre-run task-specific text is available
 ```
 
-Framework-created directories use mode `0700` and files use mode `0600`. Updates stage a sibling temporary file and atomically replace `run.json`; independently generated run directories avoid a shared append lock or mutable global index. A terminal v1 `run.json` is immutable. Later enrichment associates sidecar evidence by `run_id` rather than rewriting the base record.
+Framework-created directories use mode `0700` and files use mode `0600`. Updates stage a sibling temporary file and atomically replace `run.json`; independently generated run directories avoid a shared append lock or mutable global index. A terminal v1 `run.json` is immutable. Implementation-lifecycle enrichment belongs in the per-run `outcome.json` sidecar documented in [`run-outcomes.md`](run-outcomes.md); it joins by `run_id` rather than rewriting the base record.
 
 Records remain until the user removes them. The framework performs no automatic pruning, upload, synchronisation, or central ingestion.
 
@@ -99,6 +99,6 @@ Claude Explore records supported explicit model, effort, and resume/session argu
 
 ## Downstream contracts
 
-This record is the machine-readable counterpart to the human-readable PR provenance introduced by #52, but telemetry does not select a primary implementation run or mutate pull requests. Future provider usage and cost evidence from #56 and PR/outcome evidence from #57 join to the immutable record by `run_id`; they do not add those fields to schema v1. Controlled evaluations from #6 retain their separate `evaluation_run_id` and may reference one or more ordinary run IDs.
+This record is the machine-readable counterpart to the human-readable PR provenance introduced by #52, but telemetry does not select a primary implementation run or mutate pull requests. Provider usage and cost evidence from #56 and implementation-outcome evidence from #57 join to the immutable record by `run_id`; they do not add those fields to schema v1. Controlled evaluations from #6 retain their separate `evaluation_run_id` and may reference one or more ordinary run IDs.
 
 Issue #53 owns the canonical common execution `run_id`. Future non-interactive execution artefacts from #16 must reuse or reference that identity instead of creating a competing execution-run identifier. This implementation does not add provider accounting, outcome correlation, controlled evaluation, model routing, or non-interactive execution.

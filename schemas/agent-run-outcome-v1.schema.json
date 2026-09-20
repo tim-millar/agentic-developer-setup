@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/agent-run-outcome-v1.schema.json",
+  "title": "Agent Development Framework implementation outcome evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "source_run_schema_version", "reconciliation", "correlation", "pull_requests"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"$ref": "#/$defs/run_id"},
+    "source_run_schema_version": {"const": 1},
+    "reconciliation": {"$ref": "#/$defs/reconciliation"},
+    "correlation": {"$ref": "#/$defs/correlation"},
+    "pull_requests": {"type": "array", "items": {"$ref": "#/$defs/pull_request"}}
+  },
+  "$defs": {
+    "run_id": {"type": "string", "pattern": "^run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$"},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "nullable_timestamp": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "nullable_sha": {"oneOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]},
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"},
+    "nullable_string": {"type": ["string", "null"]},
+    "last_error": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category"],
+          "properties": {
+            "category": {"enum": ["authentication", "authorization", "network", "api", "rate_limit", "local_io", "invalid_source_record", "parse", "timeout"]},
+            "http_status": {"type": "integer", "minimum": 100, "maximum": 599}
+          }
+        }
+      ]
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["last_attempted_at", "last_successful_at", "attempt_count", "observation_state", "automatic_state", "next_eligible_at", "last_error"],
+      "properties": {
+        "last_attempted_at": {"$ref": "#/$defs/timestamp"},
+        "last_successful_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "attempt_count": {"type": "integer", "minimum": 1},
+        "observation_state": {"enum": ["complete", "partial", "unavailable", "not_applicable"]},
+        "automatic_state": {"enum": ["active", "quiescent", "dormant"]},
+        "next_eligible_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "last_error": {"$ref": "#/$defs/last_error"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "commit_sha", "branch"],
+      "properties": {
+        "kind": {"enum": ["finish_head_equals_pr_head", "finish_head_in_pr_commits", "unique_head_branch", "task_issue_link", "temporal_compatibility"]},
+        "commit_sha": {"$ref": "#/$defs/nullable_sha"},
+        "branch": {"$ref": "#/$defs/nullable_string"},
+        "issue": {"$ref": "#/$defs/nullable_string"}
+      }
+    },
+    "association": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "number", "first_observed_at", "last_observed_at", "established_by", "supporting_evidence"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "number": {"type": "integer", "minimum": 1},
+        "first_observed_at": {"$ref": "#/$defs/timestamp"},
+        "last_observed_at": {"$ref": "#/$defs/timestamp"},
+        "established_by": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["finish_head_equals_pr_head", "finish_head_in_pr_commits", "unique_head_branch"]}},
+        "supporting_evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "number", "evidence"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "number": {"type": "integer", "minimum": 1},
+        "evidence": {"type": "array", "uniqueItems": true, "items": {"enum": ["finish_head_equals_pr_head", "finish_head_in_pr_commits", "unique_head_branch", "task_issue_link", "temporal_compatibility"]}}
+      }
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "associations", "candidates"],
+      "properties": {
+        "state": {"enum": ["matched", "unmatched", "ambiguous", "unavailable", "not_applicable"]},
+        "associations": {"type": "array", "items": {"$ref": "#/$defs/association"}},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "number", "node_id"],
+      "properties": {"repository": {"$ref": "#/$defs/repository"}, "number": {"type": "integer", "minimum": 1}, "node_id": {"$ref": "#/$defs/nullable_string"}}
+    },
+    "current": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "draft", "head_repository", "head_ref", "head_sha", "base_repository", "base_ref", "base_sha", "created_at", "updated_at", "closed_at", "merged_at", "merge_commit_sha", "observed_at"],
+      "properties": {
+        "lifecycle": {"enum": ["open", "merged", "closed_unmerged", "unavailable"]}, "draft": {"type": ["boolean", "null"]},
+        "head_repository": {"oneOf": [{"$ref": "#/$defs/repository"}, {"type": "null"}]}, "head_ref": {"$ref": "#/$defs/nullable_string"}, "head_sha": {"$ref": "#/$defs/nullable_sha"},
+        "base_repository": {"oneOf": [{"$ref": "#/$defs/repository"}, {"type": "null"}]}, "base_ref": {"$ref": "#/$defs/nullable_string"}, "base_sha": {"$ref": "#/$defs/nullable_sha"},
+        "created_at": {"$ref": "#/$defs/nullable_timestamp"}, "updated_at": {"$ref": "#/$defs/nullable_timestamp"}, "closed_at": {"$ref": "#/$defs/nullable_timestamp"}, "merged_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "merge_commit_sha": {"$ref": "#/$defs/nullable_sha"}, "observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "head_observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha", "observed_at", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {"sha": {"$ref": "#/$defs/sha"}, "observed_at": {"$ref": "#/$defs/timestamp"}, "source_kind": {"const": "github_pull_snapshot"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "commit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {"sha": {"$ref": "#/$defs/sha"}, "source_kind": {"const": "github_pull_commit"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "timeline_event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "kind", "timestamp", "actor_login", "actor_type", "before_sha", "after_sha", "before_ref", "after_ref", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {
+        "source_id": {"type": "string"}, "kind": {"enum": ["ready_for_review", "converted_to_draft", "review_requested", "review_request_removed", "review_dismissed", "head_ref_force_pushed", "head_ref_deleted", "head_ref_restored", "base_ref_changed", "closed", "reopened", "merged", "cross_referenced"]},
+        "timestamp": {"$ref": "#/$defs/timestamp"}, "actor_login": {"$ref": "#/$defs/nullable_string"}, "actor_type": {"$ref": "#/$defs/nullable_string"},
+        "before_sha": {"$ref": "#/$defs/nullable_sha"}, "after_sha": {"$ref": "#/$defs/nullable_sha"}, "before_ref": {"$ref": "#/$defs/nullable_string"}, "after_ref": {"$ref": "#/$defs/nullable_string"},
+        "source_kind": {"const": "github_timeline_event"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "review": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "reviewer_login", "reviewer_type", "state", "commit_id", "submitted_at", "dismissed_at", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {
+        "source_id": {"type": "string"}, "reviewer_login": {"$ref": "#/$defs/nullable_string"}, "reviewer_type": {"$ref": "#/$defs/nullable_string"}, "state": {"type": "string"},
+        "commit_id": {"$ref": "#/$defs/nullable_sha"}, "submitted_at": {"$ref": "#/$defs/timestamp"}, "dismissed_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "source_kind": {"const": "github_pull_review"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "check_run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "name", "app_id", "app_slug", "head_sha", "status", "conclusion", "started_at", "completed_at", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {
+        "source_id": {"type": "string"}, "name": {"type": "string"}, "app_id": {"type": ["integer", "null"]}, "app_slug": {"$ref": "#/$defs/nullable_string"}, "head_sha": {"$ref": "#/$defs/sha"},
+        "status": {"type": ["string", "null"]}, "conclusion": {"type": ["string", "null"]}, "started_at": {"$ref": "#/$defs/nullable_timestamp"}, "completed_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "source_kind": {"const": "github_check_run"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "status": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "context", "sha", "state", "created_at", "updated_at", "creator_login", "creator_type", "source_kind", "first_observed_at", "last_observed_at"],
+      "properties": {
+        "source_id": {"type": "string"}, "context": {"type": "string"}, "sha": {"$ref": "#/$defs/sha"}, "state": {"type": "string"},
+        "created_at": {"$ref": "#/$defs/nullable_timestamp"}, "updated_at": {"$ref": "#/$defs/nullable_timestamp"}, "creator_login": {"$ref": "#/$defs/nullable_string"}, "creator_type": {"$ref": "#/$defs/nullable_string"},
+        "source_kind": {"const": "github_commit_status"}, "first_observed_at": {"$ref": "#/$defs/timestamp"}, "last_observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "check_group": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha", "check_runs", "statuses", "evidence", "observed_check_rollup"],
+      "properties": {
+        "sha": {"$ref": "#/$defs/sha"}, "check_runs": {"type": "array", "items": {"$ref": "#/$defs/check_run"}}, "statuses": {"type": "array", "items": {"$ref": "#/$defs/status"}},
+        "evidence": {"type": "object", "additionalProperties": false, "required": ["checks", "statuses"], "properties": {"checks": {"enum": ["complete", "unavailable"]}, "statuses": {"enum": ["complete", "unavailable"]}}},
+        "observed_check_rollup": {"enum": ["unobserved", "pending", "passing", "failing", "incomplete"]}
+      }
+    },
+    "derived": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reviewed_revision_count", "first_reviewed_revision", "post_first_review_change_observed", "merged_on_first_reviewed_revision"],
+      "properties": {
+        "reviewed_revision_count": {"type": "integer", "minimum": 0},
+        "first_reviewed_revision": {"type": "object", "additionalProperties": false, "required": ["state", "sha"], "properties": {"state": {"enum": ["available", "unavailable", "not_applicable"]}, "sha": {"$ref": "#/$defs/nullable_sha"}}},
+        "post_first_review_change_observed": {"enum": ["yes", "no", "unavailable", "not_applicable"]},
+        "merged_on_first_reviewed_revision": {"enum": ["yes", "no", "unavailable", "not_applicable"]}
+      }
+    },
+    "pull_request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identity", "association", "current", "head_history", "commits", "timeline_events", "reviews", "checks_by_sha", "derived"],
+      "properties": {
+        "identity": {"$ref": "#/$defs/identity"}, "association": {"$ref": "#/$defs/association"}, "current": {"$ref": "#/$defs/current"},
+        "head_history": {"type": "array", "items": {"$ref": "#/$defs/head_observation"}}, "commits": {"type": "array", "items": {"$ref": "#/$defs/commit"}},
+        "timeline_events": {"type": "array", "items": {"$ref": "#/$defs/timeline_event"}}, "reviews": {"type": "array", "items": {"$ref": "#/$defs/review"}},
+        "checks_by_sha": {"type": "array", "items": {"$ref": "#/$defs/check_group"}}, "derived": {"$ref": "#/$defs/derived"}
+      }
+    }
+  }
+}

@@ -1715,6 +1715,69 @@ class LauncherTest < Minitest::Test
     assert_equal @harness.expected_codex_args("resume", "abc"), @harness.invocation.fetch("args")
   end
 
+  def test_outcome_reconciler_is_snapshotted_before_child_and_reused_after_terminal_finalization
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+    compromised = File.join(@harness.root, "compromised")
+    mutation = <<~SH
+      #!/bin/sh
+      : > "$FAKE_COMPROMISED_MARKER"
+      exit 0
+    SH
+
+    result = @harness.run(env: {
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_COMPROMISED_MARKER" => compromised,
+      "FAKE_CODEX_MUTATE_OUTCOME_HELPER" => helper,
+      "FAKE_CODEX_MUTATE_OUTCOME_CONTENT" => mutation
+    })
+
+    assert result.status.success?, failure_message("outcome snapshot", result)
+    invocations = File.readlines(log, chomp: true)
+    assert_equal "--automatic", invocations.fetch(0)
+    assert_match(/\A--run run-/, invocations.fetch(1))
+    assert_equal 2, invocations.length
+    refute File.exist?(compromised), "post-run reconciliation executed child-modified repository code"
+  end
+
+  def test_outcome_reconciliation_failure_preserves_workload_status
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      exit 44
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add failing synthetic outcome reconciler")
+
+    result = @harness.run(env: {"FAKE_CODEX_EXIT" => "23"})
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING:").length
+  end
+
+  def test_unsafe_optional_outcome_reconciler_is_rejected_before_child_launch
+    target = File.join(@harness.root, "outside-outcome-reconciler")
+    File.write(target, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, target)
+    helper = File.join(@harness.repository, "scripts/agent_run_outcomes.sh")
+    File.symlink(target, helper)
+
+    result = @harness.run("--allow-dirty")
+
+    refute result.status.success?
+    assert_includes result.stderr, "framework outcome reconciler is unsafe"
+    assert_empty @harness.codex_invocations
+  end
+
   private
 
   def replace_harness

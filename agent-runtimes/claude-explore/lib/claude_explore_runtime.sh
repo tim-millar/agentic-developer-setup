@@ -96,6 +96,7 @@ initialize_runtime_source() {
     case "$path" in "$RUNTIME_ROOT"/*) ;; *) runtime_error "runtime content resolves outside installation"; return 1 ;; esac
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "telemetry runtime content is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "outcome runtime content is missing or unsafe"; return 1; }
   safe_owned_policy "$POLICY_FILE" || { runtime_error "policy is missing or unsafe"; return 1; }
   # shellcheck disable=SC1090 -- path is derived and validated above.
   . "$POLICY_FILE"
@@ -419,6 +420,7 @@ validate_installed_runtime() {
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "installed outcome reconciler is missing or unsafe"; return 1; }
   safe_owned_policy "$RUNTIME_ROOT/policy.sh" || { runtime_error "installed policy is missing or unsafe"; return 1; }
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }
   current_link=$DATA_INSTALL_ROOT/current
@@ -676,7 +678,35 @@ runtime_exit_cleanup() {
   local status=$?
   cleanup_session || true
   agent_telemetry_finalize_pending "$status" "${TELEMETRY_GIT_BIN:-}" "${TELEMETRY_REPO_ROOT:-}"
+  if [ -n "${AGENT_TELEMETRY_RUN_ID:-}" ]; then
+    run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
+      printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
+  fi
   return "$status"
+}
+
+capture_outcome_authority() {
+  OUTCOME_RECONCILER=$RUNTIME_ROOT/lib/agent_run_outcomes.sh
+  OUTCOME_TOKEN_HELPER=${AGENT_GITHUB_TOKEN_HELPER:-}
+  OUTCOME_HOST_GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  OUTCOME_TELEMETRY_DIR=${AGENT_TELEMETRY_DIR:-}
+  OUTCOME_HOST_GH_CONFIG_DIR=${GH_CONFIG_DIR:-}
+  OUTCOME_GH_BIN=$(command -v gh 2>/dev/null || true)
+  OUTCOME_RUBY_BIN=$(command -v ruby 2>/dev/null || true)
+}
+
+run_outcome_reconciler() {
+  local -a environment=(-u GH_CONFIG_DIR)
+  [ -x "${OUTCOME_RECONCILER:-}" ] || return 0
+  environment+=("AGENT_OUTCOME_CURRENT_RUN_ID=${AGENT_TELEMETRY_RUN_ID:-}")
+  [ -z "${OUTCOME_TOKEN_HELPER:-}" ] || environment+=("AGENT_GITHUB_TOKEN_HELPER=$OUTCOME_TOKEN_HELPER")
+  [ -z "${OUTCOME_HOST_GH_TOKEN:-}" ] || environment+=("GH_TOKEN=$OUTCOME_HOST_GH_TOKEN")
+  [ -z "${OUTCOME_TELEMETRY_DIR:-}" ] || environment+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
+  [ -z "${OUTCOME_HOST_GH_CONFIG_DIR:-}" ] || environment+=("GH_CONFIG_DIR=$OUTCOME_HOST_GH_CONFIG_DIR")
+  [ -z "${OUTCOME_GH_BIN:-}" ] || environment+=("OUTCOME_GH_BIN=$OUTCOME_GH_BIN")
+  [ -z "${OUTCOME_RUBY_BIN:-}" ] || environment+=("OUTCOME_RUBY_BIN=$OUTCOME_RUBY_BIN")
+  [ -z "${TELEMETRY_GIT_TARGET:-}" ] || environment+=("OUTCOME_GIT_BIN=$TELEMETRY_GIT_TARGET")
+  /usr/bin/env "${environment[@]}" "$OUTCOME_RECONCILER" "$@"
 }
 
 run_session() {
@@ -702,6 +732,8 @@ run_session() {
   if ! agent_telemetry_observe_repository "$TELEMETRY_GIT_BIN" "$TELEMETRY_REPO_ROOT"; then
     agent_telemetry_warning "could not observe repository identity"
   fi
+  capture_outcome_authority
+  run_outcome_reconciler --automatic >/dev/null || true
   make_session || { cleanup_session; runtime_error "could not create private session state"; return 1; }
   CHILD_PID=""
   trap 'AGENT_TELEMETRY_SIGNAL=INT; [ -z "$CHILD_PID" ] || kill -INT "$CHILD_PID" 2>/dev/null || :' INT

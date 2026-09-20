@@ -19,10 +19,11 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_install_runtime_info_idempotence_and_uninstall
     stdout, stderr, status = @harness.install
     assert status.success?, stderr
-    assert_includes stdout, "claude-explore 1 install"
+    assert_includes stdout, "claude-explore 2 install"
     assert File.symlink?(@harness.installed_launcher)
     assert_equal 0o600, File.stat(@harness.metadata).mode & 0o777
     assert_equal 0o700, File.stat(@harness.current_runtime).mode & 0o777
+    assert_equal 0o700, File.stat(File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")).mode & 0o777
 
     _stdout, stderr, status = @harness.install
     assert status.success?, stderr
@@ -471,6 +472,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     [
       ["lib/claude_explore_guard.sh", 0o600, "installed runtime content is missing or unsafe"],
       ["lib/claude_explore_runtime.sh", 0o722, "installed runtime content is missing or unsafe"],
+      ["lib/agent_run_outcomes.sh", 0o600, "installed runtime content is missing or unsafe"],
       ["policy.sh", 0o700, "installed runtime content is missing or unsafe"]
     ].each do |relative, mode, diagnostic|
       @harness.cleanup
@@ -495,6 +497,53 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     _stdout, stderr, status = @harness.runtime
     refute status.success?
     assert_includes stderr, "installed runtime content is missing or unsafe"
+  end
+
+  def test_outcome_reconciliation_uses_trusted_installed_copy_and_keeps_authority_from_child
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    repository = File.join(@harness.root, "outcome-repository")
+    FileUtils.mkdir_p(File.join(repository, "scripts"))
+    compromised = File.join(@harness.root, "repository-reconciler-ran")
+    File.write(File.join(repository, "scripts/agent_run_outcomes.sh"), "#!/bin/sh\n: > #{compromised.dump}\n")
+    File.chmod(0o755, File.join(repository, "scripts/agent_run_outcomes.sh"))
+    log = File.join(@harness.root, "outcome-invocations.log")
+    installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
+    File.write(installed, <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> #{log.dump}
+      exit 0
+    SH
+    File.chmod(0o700, installed)
+
+    _stdout, stderr, status = @harness.runtime(
+      extra_env: {"GH_TOKEN" => "synthetic-host-token", "AGENT_GITHUB_TOKEN_HELPER" => "/synthetic/token-helper"},
+      chdir: repository
+    )
+
+    assert status.success?, stderr
+    invocations = File.readlines(log, chomp: true)
+    assert_equal "--automatic", invocations.fetch(0)
+    assert_match(/\A--run run-/, invocations.fetch(1))
+    refute File.exist?(compromised)
+    child_environment = @harness.read(@harness.env.fetch("FAKE_ENV_LOG"))
+    refute_includes child_environment, "GH_TOKEN="
+    refute_includes child_environment, "AGENT_GITHUB_TOKEN_HELPER="
+  end
+
+  def test_outcome_reconciliation_failure_preserves_claude_status
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
+    File.write(installed, "#!/bin/sh\nexit 44\n")
+    File.chmod(0o700, installed)
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_CLAUDE_EXIT" => "19"})
+
+    assert_equal 19, status.exitstatus
+    assert_equal 1, stderr.scan("AGENT_OUTCOME_WARNING:").length
   end
 
   def test_claude_launcher_path_hierarchy_and_relative_xdg_fail_closed
@@ -533,24 +582,24 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     preserved_session = File.join(@harness.sessions_root, "claude-explore.active")
     FileUtils.mkdir_p(preserved_session)
     File.chmod(0o700, preserved_session)
-    source_v2 = @harness.copy_runtime_source(version: 2)
-    _stdout, stderr, status = @harness.install_from(File.join(source_v2, "install.sh"), "upgrade")
+    source_v3 = @harness.copy_runtime_source(version: 3)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v3, "install.sh"), "upgrade")
     assert status.success?, stderr
-    assert_match(%r{/versions/2\z}, File.realpath(File.join(@harness.data_root, "current")))
-    assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
-    assert_includes @harness.read(@harness.metadata), "runtime_version=2"
+    assert_match(%r{/versions/3\z}, File.realpath(File.join(@harness.data_root, "current")))
+    assert_match(%r{/versions/3/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_includes @harness.read(@harness.metadata), "runtime_version=3"
     assert Dir.exist?(preserved_session), "upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
 
     active_before = File.realpath(File.join(@harness.data_root, "current"))
     metadata_before = @harness.read(@harness.metadata)
-    source_v3 = @harness.copy_runtime_source(version: 3, fail_metadata_activation: true)
-    _stdout, stderr, status = @harness.install_from(File.join(source_v3, "install.sh"), "upgrade")
+    source_v4 = @harness.copy_runtime_source(version: 4, fail_metadata_activation: true)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v4, "install.sh"), "upgrade")
     refute status.success?
     assert_includes stderr, "injected metadata activation failure"
     assert_equal active_before, File.realpath(File.join(@harness.data_root, "current"))
     assert_equal metadata_before, @harness.read(@harness.metadata)
-    assert_match(%r{/versions/2/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_match(%r{/versions/3/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
     assert Dir.exist?(preserved_session), "failed upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
   end

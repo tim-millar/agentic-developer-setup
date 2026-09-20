@@ -29,6 +29,10 @@ test-launcher:
 test-claude-runtime:
 	bundle exec ruby -Itest test/claude_explore_runtime_test.rb
 
+.PHONY: test-outcomes
+test-outcomes:
+	bundle exec ruby -Ilib -Itest test/agent_run_outcomes_test.rb
+
 .PHONY: test-assessment
 test-assessment:
 	bundle exec ruby -Ilib -Itest -e 'files = ["test/assessment_test.rb", *Dir["test/assessment/**/*_test.rb"]].sort; files.each { |file| require File.expand_path(file) }'

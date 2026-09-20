@@ -735,6 +735,10 @@ class LauncherHarness
         File.binwrite("child-commit.txt", "created by fake Codex\n")
         system("git", "add", "child-commit.txt") && system("git", "commit", "-q", "-m", "Fake Codex commit") or exit 91
       end
+      if ENV["FAKE_CODEX_MUTATE_OUTCOME_HELPER"]
+        File.binwrite(ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"), ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_CONTENT"))
+        File.chmod(0o755, ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"))
+      end
 
       if ENV["FAKE_CODEX_WAIT"] == "1"
         Signal.trap("INT") do
@@ -902,6 +906,7 @@ class LauncherHarness
     executable("openssl", <<~RUBY)
       #!#{RbConfig.ruby}
       require "base64"
+      require "digest"
 
       events = ENV.fetch("FAKE_EVENT_LOG")
       case ARGV.first
@@ -911,12 +916,17 @@ class LauncherHarness
       when "base64"
         STDOUT.write(Base64.strict_encode64(STDIN.read))
       when "dgst"
-        sources_present = %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].all? do |name|
-          ENV.key?(name) && !ENV[name].empty?
+        if ARGV.include?("-sign")
+          sources_present = %w[GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH].all? do |name|
+            ENV.key?(name) && !ENV[name].empty?
+          end
+          File.open(events, "a", 0o600) { |file| file.puts("openssl:sign source_credentials_present=\#{sources_present}") }
+          STDIN.read
+          STDOUT.write("synthetic-signature")
+        else
+          path = ARGV.last
+          STDOUT.write("SHA2-256(\#{path})= \#{Digest::SHA256.file(path).hexdigest}\n")
         end
-        File.open(events, "a", 0o600) { |file| file.puts("openssl:sign source_credentials_present=\#{sources_present}") }
-        STDIN.read
-        STDOUT.write("synthetic-signature")
       else
         warn "unexpected synthetic openssl invocation"
         exit 2

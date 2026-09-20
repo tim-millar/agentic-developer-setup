@@ -15,6 +15,11 @@ if [[ ! -f "$TELEMETRY_HELPER" || -L "$TELEMETRY_HELPER" ]]; then
 fi
 # shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
 source "$TELEMETRY_HELPER"
+OUTCOME_RECONCILER_SOURCE="${AGENT_OUTCOME_RECONCILER_PATH:-$SCRIPT_DIR/agent_run_outcomes.sh}"
+OUTCOME_RECONCILER_DIR=""
+OUTCOME_RECONCILER_SNAPSHOT=""
+OUTCOME_RECONCILER_DIGEST=""
+OUTCOME_TELEMETRY_DIR="${AGENT_TELEMETRY_DIR:-}"
 
 EXPECTED_OWNER="${EXPECTED_OWNER:-tim-millar}"
 EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPOSITORY_HINT")}"
@@ -62,6 +67,7 @@ CODEX_VERSION_PROBE_PID=""
 CODEX_VERSION_CAPTURE_PID=""
 HOST_ENV_DIR=""
 GIT_BIN=""
+OPENSSL_BIN=""
 
 CODEX_VERSION_PROBE_TIMEOUT_SECONDS=5
 CODEX_VERSION_PROBE_MAX_BYTES=128
@@ -102,6 +108,10 @@ cleanup() {
 
   cleanup_codex_version_probe
   agent_telemetry_finalize_pending "$status" "$GIT_BIN" "$REPO_ROOT"
+  if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$AGENT_TELEMETRY_RUN_ID" ]]; then
+    run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
+      printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
+  fi
 
   if [[ -n "$SESSION_SHUTDOWN_FILE" && -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]]; then
     : > "$SESSION_SHUTDOWN_FILE" 2>/dev/null || true
@@ -114,8 +124,41 @@ cleanup() {
   [[ -n "$TMP_GH_CONFIG_DIR" && -d "$TMP_GH_CONFIG_DIR" ]] && rm -rf "$TMP_GH_CONFIG_DIR"
   [[ -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]] && rm -rf "$SESSION_CREDENTIAL_DIR"
   [[ -n "$HOST_ENV_DIR" && -d "$HOST_ENV_DIR" ]] && rm -rf "$HOST_ENV_DIR"
+  [[ -n "$OUTCOME_RECONCILER_DIR" && -d "$OUTCOME_RECONCILER_DIR" ]] && rm -rf "$OUTCOME_RECONCILER_DIR"
 
   return "$status"
+}
+
+snapshot_outcome_reconciler() {
+  local digest_output
+
+  [[ -e "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]] || return 0
+  if [[ ! -f "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]]; then
+    echo "Error: framework outcome reconciler is unsafe: $OUTCOME_RECONCILER_SOURCE" >&2
+    return 1
+  fi
+  OUTCOME_RECONCILER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
+  chmod 700 "$OUTCOME_RECONCILER_DIR" || return 1
+  OUTCOME_RECONCILER_SNAPSHOT=$OUTCOME_RECONCILER_DIR/agent_run_outcomes.sh
+  cp "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  chmod 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
+  OUTCOME_RECONCILER_DIGEST="${digest_output##*= }"
+  [[ "$OUTCOME_RECONCILER_DIGEST" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+}
+
+run_outcome_reconciler() {
+  local current_digest digest_output
+  local -a outcome_env
+  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]] || return 0
+  digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
+  current_digest="${digest_output##*= }"
+  [[ "$current_digest" == "$OUTCOME_RECONCILER_DIGEST" ]] || return 1
+  outcome_env=("AGENT_OUTCOME_CURRENT_RUN_ID=$AGENT_TELEMETRY_RUN_ID")
+  [[ -z "$OUTCOME_TELEMETRY_DIR" ]] || outcome_env+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
+  [[ -z "$TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$TOKEN_HELPER")
+  [[ -z "${GIT_BIN:-}" ]] || outcome_env+=("OUTCOME_GIT_BIN=$GIT_BIN")
+  "$ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
 }
 
 trap cleanup EXIT
@@ -557,7 +600,7 @@ observe_codex_requested_configuration() {
 }
 
 if ! codex_invocation_is_inspection; then
-  agent_telemetry_start codex-cli agent-development-framework/codex 1 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
+  agent_telemetry_start codex-cli agent-development-framework/codex 2 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
   observe_codex_requested_configuration
   if [[ -n "$RESUME_SESSION" ]]; then agent_telemetry_set_session launcher_requested "$RESUME_SESSION"; fi
 fi
@@ -578,6 +621,7 @@ require_cmd "$CODEX_BIN"
 require_cmd bash
 require_cmd env
 require_cmd chmod
+require_cmd cp
 
 # Fix launcher-owned executable selection before repository bootstrap can
 # choose a different PATH for Codex shell commands.
@@ -586,6 +630,9 @@ ENV_BIN="$(command -v env)"
 CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
 GIT_BIN="$(command -v git)"
+OPENSSL_BIN="$(command -v openssl)"
+
+snapshot_outcome_reconciler || exit 1
 
 if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
   CODEX_VERSION_ENV=("PATH=$PATH")
@@ -1827,6 +1874,10 @@ agent_telemetry_mark_preflight_complete
 
 if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
   start_renewal_worker
+fi
+
+if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]]; then
+  run_outcome_reconciler --automatic >/dev/null || true
 fi
 
 if ! agent_telemetry_capture_git START "$GIT_BIN" "$REPO_ROOT"; then
