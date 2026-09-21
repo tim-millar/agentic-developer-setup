@@ -19,6 +19,10 @@ else
 fi
 SOURCE_ROOT=$($REALPATH_BIN "$SCRIPT_DIR" 2>/dev/null) || exit 1
 OUTCOME_SOURCE=$($REALPATH_BIN "$SOURCE_ROOT/lib/agent_run_outcomes.sh" 2>/dev/null) || exit 1
+case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *)
+  echo "claude-explore installer: outcome reconciler source resolves outside runtime" >&2
+  exit 1
+esac
 file_mode() { if /usr/bin/stat -f '%Lp' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%Lp' "$1"; else /usr/bin/stat -c '%a' "$1"; fi; }
 file_uid() { if /usr/bin/stat -f '%u' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%u' "$1"; else /usr/bin/stat -c '%u' "$1"; fi; }
 trusted_file() {

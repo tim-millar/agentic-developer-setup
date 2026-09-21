@@ -218,7 +218,7 @@ agent_runtimes:
           source_path: baseline/scripts/agent_run_telemetry.sh
           target_path: scripts/agent_run_telemetry.sh
         - role: outcomes
-          source_path: agent-runtimes/claude-explore/lib/agent_run_outcomes.sh
+          source_path: baseline/scripts/agent_run_outcomes.sh
           target_path: scripts/agent_run_outcomes.sh
       supported_platforms:
         - macos
@@ -266,7 +266,7 @@ agent_runtimes:
         - role: telemetry
           source_path: agent-runtimes/claude-explore/lib/agent_run_telemetry.sh
         - role: outcomes
-          source_path: baseline/scripts/agent_run_outcomes.sh
+          source_path: agent-runtimes/claude-explore/lib/agent_run_outcomes.sh
       supported_platforms:
         - macos
         - linux

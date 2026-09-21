@@ -670,6 +670,7 @@ class LauncherHarness
 
     executable("codex", <<~RUBY)
       #!#{RbConfig.ruby}
+      require "fileutils"
       require "json"
 
       if ARGV == ["--version"]
@@ -738,6 +739,15 @@ class LauncherHarness
       if ENV["FAKE_CODEX_MUTATE_OUTCOME_HELPER"]
         File.binwrite(ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"), ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_CONTENT"))
         File.chmod(0o755, ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"))
+      end
+      if ENV["FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR"]
+        directory = ENV.fetch("FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR")
+        FileUtils.mkdir_p(directory)
+        %w[gh ruby].each do |name|
+          path = File.join(directory, name)
+          File.binwrite(path, "#!/bin/sh\nexit 97\n")
+          File.chmod(0o700, path)
+        end
       end
 
       if ENV["FAKE_CODEX_WAIT"] == "1"
@@ -826,7 +836,10 @@ class LauncherHarness
         else
           0
         end
-        File.write(ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE"), (sequence_attempt + 1).to_s)
+        attempt_file = ENV.fetch("FAKE_TOKEN_ATTEMPT_FILE")
+        attempt_temp = "\#{attempt_file}.tmp.\#{Process.pid}"
+        File.write(attempt_temp, (sequence_attempt + 1).to_s)
+        File.rename(attempt_temp, attempt_file)
         response = sequence.fetch(sequence_attempt, sequence.last)
       end
 

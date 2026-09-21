@@ -10,7 +10,11 @@ case "$#:$1" in
   2:--run) ;;
   *) printf '%s\n' 'usage: agent_run_outcomes.sh [--automatic | --all | --run <run_id>]' >&2; exit 2 ;;
 esac
-OUTCOME_RUBY=${OUTCOME_RUBY_BIN:-$(command -v ruby 2>/dev/null || true)}
+if [ "${OUTCOME_RUBY_BIN+x}" = x ]; then
+  OUTCOME_RUBY=$OUTCOME_RUBY_BIN
+else
+  OUTCOME_RUBY=$(command -v ruby 2>/dev/null || true)
+fi
 if [ -z "$OUTCOME_RUBY" ]; then
   printf '%s\n' 'AGENT_OUTCOME_WARNING: ruby is unavailable; outcome reconciliation skipped' >&2
   exit 1
@@ -95,7 +99,7 @@ module AgentRunOutcomes
     attr_reader :queries
 
     def initialize
-      @gh = ENV["OUTCOME_GH_BIN"] || which("gh")
+      @gh = ENV.key?("OUTCOME_GH_BIN") ? ENV["OUTCOME_GH_BIN"] : which("gh")
       @helper = ENV["AGENT_GITHUB_TOKEN_HELPER"]
       @queries = 0
     end
@@ -198,6 +202,7 @@ module AgentRunOutcomes
       @path_identity = "sha256:#{Digest::SHA256.hexdigest(@repository_root)}"
       @github = GitHub.new
       @timeline_cache = {}
+      @task_link_cache = {}
       @warning_emitted = false
     end
 
@@ -502,7 +507,8 @@ module AgentRunOutcomes
       lock = File.join(run_dir, ".outcome.lock")
       recovery = File.join(run_dir, ".outcome.lock.recovery")
       created = false
-      return lock_busy(explicit) if File.exist?(recovery)
+      return lock_unavailable(explicit) unless File.directory?(run_dir)
+      return unless prepare_recovery_marker(recovery, explicit: explicit)
       begin
         Dir.mkdir(lock, 0o700)
         created = true
@@ -512,7 +518,7 @@ module AgentRunOutcomes
         return lock_busy(explicit) unless @now.to_f - File.mtime(lock).to_f > STALE_LOCK
         recover_stale_lock(lock, recovery, explicit: explicit)
       rescue Errno::ENOENT
-        retry
+        lock_unavailable(explicit)
       rescue Interrupt
         release_lock(lock) if created
         raise
@@ -536,8 +542,10 @@ module AgentRunOutcomes
       ensure
         FileUtils.remove_entry_secure(recovery) if File.directory?(recovery)
       end
-    rescue Errno::EEXIST, Errno::ENOENT
+    rescue Errno::EEXIST
       lock_busy(explicit)
+    rescue Errno::ENOENT
+      lock_unavailable(explicit)
     rescue Interrupt
       release_lock(lock) if recovered_lock
       raise
@@ -548,6 +556,26 @@ module AgentRunOutcomes
     def lock_busy(explicit)
       raise Failure.new("local_io", "selected run is busy") if explicit
       nil
+    end
+
+    def lock_unavailable(explicit)
+      raise Failure.new("local_io", "selected run disappeared before outcome lock acquisition") if explicit
+      nil
+    end
+
+    def prepare_recovery_marker(recovery, explicit:)
+      return true unless File.exist?(recovery)
+      return lock_busy(explicit) unless @now.to_f - File.mtime(recovery).to_f > STALE_LOCK
+
+      displaced = "#{recovery}.stale.#{Process.pid}.#{SecureRandom.hex(4)}"
+      File.rename(recovery, displaced)
+      FileUtils.remove_entry_secure(displaced)
+      true
+    rescue Errno::ENOENT
+      return lock_unavailable(explicit) unless File.directory?(File.dirname(recovery))
+      lock_busy(explicit)
+    rescue SystemCallError
+      raise Failure.new("local_io", "could not recover stale outcome recovery marker")
     end
 
     def release_lock(lock)
@@ -569,6 +597,7 @@ module AgentRunOutcomes
       previous ||= {}
       reconciliation = previous["reconciliation"].is_a?(Hash) ? previous["reconciliation"].dup : {}
       reconciliation["last_attempted_at"] = timestamp(@now)
+      reconciliation["last_successful_at"] = nil unless reconciliation.key?("last_successful_at")
       reconciliation["attempt_count"] = reconciliation.fetch("attempt_count", 0).to_i + 1
       reconciliation["observation_state"] ||= "unavailable"
       reconciliation["automatic_state"] ||= "active"
@@ -619,11 +648,18 @@ module AgentRunOutcomes
       exact_numbers.uniq!
 
       branch_candidates = []
+      indeterminate_candidates = []
       if exact_numbers.empty? && finish_branch
         pulls.each do |pr|
           next unless pr.dig("head", "repo", "full_name")&.casecmp?(repository)
           next unless pr.dig("head", "ref") == finish_branch
-          branch_candidates << pr if temporally_compatible?(pr, run)
+          compatibility, compatibility_error = temporal_compatibility(pr, run)
+          if compatibility == :compatible
+            branch_candidates << pr
+          elsif compatibility == :unavailable
+            indeterminate_candidates << pr
+            errors << compatibility_error
+          end
         end
       end
 
@@ -632,7 +668,9 @@ module AgentRunOutcomes
         method = pr.dig("head", "sha") == finish_sha ? "finish_head_equals_pr_head" : "finish_head_in_pr_commits"
         [number, method]
       end
-      establishing << [branch_candidates.first["number"], "unique_head_branch"] if establishing.empty? && branch_candidates.length == 1
+      if establishing.empty? && branch_candidates.length == 1 && indeterminate_candidates.empty?
+        establishing << [branch_candidates.first["number"], "unique_head_branch"]
+      end
 
       task_issue = task_issue_number(run)
       candidates = branch_candidates.map do |pr|
@@ -640,6 +678,11 @@ module AgentRunOutcomes
         evidence << "task_issue_link" if task_issue && task_linked?(pr["number"], task_issue)
         candidate(pr, evidence)
       end
+      candidates.concat(indeterminate_candidates.map do |pr|
+        evidence = []
+        evidence << "task_issue_link" if task_issue && task_linked?(pr["number"], task_issue)
+        candidate(pr, evidence)
+      end)
 
       old_associations = Array(previous&.dig("correlation", "associations"))
       new_associations = establishing.map do |number, method|
@@ -659,6 +702,8 @@ module AgentRunOutcomes
         "matched"
       elsif branch_candidates.length > 1
         "ambiguous"
+      elsif indeterminate_candidates.any?
+        "unavailable"
       elsif errors.any?
         "unavailable"
       else
@@ -686,30 +731,30 @@ module AgentRunOutcomes
       value.all? { |item| item.is_a?(Array) } ? value.flatten(1) : value
     end
 
-    def temporally_compatible?(pr, run)
+    def temporal_compatibility(pr, run)
       started = parse_time(run.dig("timing", "run_started_at"))
       finished = parse_time(run.dig("timing", "run_finished_at")) || started
       created = parse_time(pr["created_at"])
       closed = parse_time(pr["closed_at"] || pr["merged_at"])
-      return false unless created
-      return created <= finished + WINDOW if created > finished
-      return true if !closed || closed >= started
+      return [:incompatible, nil] unless created
+      return [created <= finished + WINDOW ? :compatible : :incompatible, nil] if created > finished
+      return [:compatible, nil] if !closed || closed >= started
 
       result = timeline_for(pr["number"])
-      return false if result.error
+      return [:unavailable, result.error] if result.error
       open_since = created
       flatten_pages(result.value).sort_by { |event| parse_time(event["created_at"]) || Time.at(0) }.each do |event|
         observed = parse_time(event["created_at"])
         next unless observed
         case event["event"]
         when "closed", "merged"
-          return true if open_since && open_since <= finished && observed >= started
+          return [:compatible, nil] if open_since && open_since <= finished && observed >= started
           open_since = nil
         when "reopened"
           open_since = observed
         end
       end
-      open_since && open_since <= finished
+      [open_since && open_since <= finished ? :compatible : :incompatible, nil]
     end
 
     def task_issue_number(run)
@@ -719,10 +764,18 @@ module AgentRunOutcomes
     end
 
     def task_linked?(pr_number, issue_number)
-      result = timeline_for(pr_number)
-      return false if result.error
-      flatten_pages(result.value).any? do |event|
-        event["event"] == "cross-referenced" && event.dig("source", "issue", "number") == issue_number
+      key = [issue_number, pr_number]
+      return @task_link_cache[key] if @task_link_cache.key?(key)
+
+      result = timeline_for(issue_number)
+      return @task_link_cache[key] = false if result.error
+      @task_link_cache[key] = flatten_pages(result.value).any? do |event|
+        source = event.dig("source", "issue")
+        next false unless event["event"] == "cross-referenced" && source.is_a?(Hash)
+        next false unless source["number"] == pr_number && source["pull_request"].is_a?(Hash)
+        source_repository = source.dig("repository", "full_name")
+        source_repository ||= source["repository_url"]&.delete_prefix("https://api.github.com/repos/")
+        source_repository&.casecmp?(repository)
       end
     end
 
@@ -763,18 +816,23 @@ module AgentRunOutcomes
     def observe_pull(association, old)
       errors = []
       number = association["number"]
-      details = required_api("repos/#{repository}/pulls/#{number}", errors)
+      details_errors = []
+      commit_errors = []
+      timeline_errors = []
+      review_errors = []
+      details = required_api("repos/#{repository}/pulls/#{number}", details_errors)
       current = details ? normalize_current(details) : old&.dig("current") || unavailable_current
-      commits = optional_collection("repos/#{repository}/pulls/#{number}/commits?per_page=100", errors)
-      timeline = optional_collection("repos/#{repository}/issues/#{number}/timeline?per_page=100", errors, accept: "application/vnd.github+json")
-      reviews = optional_collection("repos/#{repository}/pulls/#{number}/reviews?per_page=100", errors)
+      commits = optional_collection("repos/#{repository}/pulls/#{number}/commits?per_page=100", commit_errors)
+      timeline = optional_collection("repos/#{repository}/issues/#{number}/timeline?per_page=100", timeline_errors, accept: "application/vnd.github+json")
+      reviews = optional_collection("repos/#{repository}/pulls/#{number}/reviews?per_page=100", review_errors)
+      errors.concat(details_errors).concat(commit_errors).concat(timeline_errors).concat(review_errors)
       normalized_commits = commits.map { |commit| {"sha" => commit["sha"], "source_kind" => "github_pull_commit"} }.select { |commit| commit["sha"] }
       commit_history = merge_by_identity(old&.dig("commits"), normalized_commits, ["sha"], timestamp(@now))
       normalized_timeline = timeline.filter_map { |event| normalize_event(event) }
       timeline_history = merge_by_identity(old&.dig("timeline_events"), normalized_timeline, ["source_id", "kind", "timestamp"], timestamp(@now))
       normalized_reviews = reviews.filter_map { |review| normalize_review(review) }
       review_history = merge_by_identity(old&.dig("reviews"), normalized_reviews, ["source_id"], timestamp(@now))
-      revision_errors = errors.dup
+      revision_errors = details_errors + timeline_errors + review_errors
       head_sha = current["head_sha"]
       head_observation = head_sha ? [{"sha" => head_sha, "observed_at" => timestamp(@now), "source_kind" => "github_pull_snapshot"}] : []
       head_history = merge_by_identity(old&.dig("head_history"), head_observation, ["sha"], timestamp(@now))
@@ -789,7 +847,7 @@ module AgentRunOutcomes
         "timeline_events" => timeline_history,
         "reviews" => review_history,
         "checks_by_sha" => checks,
-        "derived" => derive(current, head_history, commit_history, timeline_history, review_history, revision_errors)
+        "derived" => derive(current, head_history, timeline_history, review_history, revision_errors)
       }
       [record, errors]
     end
@@ -835,7 +893,11 @@ module AgentRunOutcomes
     end
 
     def normalize_event(event)
-      kind = event["event"]&.tr("-", "_")
+      kind = case event["event"]
+      when "convert_to_draft" then "converted_to_draft"
+      when "cross-referenced" then "cross_referenced"
+      else event["event"]
+      end
       return unless EVENT_KINDS.include?(kind)
       observed_at = normalize_timestamp(event["created_at"])
       return unless observed_at
@@ -866,7 +928,7 @@ module AgentRunOutcomes
       all_shas.sort.map do |sha|
         old = old_by_sha[sha] || {}
         checks_result = @github.api("repos/#{repository}/commits/#{sha}/check-runs?per_page=100", paginate: true, accept: "application/vnd.github+json")
-        statuses_result = @github.api("repos/#{repository}/commits/#{sha}/status")
+        statuses_result = @github.api("repos/#{repository}/commits/#{sha}/statuses?per_page=100", paginate: true, accept: "application/vnd.github+json")
         errors << checks_result.error if checks_result.error
         errors << statuses_result.error if statuses_result.error
         raw_checks = if checks_result.value.is_a?(Hash)
@@ -874,7 +936,7 @@ module AgentRunOutcomes
         else
           flatten_pages(checks_result.value).flat_map { |page| page.is_a?(Hash) ? Array(page["check_runs"]) : [] }
         end
-        raw_statuses = statuses_result.value.is_a?(Hash) ? Array(statuses_result.value["statuses"]) : []
+        raw_statuses = flatten_pages(statuses_result.value)
         checks = raw_checks.map { |check| normalize_check(check, sha) }
         statuses = raw_statuses.map { |status| normalize_status(status, sha) }
         check_history = merge_by_identity(old["check_runs"], checks, ["source_id"], timestamp(@now))
@@ -904,7 +966,7 @@ module AgentRunOutcomes
       "incomplete"
     end
 
-    def derive(current, heads, commits, timeline, reviews, errors)
+    def derive(current, heads, timeline, reviews, errors)
       ordered_reviews = reviews.sort_by { |review| parse_time(review["submitted_at"]) || Time.at(0) }
       qualifying = ordered_reviews.select { |review| review["submitted_at"] }
       commit_ids = qualifying.map { |review| review["commit_id"] }.compact.uniq
@@ -922,34 +984,34 @@ module AgentRunOutcomes
         "unavailable"
       else
         first_submitted_at = parse_time(first["submitted_at"])
-        first_index = commits.index { |item| item["sha"] == first_revision["sha"] }
-        later_commit = first_index && commits[(first_index + 1)..]&.any?
         later_head = heads.any? do |item|
           observed = parse_time(item["first_observed_at"])
           item["sha"] != first_revision["sha"] && observed && first_submitted_at && observed >= first_submitted_at
         end
         later_transition = timeline.any? do |item|
           observed = parse_time(item["timestamp"])
-          item["after_sha"] && item["after_sha"] != first_revision["sha"] && observed && first_submitted_at && observed >= first_submitted_at
+          next false unless observed && first_submitted_at && observed >= first_submitted_at
+          item["kind"] == "head_ref_force_pushed" || (item["after_sha"] && item["after_sha"] != first_revision["sha"])
         end
         current_changed = current["head_sha"] && current["head_sha"] != first_revision["sha"]
-        later_commit || later_head || later_transition || current_changed ? "yes" : "no"
+        later_head || later_transition || current_changed ? "yes" : "no"
       end
       merged_first = if current["lifecycle"] != "merged" || qualifying.empty?
         "not_applicable"
       elsif first_revision["state"] != "available" || current["head_sha"].nil? || errors.any?
         "unavailable"
-      elsif current["head_sha"] == first_revision["sha"] && later == "no"
+      elsif current["head_sha"] != first_revision["sha"]
+        "no"
+      elsif later == "no"
         "yes"
       else
-        "no"
+        "unavailable"
       end
       {"reviewed_revision_count" => commit_ids.length, "first_reviewed_revision" => first_revision, "post_first_review_change_observed" => later, "merged_on_first_reviewed_revision" => merged_first}
     end
 
     def schedule(outcome, run)
       reconciliation = outcome["reconciliation"]
-      return if reconciliation["automatic_state"] == "quiescent"
       finished = parse_time(run.dig("timing", "run_finished_at")) || parse_time(run.dig("timing", "run_started_at"))
       deadline = finished + WINDOW
       state = outcome.dig("correlation", "state")
@@ -963,7 +1025,7 @@ module AgentRunOutcomes
         reconciliation["next_eligible_at"] = nil
       else
         reconciliation["automatic_state"] = "active"
-        delay = reconciliation["observation_state"] == "unavailable" ? HOUR : DAY
+        delay = %w[partial unavailable].include?(reconciliation["observation_state"]) ? HOUR : DAY
         reconciliation["next_eligible_at"] = timestamp(@now + delay)
       end
     end
@@ -971,13 +1033,21 @@ module AgentRunOutcomes
     def persist_failure(run_dir, run, previous, error)
       outcome = initial_outcome(run, previous)
       reconciliation = outcome["reconciliation"]
-      reconciliation["observation_state"] = previous ? "partial" : "unavailable"
+      reconciliation["observation_state"] = usable_prior_evidence?(previous) ? "partial" : "unavailable"
       reconciliation["last_error"] = safe_error(error)
       outcome["correlation"]["state"] = "unavailable" unless Array(outcome.dig("correlation", "associations")).any?
       schedule(outcome, run)
       atomic_write(File.join(run_dir, "outcome.json"), outcome)
     rescue Failure
       nil
+    end
+
+    def usable_prior_evidence?(previous)
+      return false unless previous.is_a?(Hash)
+      return true if previous.dig("reconciliation", "last_successful_at")
+      return true if Array(previous.dig("correlation", "associations")).any?
+      return true if Array(previous.dig("correlation", "candidates")).any?
+      Array(previous["pull_requests"]).any?
     end
 
     def safe_error(error)

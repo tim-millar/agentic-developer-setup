@@ -15,11 +15,16 @@ if [[ ! -f "$TELEMETRY_HELPER" || -L "$TELEMETRY_HELPER" ]]; then
 fi
 # shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
 source "$TELEMETRY_HELPER"
-OUTCOME_RECONCILER_SOURCE="${AGENT_OUTCOME_RECONCILER_PATH:-$SCRIPT_DIR/agent_run_outcomes.sh}"
+OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"
 OUTCOME_RECONCILER_DIR=""
 OUTCOME_RECONCILER_SNAPSHOT=""
 OUTCOME_RECONCILER_DIGEST=""
 OUTCOME_TELEMETRY_DIR="${AGENT_TELEMETRY_DIR:-}"
+OUTCOME_CP_BIN=""
+OUTCOME_GH_BIN=""
+OUTCOME_GIT_BIN=""
+OUTCOME_REALPATH_BIN=""
+OUTCOME_RUBY_BIN=""
 
 EXPECTED_OWNER="${EXPECTED_OWNER:-tim-millar}"
 EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPOSITORY_HINT")}"
@@ -137,10 +142,11 @@ snapshot_outcome_reconciler() {
     echo "Error: framework outcome reconciler is unsafe: $OUTCOME_RECONCILER_SOURCE" >&2
     return 1
   fi
+  [[ -n "$OUTCOME_CP_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 0
   OUTCOME_RECONCILER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
   chmod 700 "$OUTCOME_RECONCILER_DIR" || return 1
   OUTCOME_RECONCILER_SNAPSHOT=$OUTCOME_RECONCILER_DIR/agent_run_outcomes.sh
-  cp "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  "$OUTCOME_CP_BIN" "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
   chmod 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
   digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
   OUTCOME_RECONCILER_DIGEST="${digest_output##*= }"
@@ -154,11 +160,41 @@ run_outcome_reconciler() {
   digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
   current_digest="${digest_output##*= }"
   [[ "$current_digest" == "$OUTCOME_RECONCILER_DIGEST" ]] || return 1
-  outcome_env=("AGENT_OUTCOME_CURRENT_RUN_ID=$AGENT_TELEMETRY_RUN_ID")
+  outcome_env=(
+    -u AGENT_GITHUB_TOKEN_HELPER -u OUTCOME_GH_BIN -u OUTCOME_GIT_BIN -u OUTCOME_RUBY_BIN
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH
+    "AGENT_OUTCOME_CURRENT_RUN_ID=$AGENT_TELEMETRY_RUN_ID"
+    "OUTCOME_GH_BIN=$OUTCOME_GH_BIN"
+    "OUTCOME_GIT_BIN=$OUTCOME_GIT_BIN"
+    "OUTCOME_RUBY_BIN=$OUTCOME_RUBY_BIN"
+  )
   [[ -z "$OUTCOME_TELEMETRY_DIR" ]] || outcome_env+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
   [[ -z "$TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$TOKEN_HELPER")
-  [[ -z "${GIT_BIN:-}" ]] || outcome_env+=("OUTCOME_GIT_BIN=$GIT_BIN")
   "$ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
+}
+
+resolve_outcome_executable() {
+  local name="$1" found resolved parent mode uid
+  found="$(command -v "$name" 2>/dev/null || true)"
+  [[ "$found" == /* ]] || return 1
+  if [[ -L "$found" ]]; then
+    [[ -n "$OUTCOME_REALPATH_BIN" ]] || return 1
+    resolved="$("$OUTCOME_REALPATH_BIN" "$found" 2>/dev/null)" || return 1
+  else
+    parent="$(cd -P "$(dirname "$found")" 2>/dev/null && pwd)" || return 1
+    resolved="$parent/$(basename "$found")"
+  fi
+  [[ -f "$resolved" && -x "$resolved" ]] || return 1
+  case "$resolved" in "$REPO_ROOT"|"$REPO_ROOT"/*) return 1 ;; esac
+  if mode="$(/usr/bin/stat -f '%Lp' "$resolved" 2>/dev/null)"; then :
+  else mode="$(/usr/bin/stat -c '%a' "$resolved" 2>/dev/null)" || return 1
+  fi
+  if uid="$(/usr/bin/stat -f '%u' "$resolved" 2>/dev/null)"; then :
+  else uid="$(/usr/bin/stat -c '%u' "$resolved" 2>/dev/null)" || return 1
+  fi
+  [[ "$uid" == 0 || "$uid" == "$(/usr/bin/id -u)" ]] || return 1
+  (( (8#$mode & 022) == 0 )) || return 1
+  printf '%s\n' "$resolved"
 }
 
 trap cleanup EXIT
@@ -621,7 +657,6 @@ require_cmd "$CODEX_BIN"
 require_cmd bash
 require_cmd env
 require_cmd chmod
-require_cmd cp
 
 # Fix launcher-owned executable selection before repository bootstrap can
 # choose a different PATH for Codex shell commands.
@@ -631,6 +666,13 @@ CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
 GIT_BIN="$(command -v git)"
 OPENSSL_BIN="$(command -v openssl)"
+if [[ -x /usr/bin/realpath ]]; then OUTCOME_REALPATH_BIN=/usr/bin/realpath
+elif [[ -x /bin/realpath ]]; then OUTCOME_REALPATH_BIN=/bin/realpath
+fi
+OUTCOME_CP_BIN="$(resolve_outcome_executable cp 2>/dev/null || true)"
+OUTCOME_GH_BIN="$(resolve_outcome_executable gh 2>/dev/null || true)"
+OUTCOME_GIT_BIN="$(resolve_outcome_executable git 2>/dev/null || true)"
+OUTCOME_RUBY_BIN="$(resolve_outcome_executable ruby 2>/dev/null || true)"
 
 snapshot_outcome_reconciler || exit 1
 

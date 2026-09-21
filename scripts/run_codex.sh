@@ -23,11 +23,7 @@ fi
 
 EXPECTED_OWNER="${EXPECTED_OWNER-tim-millar}"
 EXPECTED_REPO="${EXPECTED_REPO-agentic-developer-setup}"
-# This repository's root outcome command is intentionally a thin wrapper around
-# the distributable source. Snapshot the canonical implementation itself so
-# host-side post-run reconciliation never resolves repository content again.
-AGENT_OUTCOME_RECONCILER_PATH="$REPO_ROOT/baseline/scripts/agent_run_outcomes.sh"
-export EXPECTED_OWNER EXPECTED_REPO AGENT_OUTCOME_RECONCILER_PATH
+export EXPECTED_OWNER EXPECTED_REPO
 
 cd "$REPO_ROOT"
 

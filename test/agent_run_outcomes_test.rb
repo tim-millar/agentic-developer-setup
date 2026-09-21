@@ -81,8 +81,8 @@ class AgentRunOutcomesTest < Minitest::Test
       commits_endpoint => [[{"sha" => SHA_B}]],
       timeline_endpoint => [[]],
       reviews_endpoint => [[]],
-      checks_endpoint(SHA_A) => [{"check_runs" => []}], statuses_endpoint(SHA_A) => {"statuses" => []},
-      checks_endpoint(SHA_B) => [{"check_runs" => []}], statuses_endpoint(SHA_B) => {"statuses" => []}
+      checks_endpoint(SHA_A) => [{"check_runs" => []}], statuses_endpoint(SHA_A) => [[]],
+      checks_endpoint(SHA_B) => [{"check_runs" => []}], statuses_endpoint(SHA_B) => [[]]
     )
     assert reconcile("--run", run_id).status.success?
 
@@ -113,8 +113,11 @@ class AgentRunOutcomesTest < Minitest::Test
     write_fixtures(
       pulls_endpoint => [[first, second]],
       commit_pulls_endpoint(SHA_A) => [[]],
-      timeline_endpoint(10) => [[{"event" => "cross-referenced", "source" => {"issue" => {"number" => 57}}}]],
-      timeline_endpoint(11) => [[]]
+      timeline_endpoint(57) => [[{"event" => "cross-referenced", "source" => {"issue" => {
+        "number" => 10,
+        "repository_url" => "https://api.github.com/repos/#{REPOSITORY}",
+        "pull_request" => {"url" => "https://api.github.com/repos/#{REPOSITORY}/pulls/10"}
+      }}}]]
     )
 
     assert reconcile("--run", run_id).status.success?
@@ -189,6 +192,43 @@ class AgentRunOutcomesTest < Minitest::Test
     refute File.exist?(lock)
   end
 
+  def test_stale_recovery_marker_is_recovered_but_active_marker_is_not_stolen
+    digest = "sha256:#{Digest::SHA256.hexdigest(File.realpath(@repository))}"
+    stale_id = create_run(identity_kind: "path_digest", identity_value: digest)
+    stale_marker = File.join(@telemetry, stale_id, ".outcome.lock.recovery")
+    Dir.mkdir(stale_marker, 0o700)
+    File.utime(Time.utc(2026, 1, 1), Time.utc(2026, 1, 1), stale_marker)
+
+    recovered = reconcile("--run", stale_id)
+    assert recovered.status.success?, recovered.stderr
+    refute File.exist?(stale_marker)
+
+    active_id = create_run(identity_kind: "path_digest", identity_value: digest)
+    active_marker = File.join(@telemetry, active_id, ".outcome.lock.recovery")
+    Dir.mkdir(active_marker, 0o700)
+    active = reconcile("--run", active_id)
+    refute active.status.success?
+    assert_includes active.stderr, "busy"
+    assert File.directory?(active_marker)
+
+    independent_id = create_run(identity_kind: "path_digest", identity_value: digest)
+    assert reconcile("--automatic").status.success?
+    assert File.file?(File.join(@telemetry, independent_id, "outcome.json"))
+  end
+
+  def test_disappeared_run_directory_does_not_retry_lock_acquisition_forever
+    automatic_id = create_run
+    automatic = reconcile("--automatic", env: disappearing_lock_env(automatic_id))
+    assert automatic.status.success?, automatic.stderr
+    refute File.exist?(File.join(@telemetry, automatic_id)), File.file?(File.join(@root, "lock-hook.log")) ? File.binread(File.join(@root, "lock-hook.log")) : "lock hook did not load"
+
+    explicit_id = create_run
+    explicit = reconcile("--run", explicit_id, env: disappearing_lock_env(explicit_id))
+    refute explicit.status.success?
+    assert_includes explicit.stderr, "disappeared"
+    refute File.exist?(File.join(@telemetry, explicit_id))
+  end
+
   def test_competing_explicit_reconcilers_do_not_enter_the_same_run
     run_id = create_run
     write_fixtures(pulls_endpoint => [[]], commit_pulls_endpoint(SHA_A) => [[]])
@@ -237,10 +277,33 @@ class AgentRunOutcomesTest < Minitest::Test
     outcome = read_outcome(run_id)
     assert_equal "unavailable", outcome.dig("correlation", "state")
     assert_equal "unavailable", outcome.dig("reconciliation", "observation_state")
+    assert_nil outcome.dig("reconciliation", "last_successful_at")
     assert_equal "authorization", outcome.dig("reconciliation", "last_error", "category")
     assert_equal 403, outcome.dig("reconciliation", "last_error", "http_status")
     assert_equal "2026-01-02T13:00:00.000Z", outcome.dig("reconciliation", "next_eligible_at")
     refute_includes JSON.generate(outcome), "arbitrary response body"
+
+    stdout, stderr, status = Open3.capture3(RbConfig.ruby, VALIDATOR, File.join(@telemetry, run_id, "outcome.json"))
+    assert status.success?, "#{stdout}\n#{stderr}"
+
+    repeated = reconcile("--run", run_id, env: {"AGENT_OUTCOME_NOW" => "2026-01-02T14:00:00.000Z"})
+    refute repeated.status.success?
+    repeated_outcome = read_outcome(run_id)
+    assert_equal "unavailable", repeated_outcome.dig("reconciliation", "observation_state")
+    assert_equal "2026-01-02T15:00:00.000Z", repeated_outcome.dig("reconciliation", "next_eligible_at")
+  end
+
+  def test_preserved_usable_evidence_plus_later_total_failure_is_partial
+    run_id = create_run
+    write_fixtures(pulls_endpoint => [[]], commit_pulls_endpoint(SHA_A) => [[]])
+    assert reconcile("--run", run_id).status.success?
+
+    write_fixtures(pulls_endpoint => {"__error" => "HTTP 503 unavailable", "__status" => 1})
+    failed = reconcile("--run", run_id, env: {"AGENT_OUTCOME_NOW" => "2026-01-02T14:00:00.000Z"})
+    refute failed.status.success?
+    outcome = read_outcome(run_id)
+    assert_equal "partial", outcome.dig("reconciliation", "observation_state")
+    assert_equal "2026-01-02T15:00:00.000Z", outcome.dig("reconciliation", "next_eligible_at")
   end
 
   def test_unresolved_record_becomes_dormant_after_thirty_days
@@ -271,7 +334,7 @@ class AgentRunOutcomesTest < Minitest::Test
     write_fixtures(
       pulls_endpoint => [[pull]], commit_pulls_endpoint(SHA_A) => [[]], timeline_endpoint => [events],
       pr_endpoint => pull, commits_endpoint => [[{"sha" => SHA_B}]], reviews_endpoint => [[]],
-      checks_endpoint(SHA_B) => [{"check_runs" => []}], statuses_endpoint(SHA_B) => {"statuses" => []}
+      checks_endpoint(SHA_B) => [{"check_runs" => []}], statuses_endpoint(SHA_B) => [[]]
     )
 
     assert reconcile("--run", run_id).status.success?
@@ -293,6 +356,144 @@ class AgentRunOutcomesTest < Minitest::Test
     group = read_outcome(run_id).dig("pull_requests", 0, "checks_by_sha").find { |item| item["sha"] == SHA_A }
     assert_equal 2, group.fetch("check_runs").length
     assert_equal "passing", group["observed_check_rollup"]
+  end
+
+  def test_status_collection_is_paginated_before_rollup
+    run_id = create_run(finish_sha: SHA_A)
+    fixtures = full_fixtures
+    fixtures[statuses_endpoint(SHA_A)] = [
+      [{"id" => 31, "context" => "first-page", "state" => "success", "created_at" => "2026-01-01T12:00:00.000Z"}],
+      [{"id" => 32, "context" => "later-page", "state" => "failure", "created_at" => "2026-01-01T12:01:00.000Z"}]
+    ]
+    write_fixtures(fixtures)
+
+    assert reconcile("--run", run_id).status.success?
+    group = read_outcome(run_id).dig("pull_requests", 0, "checks_by_sha").find { |item| item["sha"] == SHA_A }
+    assert_equal 2, group.fetch("statuses").length
+    assert_equal "failing", group["observed_check_rollup"]
+  end
+
+  def test_incomplete_status_collection_never_becomes_passing
+    run_id = create_run(finish_sha: SHA_A)
+    fixtures = full_fixtures
+    fixtures[statuses_endpoint(SHA_A)] = {"__error" => "HTTP 403 statuses unavailable", "__status" => 1}
+    write_fixtures(fixtures)
+
+    assert reconcile("--run", run_id).status.success?
+    group = read_outcome(run_id).dig("pull_requests", 0, "checks_by_sha").find { |item| item["sha"] == SHA_A }
+    assert_equal "unavailable", group.dig("evidence", "statuses")
+    assert_equal "incomplete", group["observed_check_rollup"]
+  end
+
+  def test_lexical_sha_order_is_not_used_as_revision_chronology
+    final_sha = "0" * 40
+    ancestor_sha = "f" * 40
+    run_id = create_run(finish_sha: final_sha)
+    pull = pr(head_sha: final_sha)
+    fixtures = observation_fixtures(pull, commits: [ancestor_sha, final_sha], review_sha: final_sha)
+    write_fixtures(fixtures)
+
+    assert reconcile("--run", run_id).status.success?
+    derived = read_outcome(run_id).dig("pull_requests", 0, "derived")
+    assert_equal "no", derived["post_first_review_change_observed"]
+  end
+
+  def test_later_head_after_first_review_is_observed_without_commit_array_ordering
+    run_id = create_run(finish_sha: SHA_A)
+    pull = pr(head_sha: SHA_B)
+    write_fixtures(observation_fixtures(pull, commits: [SHA_B, SHA_A], review_sha: SHA_A))
+
+    assert reconcile("--run", run_id).status.success?
+    assert_equal "yes", read_outcome(run_id).dig("pull_requests", 0, "derived", "post_first_review_change_observed")
+  end
+
+  def test_incomplete_transition_evidence_does_not_guess_revision_change
+    run_id = create_run(finish_sha: SHA_A)
+    pull = pr(head_sha: SHA_A)
+    fixtures = observation_fixtures(pull, commits: [SHA_A], review_sha: SHA_A)
+    fixtures[timeline_endpoint] = {"__error" => "HTTP 503 timeline unavailable", "__status" => 1}
+    write_fixtures(fixtures)
+
+    assert reconcile("--run", run_id).status.success?
+    assert_equal "unavailable", read_outcome(run_id).dig("pull_requests", 0, "derived", "post_first_review_change_observed")
+  end
+
+  def test_failed_reopen_timeline_lookup_preserves_branch_correlation_uncertainty
+    run_id = create_run(finish_branch: "historical")
+    pull = pr(head_sha: SHA_B, head_ref: "historical", state: "closed", created_at: "2025-12-01T09:00:00.000Z")
+    pull["closed_at"] = "2025-12-15T09:00:00.000Z"
+    write_fixtures(
+      pulls_endpoint => [[pull]],
+      commit_pulls_endpoint(SHA_A) => [[]],
+      timeline_endpoint => {"__error" => "HTTP 503 timeline unavailable", "__status" => 1}
+    )
+
+    assert reconcile("--run", run_id).status.success?
+    outcome = read_outcome(run_id)
+    assert_equal "unavailable", outcome.dig("correlation", "state")
+    refute_equal "complete", outcome.dig("reconciliation", "observation_state")
+    assert_equal [42], outcome.dig("correlation", "candidates").map { |candidate| candidate["number"] }
+  end
+
+  def test_explicit_refresh_reactivates_reopened_quiescent_pull_request
+    run_id = create_run(finish_sha: SHA_A)
+    terminal = pr(head_sha: SHA_A, state: "closed", merged: false)
+    write_fixtures(observation_fixtures(terminal, commits: [SHA_A]))
+    assert reconcile("--run", run_id).status.success?
+    assert_equal "quiescent", read_outcome(run_id).dig("reconciliation", "automatic_state")
+
+    reopened = pr(head_sha: SHA_A, state: "open", merged: false)
+    write_fixtures(observation_fixtures(reopened, commits: [SHA_A]))
+    assert reconcile("--run", run_id, env: {"AGENT_OUTCOME_NOW" => "2026-01-03T12:00:00.000Z"}).status.success?
+    outcome = read_outcome(run_id)
+    assert_equal "open", outcome.dig("pull_requests", 0, "current", "lifecycle")
+    assert_equal "active", outcome.dig("reconciliation", "automatic_state")
+    assert_equal "2026-01-04T12:00:00.000Z", outcome.dig("reconciliation", "next_eligible_at")
+  end
+
+  def test_vendor_convert_to_draft_event_is_normalized
+    run_id = create_run(finish_sha: SHA_A)
+    fixtures = full_fixtures
+    fixtures[timeline_endpoint] = [[{"id" => 99, "event" => "convert_to_draft", "created_at" => "2026-01-01T13:00:00.000Z"}]]
+    write_fixtures(fixtures)
+
+    assert reconcile("--run", run_id).status.success?
+    kinds = read_outcome(run_id).dig("pull_requests", 0, "timeline_events").map { |event| event["kind"] }
+    assert_includes kinds, "converted_to_draft"
+  end
+
+  def test_schema_validator_rejects_bounds_null_shas_scalars_and_duplicate_unique_items
+    run_id = create_run(finish_sha: SHA_A)
+    write_fixtures(full_fixtures)
+    assert reconcile("--run", run_id).status.success?
+    valid = read_outcome(run_id)
+
+    [100, 599].each do |status|
+      candidate = deep_copy(valid)
+      candidate["reconciliation"]["last_error"] = {"category" => "api", "http_status" => status}
+      assert_valid_outcome(candidate)
+    end
+    [99, 600].each do |status|
+      candidate = deep_copy(valid)
+      candidate["reconciliation"]["last_error"] = {"category" => "api", "http_status" => status}
+      assert_invalid_outcome(candidate, "http_status")
+    end
+
+    null_sha = deep_copy(valid)
+    null_sha["pull_requests"][0]["head_history"][0]["sha"] = nil
+    assert_invalid_outcome(null_sha, "sha")
+
+    scalar = deep_copy(valid)
+    scalar["pull_requests"] = [7]
+    result = validate_outcome(scalar)
+    refute result.status.success?
+    assert_includes result.stderr, "pull_requests[0]: must be a JSON object"
+    refute_includes result.stderr, "undefined method"
+
+    duplicate = deep_copy(valid)
+    method = duplicate.dig("correlation", "associations", 0, "established_by", 0)
+    duplicate.dig("correlation", "associations", 0, "established_by") << method
+    assert_invalid_outcome(duplicate, "unique")
   end
 
   def test_schema_is_valid_json_and_forbidden_subjective_fields_are_absent
@@ -386,10 +587,33 @@ class AgentRunOutcomesTest < Minitest::Test
         {"id" => 4, "user" => {"login" => "human", "type" => "User"}, "state" => "PENDING", "commit_id" => SHA_B, "submitted_at" => nil}
       ]],
       checks_endpoint(SHA_A) => [{"check_runs" => [{"id" => 11, "name" => "test", "app" => {"id" => 1, "slug" => "ci"}, "head_sha" => SHA_A, "status" => "completed", "conclusion" => "success", "started_at" => "2026-01-01T12:00:00.000Z", "completed_at" => "2026-01-01T12:01:00.000Z", "output" => {"text" => "not persisted"}}]}],
-      statuses_endpoint(SHA_A) => {"statuses" => [{"id" => 21, "context" => "legacy", "state" => "success", "created_at" => "2026-01-01T12:00:00.000Z", "updated_at" => "2026-01-01T12:01:00.000Z", "creator" => {"login" => "ci", "type" => "Bot"}}]},
+      statuses_endpoint(SHA_A) => [[{"id" => 21, "context" => "legacy", "state" => "success", "created_at" => "2026-01-01T12:00:00.000Z", "updated_at" => "2026-01-01T12:01:00.000Z", "creator" => {"login" => "ci", "type" => "Bot"}}]],
       checks_endpoint(SHA_B) => [{"check_runs" => [{"id" => 12, "name" => "test", "app" => {"id" => 1, "slug" => "ci"}, "head_sha" => SHA_B, "status" => "completed", "conclusion" => "neutral", "started_at" => "2026-01-01T14:00:00.000Z", "completed_at" => "2026-01-01T14:01:00.000Z"}]}],
-      statuses_endpoint(SHA_B) => {"statuses" => []}
+      statuses_endpoint(SHA_B) => [[]]
     }
+  end
+
+  def observation_fixtures(pull, commits:, review_sha: nil)
+    shas = (commits + [pull.dig("head", "sha")]).compact.uniq
+    fixtures = {
+      pulls_endpoint => [[pull]],
+      commit_pulls_endpoint(SHA_A) => [[pull]],
+      pr_endpoint(pull.fetch("number")) => pull,
+      commits_endpoint(pull.fetch("number")) => [commits.map { |sha| {"sha" => sha} }],
+      timeline_endpoint(pull.fetch("number")) => [[]],
+      reviews_endpoint(pull.fetch("number")) => [review_sha ? [{
+        "id" => 100,
+        "user" => {"login" => "reviewer", "type" => "User"},
+        "state" => "APPROVED",
+        "commit_id" => review_sha,
+        "submitted_at" => "2026-01-01T12:00:00.000Z"
+      }] : []]
+    }
+    shas.each do |sha|
+      fixtures[checks_endpoint(sha)] = [{"check_runs" => []}]
+      fixtures[statuses_endpoint(sha)] = [[]]
+    end
+    fixtures
   end
 
   def pulls_endpoint = "repos/#{REPOSITORY}/pulls?state=all&per_page=100"
@@ -399,7 +623,7 @@ class AgentRunOutcomesTest < Minitest::Test
   def timeline_endpoint(number = 42) = "repos/#{REPOSITORY}/issues/#{number}/timeline?per_page=100"
   def reviews_endpoint(number = 42) = "repos/#{REPOSITORY}/pulls/#{number}/reviews?per_page=100"
   def checks_endpoint(sha) = "repos/#{REPOSITORY}/commits/#{sha}/check-runs?per_page=100"
-  def statuses_endpoint(sha) = "repos/#{REPOSITORY}/commits/#{sha}/status"
+  def statuses_endpoint(sha) = "repos/#{REPOSITORY}/commits/#{sha}/statuses?per_page=100"
 
   def read_outcome(run_id)
     JSON.parse(File.binread(File.join(@telemetry, run_id, "outcome.json")))
@@ -407,6 +631,55 @@ class AgentRunOutcomesTest < Minitest::Test
 
   def write_fixtures(value)
     File.write(@fixtures, JSON.pretty_generate(value))
+  end
+
+  def disappearing_lock_env(run_id)
+    patch = File.join(@root, "remove-before-lock-#{run_id}.rb")
+    File.write(patch, <<~RUBY)
+      require "fileutils"
+      class << Dir
+        alias agent_outcome_original_mkdir mkdir
+        def mkdir(path, *arguments)
+          target = ENV.fetch("DISAPPEARING_OUTCOME_LOCK")
+          File.open(ENV.fetch("DISAPPEARING_OUTCOME_LOG"), "a") { |file| file.puts(path) }
+          target = File.join(File.realpath(File.dirname(target)), File.basename(target))
+          if File.expand_path(path.to_s) == target && !defined?(@agent_outcome_removed)
+            @agent_outcome_removed = true
+            FileUtils.remove_entry(File.dirname(path)) if File.exist?(File.dirname(path))
+          end
+          agent_outcome_original_mkdir(path, *arguments)
+        end
+      end
+    RUBY
+    {
+      "RUBYOPT" => "-r#{patch}",
+      "DISAPPEARING_OUTCOME_LOCK" => File.join(@telemetry, run_id, ".outcome.lock"),
+      "DISAPPEARING_OUTCOME_LOG" => File.join(@root, "lock-hook.log")
+    }
+  end
+
+  def deep_copy(value)
+    JSON.parse(JSON.generate(value))
+  end
+
+  def validate_outcome(record)
+    path = File.join(@root, "candidate-#{Process.pid}-#{rand(1_000_000)}.json")
+    File.write(path, JSON.pretty_generate(record))
+    stdout, stderr, status = Open3.capture3(RbConfig.ruby, VALIDATOR, path)
+    Result.new(stdout: stdout, stderr: stderr, status: status)
+  ensure
+    FileUtils.rm_f(path) if path
+  end
+
+  def assert_valid_outcome(record)
+    result = validate_outcome(record)
+    assert result.status.success?, "#{result.stdout}\n#{result.stderr}"
+  end
+
+  def assert_invalid_outcome(record, message)
+    result = validate_outcome(record)
+    refute result.status.success?, result.stdout
+    assert_includes result.stderr, message
   end
 
   def write_fake_gh

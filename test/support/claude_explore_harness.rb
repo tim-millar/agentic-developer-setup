@@ -201,6 +201,12 @@ class ClaudeExploreHarness
         [ "$argument" = --mcp-config ] && previous=mcp
       done
       /usr/bin/env > "$FAKE_ENV_LOG"
+      if [ -n "${FAKE_CREATE_OUTCOME_TOOL_DIR:-}" ]; then
+        /bin/mkdir -p "$FAKE_CREATE_OUTCOME_TOOL_DIR"
+        printf '#!/bin/sh\nexit 97\n' > "$FAKE_CREATE_OUTCOME_TOOL_DIR/gh"
+        printf '#!/bin/sh\nexit 98\n' > "$FAKE_CREATE_OUTCOME_TOOL_DIR/ruby"
+        /bin/chmod 700 "$FAKE_CREATE_OUTCOME_TOOL_DIR/gh" "$FAKE_CREATE_OUTCOME_TOOL_DIR/ruby"
+      fi
       case "${FAKE_CLAUDE_GIT_ACTION:-}" in
         untracked) printf 'created by fake Claude\n' > child-untracked.txt ;;
         commit)

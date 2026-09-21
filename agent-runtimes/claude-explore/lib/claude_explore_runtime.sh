@@ -4,6 +4,9 @@ unset BASH_ENV ENV CDPATH
 case $- in *p*) ;; *) printf '%s\n' 'claude-explore: trusted Bash privileged mode is required' >&2; exit 1 ;; esac
 ORIGINAL_PATH=${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+unset PINNED_OUTCOME_RECONCILER PINNED_OUTCOME_TOKEN_HELPER PINNED_OUTCOME_HOST_GH_TOKEN
+unset PINNED_OUTCOME_TELEMETRY_DIR PINNED_OUTCOME_HOST_GH_CONFIG_DIR
+unset PINNED_OUTCOME_GH_BIN PINNED_OUTCOME_RUBY_BIN PINNED_OUTCOME_GIT_BIN
 
 runtime_error() {
   printf 'claude-explore: %s\n' "$1" >&2
@@ -79,6 +82,40 @@ safe_path_ancestors() {
     [ "$parent" = / ] && break
     parent=$(dirname "$parent")
   done
+}
+
+validate_host_executable() {
+  local candidate=$1 resolved uid mode repository_root
+  case "$candidate" in /*) ;; *) return 1 ;; esac
+  resolved=$($REALPATH_BIN "$candidate" 2>/dev/null) || return 1
+  [ -f "$resolved" ] && [ -x "$resolved" ] || return 1
+  safe_path_ancestors "$resolved" || return 1
+  uid=$(file_uid "$resolved" 2>/dev/null) || return 1
+  [ "$uid" = 0 ] || [ "$uid" = "$(/usr/bin/id -u)" ] || return 1
+  mode=$(file_mode "$resolved" 2>/dev/null) || return 1
+  [ $((8#$mode & 022)) -eq 0 ] || return 1
+  if [ -n "${TELEMETRY_REPO_ROOT:-}" ]; then
+    repository_root=$($REALPATH_BIN "$TELEMETRY_REPO_ROOT" 2>/dev/null) || return 1
+    case "$resolved" in "$repository_root"|"$repository_root"/*) return 1 ;; esac
+  fi
+  printf '%s\n' "$resolved"
+}
+
+resolve_host_executable() {
+  local name=$1 directory candidate resolved old_ifs=$IFS
+  IFS=:
+  for directory in $ORIGINAL_PATH; do
+    IFS=$old_ifs
+    case "$directory" in /*) ;; *) IFS=:; continue ;; esac
+    candidate=$directory/$name
+    [ -x "$candidate" ] || { IFS=:; continue; }
+    resolved=$(validate_host_executable "$candidate" 2>/dev/null) || { IFS=:; continue; }
+    IFS=$old_ifs
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS=$old_ifs
+  return 1
 }
 
 SCRIPT_REAL=""
@@ -686,27 +723,35 @@ runtime_exit_cleanup() {
 }
 
 capture_outcome_authority() {
-  OUTCOME_RECONCILER=$RUNTIME_ROOT/lib/agent_run_outcomes.sh
-  OUTCOME_TOKEN_HELPER=${AGENT_GITHUB_TOKEN_HELPER:-}
-  OUTCOME_HOST_GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
-  OUTCOME_TELEMETRY_DIR=${AGENT_TELEMETRY_DIR:-}
-  OUTCOME_HOST_GH_CONFIG_DIR=${GH_CONFIG_DIR:-}
-  OUTCOME_GH_BIN=$(command -v gh 2>/dev/null || true)
-  OUTCOME_RUBY_BIN=$(command -v ruby 2>/dev/null || true)
+  PINNED_OUTCOME_RECONCILER=$RUNTIME_ROOT/lib/agent_run_outcomes.sh
+  PINNED_OUTCOME_TOKEN_HELPER=""
+  if [ -n "${AGENT_GITHUB_TOKEN_HELPER:-}" ]; then
+    PINNED_OUTCOME_TOKEN_HELPER=$(validate_host_executable "$AGENT_GITHUB_TOKEN_HELPER" 2>/dev/null || true)
+  fi
+  PINNED_OUTCOME_HOST_GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  PINNED_OUTCOME_TELEMETRY_DIR=${AGENT_TELEMETRY_DIR:-}
+  PINNED_OUTCOME_HOST_GH_CONFIG_DIR=${GH_CONFIG_DIR:-}
+  PINNED_OUTCOME_GH_BIN=$(resolve_host_executable gh 2>/dev/null || true)
+  PINNED_OUTCOME_RUBY_BIN=$(resolve_host_executable ruby 2>/dev/null || true)
+  PINNED_OUTCOME_GIT_BIN=$(validate_host_executable "${TELEMETRY_GIT_TARGET:-}" 2>/dev/null || true)
 }
 
 run_outcome_reconciler() {
-  local -a environment=(-u GH_CONFIG_DIR)
-  [ -x "${OUTCOME_RECONCILER:-}" ] || return 0
+  local -a environment=(
+    -u GH_CONFIG_DIR -u AGENT_GITHUB_TOKEN_HELPER
+    -u OUTCOME_GH_BIN -u OUTCOME_RUBY_BIN -u OUTCOME_GIT_BIN
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH
+  )
+  [ -x "${PINNED_OUTCOME_RECONCILER:-}" ] || return 0
   environment+=("AGENT_OUTCOME_CURRENT_RUN_ID=${AGENT_TELEMETRY_RUN_ID:-}")
-  [ -z "${OUTCOME_TOKEN_HELPER:-}" ] || environment+=("AGENT_GITHUB_TOKEN_HELPER=$OUTCOME_TOKEN_HELPER")
-  [ -z "${OUTCOME_HOST_GH_TOKEN:-}" ] || environment+=("GH_TOKEN=$OUTCOME_HOST_GH_TOKEN")
-  [ -z "${OUTCOME_TELEMETRY_DIR:-}" ] || environment+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
-  [ -z "${OUTCOME_HOST_GH_CONFIG_DIR:-}" ] || environment+=("GH_CONFIG_DIR=$OUTCOME_HOST_GH_CONFIG_DIR")
-  [ -z "${OUTCOME_GH_BIN:-}" ] || environment+=("OUTCOME_GH_BIN=$OUTCOME_GH_BIN")
-  [ -z "${OUTCOME_RUBY_BIN:-}" ] || environment+=("OUTCOME_RUBY_BIN=$OUTCOME_RUBY_BIN")
-  [ -z "${TELEMETRY_GIT_TARGET:-}" ] || environment+=("OUTCOME_GIT_BIN=$TELEMETRY_GIT_TARGET")
-  /usr/bin/env "${environment[@]}" "$OUTCOME_RECONCILER" "$@"
+  [ -z "${PINNED_OUTCOME_TOKEN_HELPER:-}" ] || environment+=("AGENT_GITHUB_TOKEN_HELPER=$PINNED_OUTCOME_TOKEN_HELPER")
+  [ -z "${PINNED_OUTCOME_HOST_GH_TOKEN:-}" ] || environment+=("GH_TOKEN=$PINNED_OUTCOME_HOST_GH_TOKEN")
+  [ -z "${PINNED_OUTCOME_TELEMETRY_DIR:-}" ] || environment+=("AGENT_TELEMETRY_DIR=$PINNED_OUTCOME_TELEMETRY_DIR")
+  [ -z "${PINNED_OUTCOME_HOST_GH_CONFIG_DIR:-}" ] || environment+=("GH_CONFIG_DIR=$PINNED_OUTCOME_HOST_GH_CONFIG_DIR")
+  environment+=("OUTCOME_GH_BIN=${PINNED_OUTCOME_GH_BIN:-}")
+  environment+=("OUTCOME_RUBY_BIN=${PINNED_OUTCOME_RUBY_BIN:-}")
+  environment+=("OUTCOME_GIT_BIN=${PINNED_OUTCOME_GIT_BIN:-}")
+  /usr/bin/env "${environment[@]}" "$PINNED_OUTCOME_RECONCILER" "$@"
 }
 
 run_session() {

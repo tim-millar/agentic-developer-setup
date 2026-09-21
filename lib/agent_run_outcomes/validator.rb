@@ -36,7 +36,10 @@ module AgentRunOutcomes
       reconciliation(@record["reconciliation"])
       correlation(@record["correlation"])
       array(@record["pull_requests"], "pull_requests") { |item, index| pull_request(item, "pull_requests[#{index}]") }
-      error("pull_requests", "contains duplicate identities") if duplicate?(@record["pull_requests"]) { |item| [item.dig("identity", "repository")&.downcase, item.dig("identity", "number")] }
+      error("pull_requests", "contains duplicate identities") if duplicate?(@record["pull_requests"]) do |item|
+        next unless item.is_a?(Hash) && item["identity"].is_a?(Hash)
+        [item.dig("identity", "repository")&.downcase, item.dig("identity", "number")]
+      end
       errors.empty?
     end
 
@@ -60,7 +63,7 @@ module AgentRunOutcomes
       return error("reconciliation.last_error", "must be null or an object") unless value.is_a?(Hash)
       allowed_keys(value, "reconciliation.last_error", %w[category http_status], required: %w[category])
       enum(value["category"], ERROR_CATEGORIES, "reconciliation.last_error.category")
-      nonnegative_integer(value["http_status"], "reconciliation.last_error.http_status") if value.key?("http_status")
+      bounded_integer(value["http_status"], "reconciliation.last_error.http_status", 100..599) if value.key?("http_status")
     end
 
     def correlation(value)
@@ -85,6 +88,7 @@ module AgentRunOutcomes
       timestamp(value["last_observed_at"], "#{location}.last_observed_at")
       array(value["established_by"], "#{location}.established_by") { |item, index| enum(item, ASSOCIATION_KINDS, "#{location}.established_by[#{index}]") }
       error("#{location}.established_by", "must not be empty") if Array(value["established_by"]).empty?
+      unique_items(value["established_by"], "#{location}.established_by")
       array(value["supporting_evidence"], "#{location}.supporting_evidence") do |item, index|
         evidence(item, "#{location}.supporting_evidence[#{index}]")
       end
@@ -96,6 +100,7 @@ module AgentRunOutcomes
       repository(value["repository"], "#{location}.repository")
       nonnegative_integer(value["number"], "#{location}.number", positive: true)
       array(value["evidence"], "#{location}.evidence") { |item, index| enum(item, SUPPORTING_KINDS, "#{location}.evidence[#{index}]") }
+      unique_items(value["evidence"], "#{location}.evidence")
     end
 
     def evidence(value, location)
@@ -113,10 +118,10 @@ module AgentRunOutcomes
       identity(value["identity"], "#{location}.identity")
       association(value["association"], "#{location}.association")
       current(value["current"], "#{location}.current")
-      history_array(value["head_history"], "#{location}.head_history", %w[sha observed_at source_kind first_observed_at last_observed_at], sha_keys: %w[sha])
-      history_array(value["commits"], "#{location}.commits", %w[sha source_kind first_observed_at last_observed_at], sha_keys: %w[sha])
-      history_array(value["timeline_events"], "#{location}.timeline_events", %w[source_id kind timestamp actor_login actor_type before_sha after_sha before_ref after_ref source_kind first_observed_at last_observed_at], sha_keys: %w[before_sha after_sha])
-      history_array(value["reviews"], "#{location}.reviews", %w[source_id reviewer_login reviewer_type state commit_id submitted_at dismissed_at source_kind first_observed_at last_observed_at], sha_keys: %w[commit_id])
+      history_array(value["head_history"], "#{location}.head_history", %w[sha observed_at source_kind first_observed_at last_observed_at], required_sha_keys: %w[sha])
+      history_array(value["commits"], "#{location}.commits", %w[sha source_kind first_observed_at last_observed_at], required_sha_keys: %w[sha])
+      history_array(value["timeline_events"], "#{location}.timeline_events", %w[source_id kind timestamp actor_login actor_type before_sha after_sha before_ref after_ref source_kind first_observed_at last_observed_at], nullable_sha_keys: %w[before_sha after_sha])
+      history_array(value["reviews"], "#{location}.reviews", %w[source_id reviewer_login reviewer_type state commit_id submitted_at dismissed_at source_kind first_observed_at last_observed_at], nullable_sha_keys: %w[commit_id])
       array(value["checks_by_sha"], "#{location}.checks_by_sha") { |item, index| check_group(item, "#{location}.checks_by_sha[#{index}]") }
       derived(value["derived"], "#{location}.derived")
       validate_history_semantics(value, location)
@@ -146,12 +151,13 @@ module AgentRunOutcomes
       timestamp(value["observed_at"], "#{location}.observed_at")
     end
 
-    def history_array(value, location, keys, sha_keys: [])
+    def history_array(value, location, keys, required_sha_keys: [], nullable_sha_keys: [])
       array(value, location) do |item, index|
         item_location = "#{location}[#{index}]"
         if item.is_a?(Hash)
           exact_keys(item, item_location, keys)
-          sha_keys.each { |key| nullable_pattern(item[key], SHA, "#{item_location}.#{key}") }
+          required_sha_keys.each { |key| pattern(item[key], SHA, "#{item_location}.#{key}") }
+          nullable_sha_keys.each { |key| nullable_pattern(item[key], SHA, "#{item_location}.#{key}") }
           timestamp(item["first_observed_at"], "#{item_location}.first_observed_at")
           timestamp(item["last_observed_at"], "#{item_location}.last_observed_at")
         else
@@ -171,13 +177,18 @@ module AgentRunOutcomes
       end
       Array(value["timeline_events"]).each_with_index do |item, index|
         next unless item.is_a?(Hash)
+        string(item["source_id"], "#{location}.timeline_events[#{index}].source_id")
         enum(item["kind"], EVENT_KINDS, "#{location}.timeline_events[#{index}].kind")
         timestamp(item["timestamp"], "#{location}.timeline_events[#{index}].timestamp")
+        %w[actor_login actor_type before_ref after_ref].each { |key| nullable_string(item[key], "#{location}.timeline_events[#{index}].#{key}") }
         equal(item["source_kind"], "github_timeline_event", "#{location}.timeline_events[#{index}].source_kind")
       end
       reviews = Array(value["reviews"])
       reviews.each_with_index do |item, index|
         next unless item.is_a?(Hash)
+        string(item["source_id"], "#{location}.reviews[#{index}].source_id")
+        %w[reviewer_login reviewer_type].each { |key| nullable_string(item[key], "#{location}.reviews[#{index}].#{key}") }
+        string(item["state"], "#{location}.reviews[#{index}].state")
         timestamp(item["submitted_at"], "#{location}.reviews[#{index}].submitted_at")
         nullable_timestamp(item["dismissed_at"], "#{location}.reviews[#{index}].dismissed_at")
         equal(item["source_kind"], "github_pull_review", "#{location}.reviews[#{index}].source_kind")
@@ -207,10 +218,14 @@ module AgentRunOutcomes
       return error(location, "must be a JSON object") unless value.is_a?(Hash)
       exact_keys(value, location, %w[sha check_runs statuses evidence observed_check_rollup])
       pattern(value["sha"], SHA, "#{location}.sha")
-      history_array(value["check_runs"], "#{location}.check_runs", %w[source_id name app_id app_slug head_sha status conclusion started_at completed_at source_kind first_observed_at last_observed_at], sha_keys: %w[head_sha])
-      history_array(value["statuses"], "#{location}.statuses", %w[source_id context sha state created_at updated_at creator_login creator_type source_kind first_observed_at last_observed_at], sha_keys: %w[sha])
+      history_array(value["check_runs"], "#{location}.check_runs", %w[source_id name app_id app_slug head_sha status conclusion started_at completed_at source_kind first_observed_at last_observed_at], required_sha_keys: %w[head_sha])
+      history_array(value["statuses"], "#{location}.statuses", %w[source_id context sha state created_at updated_at creator_login creator_type source_kind first_observed_at last_observed_at], required_sha_keys: %w[sha])
       Array(value["check_runs"]).each_with_index do |item, index|
         next unless item.is_a?(Hash)
+        string(item["source_id"], "#{location}.check_runs[#{index}].source_id")
+        string(item["name"], "#{location}.check_runs[#{index}].name")
+        integer_or_null(item["app_id"], "#{location}.check_runs[#{index}].app_id")
+        %w[app_slug status conclusion].each { |key| nullable_string(item[key], "#{location}.check_runs[#{index}].#{key}") }
         error("#{location}.check_runs[#{index}].head_sha", "must match its evidence group SHA") unless item["head_sha"] == value["sha"]
         equal(item["source_kind"], "github_check_run", "#{location}.check_runs[#{index}].source_kind")
         nullable_timestamp(item["started_at"], "#{location}.check_runs[#{index}].started_at")
@@ -218,6 +233,10 @@ module AgentRunOutcomes
       end
       Array(value["statuses"]).each_with_index do |item, index|
         next unless item.is_a?(Hash)
+        string(item["source_id"], "#{location}.statuses[#{index}].source_id")
+        string(item["context"], "#{location}.statuses[#{index}].context")
+        string(item["state"], "#{location}.statuses[#{index}].state")
+        %w[creator_login creator_type].each { |key| nullable_string(item[key], "#{location}.statuses[#{index}].#{key}") }
         error("#{location}.statuses[#{index}].sha", "must match its evidence group SHA") unless item["sha"] == value["sha"]
         equal(item["source_kind"], "github_commit_status", "#{location}.statuses[#{index}].source_kind")
         nullable_timestamp(item["created_at"], "#{location}.statuses[#{index}].created_at")
@@ -309,9 +328,26 @@ module AgentRunOutcomes
       error(location, "must be #{positive ? "a positive" : "a non-negative"} integer") unless valid
     end
 
+    def bounded_integer(value, location, range)
+      error(location, "must be an integer from #{range.begin} through #{range.end}") unless value.is_a?(Integer) && range.cover?(value)
+    end
+
+    def integer_or_null(value, location)
+      error(location, "must be an integer or null") unless value.nil? || value.is_a?(Integer)
+    end
+
+    def string(value, location)
+      error(location, "must be a string") unless value.is_a?(String)
+    end
+
+    def unique_items(value, location)
+      return unless value.is_a?(Array)
+      error(location, "must contain unique items") unless value.uniq.length == value.length
+    end
+
     def duplicate?(items)
       return false unless items.is_a?(Array)
-      identities = items.map { |item| yield(item) }
+      identities = items.filter_map { |item| yield(item) }
       identities.uniq.length != identities.length
     end
 

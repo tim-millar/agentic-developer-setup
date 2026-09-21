@@ -1720,12 +1720,21 @@ class LauncherTest < Minitest::Test
     @harness = LauncherHarness.new(telemetry: true)
     helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
       #!/bin/sh
-      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+      printf '%s|%s|%s|%s\n' "$*" "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" "$OUTCOME_GIT_BIN" >> "$FAKE_OUTCOME_LOG"
       exit 0
     SH
     File.chmod(0o755, helper)
     @harness.commit_all("Add synthetic outcome reconciler")
     log = File.join(@harness.root, "outcome.log")
+    child_tools = File.join(@harness.repository, "child-tools")
+    FileUtils.mkdir_p(child_tools)
+    host_tools = File.join(@harness.root, "host-tools")
+    FileUtils.mkdir_p(host_tools)
+    %w[gh ruby].each do |name|
+      path = File.join(host_tools, name)
+      File.write(path, "#!/bin/sh\nexit 0\n")
+      File.chmod(0o700, path)
+    end
     compromised = File.join(@harness.root, "compromised")
     mutation = <<~SH
       #!/bin/sh
@@ -1737,15 +1746,66 @@ class LauncherTest < Minitest::Test
       "FAKE_OUTCOME_LOG" => log,
       "FAKE_COMPROMISED_MARKER" => compromised,
       "FAKE_CODEX_MUTATE_OUTCOME_HELPER" => helper,
-      "FAKE_CODEX_MUTATE_OUTCOME_CONTENT" => mutation
+      "FAKE_CODEX_MUTATE_OUTCOME_CONTENT" => mutation,
+      "FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR" => child_tools,
+      "PATH" => [child_tools, host_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "OUTCOME_GH_BIN" => "/arbitrary/ambient/gh",
+      "OUTCOME_RUBY_BIN" => "/arbitrary/ambient/ruby"
     })
 
     assert result.status.success?, failure_message("outcome snapshot", result)
-    invocations = File.readlines(log, chomp: true)
-    assert_equal "--automatic", invocations.fetch(0)
-    assert_match(/\A--run run-/, invocations.fetch(1))
+    invocations = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal "--automatic", invocations.fetch(0).fetch(0)
+    assert_match(/\A--run run-/, invocations.fetch(1).fetch(0))
     assert_equal 2, invocations.length
+    invocations.each do |invocation|
+      assert_equal File.realpath(File.join(host_tools, "gh")), invocation.fetch(1)
+      assert_equal File.realpath(File.join(host_tools, "ruby")), invocation.fetch(2)
+      refute_equal File.realpath(File.join(child_tools, "gh")), invocation.fetch(1)
+      refute_equal File.realpath(File.join(child_tools, "ruby")), invocation.fetch(2)
+    end
     refute File.exist?(compromised), "post-run reconciliation executed child-modified repository code"
+  end
+
+  def test_ambient_outcome_reconciler_override_cannot_select_host_code
+    marker = File.join(@harness.root, "ambient-outcome-code-ran")
+    external = File.join(@harness.root, "ambient-outcome-reconciler")
+    File.write(external, "#!/bin/sh\n: > #{marker.dump}\n")
+    File.chmod(0o700, external)
+
+    result = @harness.run(env: {"AGENT_OUTCOME_RECONCILER_PATH" => external})
+
+    assert result.status.success?, failure_message("ambient outcome override", result)
+    refute File.exist?(marker)
+  end
+
+  def test_repository_controlled_optional_outcome_tools_are_rejected_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    tools = File.join(@harness.repository, "outcome-tools")
+    FileUtils.mkdir_p(tools)
+    %w[gh ruby].each do |name|
+      path = File.join(tools, name)
+      File.write(path, "#!/bin/sh\nexit 0\n")
+      File.chmod(0o755, path)
+    end
+    @harness.commit_all("Add unsafe synthetic outcome tools")
+    log = File.join(@harness.root, "unsafe-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log
+    })
+
+    assert result.status.success?, failure_message("unsafe optional outcome tools", result)
+    refute File.exist?(log), "repository-controlled Ruby was used to snapshot or run the reconciler"
+    assert_equal 1, @harness.codex_invocations.length
   end
 
   def test_outcome_reconciliation_failure_preserves_workload_status

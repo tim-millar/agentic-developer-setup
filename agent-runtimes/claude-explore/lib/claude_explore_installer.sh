@@ -15,6 +15,7 @@ fi
 SCRIPT_REAL=$($REALPATH_BIN "${BASH_SOURCE[0]}" 2>/dev/null) || die "cannot resolve installer source"
 SOURCE_ROOT=$(dirname "$(dirname "$SCRIPT_REAL")")
 OUTCOME_SOURCE=$($REALPATH_BIN "$SOURCE_ROOT/lib/agent_run_outcomes.sh" 2>/dev/null) || die "cannot resolve outcome reconciler source"
+case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *) die "outcome reconciler source resolves outside runtime" ;; esac
 POLICY_FILE=$SOURCE_ROOT/policy.sh
 [ -f "$POLICY_FILE" ] && [ ! -L "$POLICY_FILE" ] || die "source policy is missing or unsafe"
 case "$($REALPATH_BIN "$POLICY_FILE")" in "$SOURCE_ROOT"/*) ;; *) die "source policy resolves outside runtime" ;; esac
@@ -151,6 +152,7 @@ validate_source() {
   done
   safe_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" || die "source telemetry helper is incomplete or unsafe"
   safe_executable "$OUTCOME_SOURCE" || die "source outcome reconciler is incomplete or unsafe"
+  case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *) die "outcome reconciler source resolves outside runtime" ;; esac
   safe_file "$SOURCE_ROOT/policy.sh" || die "source policy is incomplete or unsafe"
 }
 

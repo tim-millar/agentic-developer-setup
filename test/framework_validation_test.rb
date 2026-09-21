@@ -40,11 +40,27 @@ class FrameworkValidationTest < Minitest::Test
     assert_passes("root harness structure")
   end
 
-  def test_root_codex_wrapper_snapshots_the_canonical_outcome_implementation
+  def test_root_codex_wrapper_does_not_grant_ambient_outcome_source_authority
     wrapper = File.read(File.join(REPOSITORY_ROOT, "scripts", "run_codex.sh"))
+    launcher = File.read(File.join(REPOSITORY_ROOT, "baseline", "scripts", "run_codex.sh"))
 
-    assert_includes wrapper, 'AGENT_OUTCOME_RECONCILER_PATH="$REPO_ROOT/baseline/scripts/agent_run_outcomes.sh"'
-    refute_includes wrapper, 'AGENT_OUTCOME_RECONCILER_PATH="$SCRIPT_DIR/agent_run_outcomes.sh"'
+    refute_includes wrapper, "AGENT_OUTCOME_RECONCILER_PATH"
+    refute_includes launcher, "AGENT_OUTCOME_RECONCILER_PATH"
+    assert_includes launcher, 'OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"'
+    refute_includes launcher, "require_cmd cp"
+  end
+
+  def test_runtime_outcome_metadata_uses_each_runtime_owned_source
+    metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"), aliases: false)
+    runtimes = metadata.fetch("agent_runtimes").fetch("supported").to_h { |runtime| [runtime.fetch("id"), runtime] }
+    source_for = lambda do |runtime|
+      runtime.fetch("artefacts").find { |artefact| artefact["role"] == "outcomes" }.fetch("source_path")
+    end
+
+    assert_equal "baseline/scripts/agent_run_outcomes.sh", source_for.call(runtimes.fetch("codex"))
+    assert_equal "agent-runtimes/claude-explore/lib/agent_run_outcomes.sh", source_for.call(runtimes.fetch("claude-explore"))
+    assert_equal File.binread(File.join(REPOSITORY_ROOT, "baseline/scripts/agent_run_outcomes.sh")),
+      File.binread(File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore/lib/agent_run_outcomes.sh"))
   end
 
   def test_target_paths_are_not_checked_for_existence

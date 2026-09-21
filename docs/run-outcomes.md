@@ -23,7 +23,7 @@ Correlation is deliberately conservative. In descending order, the evidence that
 2. the finish HEAD appears in GitHub's PR association/commit evidence (`finish_head_in_pr_commits`);
 3. when exact commit evidence is unavailable, exactly one same-repository PR has the run's attached finish branch and is temporally compatible (`unique_head_branch`).
 
-Structured task-to-issue linkage and temporal compatibility are corroborating or disambiguating facts only. PR titles, bodies, comments, and semantic text similarity are never used. Branch-only correlation accepts a PR that overlapped the run or was created no more than 30 days after it; a PR whose relevant lifecycle ended before the run is incompatible unless observable reopening evidence makes it relevant.
+Structured task-to-issue linkage and temporal compatibility are corroborating or disambiguating facts only. Task linkage comes from the task issue's structured cross-reference timeline when its source is the candidate PR in the same repository; PR titles, bodies, comments, and semantic text similarity are never used. Branch-only correlation accepts a PR that overlapped the run or was created no more than 30 days after it; a PR whose relevant lifecycle ended before the run is incompatible unless observable reopening evidence makes it relevant. If the timeline needed to determine reopening is unavailable, that missing evidence remains uncertainty and cannot become a definitive negative match.
 
 Correlation states are `matched`, `unmatched`, `ambiguous`, `unavailable`, and `not_applicable`. Confirmed associations persist after rebases or force pushes, together with their first/last observation and establishing evidence. Many runs can associate with one PR, and one run can retain multiple confirmed PR associations. There is no primary-run, primary-PR, amendment-run, ownership, credit, or blame classification.
 
@@ -43,7 +43,7 @@ Collections merge by stable GitHub identity or a deterministic composite when Gi
 
 Submitted reviews with a real `submitted_at` are the passive review primitive. Pending drafts are excluded. `reviewed_revision_count` is the count of distinct reliable review `commit_id` values, so several bot or human reviews of one SHA are one reviewed revision. PR comments and inline review comments do not create review rounds. Reviews missing a reliable commit remain preserved but do not receive a fabricated revision.
 
-For each exact SHA, `observed_check_rollup` is:
+For each exact SHA, the reconciler completely paginates both GitHub Checks and the individual traditional-status collection before deriving `observed_check_rollup`:
 
 - `unobserved` when checks and statuses were both queried successfully and neither has a context;
 - `pending` when a current context is non-terminal and none is failing;
@@ -55,7 +55,7 @@ The rollup uses the latest observed attempt for each stable logical context whil
 
 ## Revision proxies
 
-`first_reviewed_revision` is the commit attached to the earliest qualifying submitted review. `post_first_review_change_observed` is `yes`, `no`, `unavailable`, or `not_applicable` based only on objective head/commit/force-push evidence after that review. It does not claim that review caused a change.
+`first_reviewed_revision` is the commit attached to the earliest qualifying submitted review. `post_first_review_change_observed` is `yes`, `no`, `unavailable`, or `not_applicable` based only on objective head observations and structured head-transition or force-push evidence after that review. The identity-sorted commit collection is not treated as chronological evidence. The proxy does not claim that review caused a change.
 
 `merged_on_first_reviewed_revision` is `yes` only when the PR merged, the first reviewed commit and final PR head are reliably known and equal, and no contrary post-review rewrite evidence exists. It is `no` when reliable evidence proves that the merged PR head differed, `not_applicable` for an unmerged or unreviewed PR, and `unavailable` when required evidence is incomplete. Squash merge is handled by comparing the final PR head—not the base-branch merge commit—to the reviewed revision.
 
@@ -76,9 +76,9 @@ scripts/agent_run_outcomes.sh --all
 
 The default visits due active records. `--automatic` is the launcher hook and visits at most three due historical records, oldest due first, excluding the current invocation. `--run` revisits one eligible current-repository run regardless of schedule. `--all` revisits every eligible current-repository run, including dormant and quiescent sidecars. Unknown or combined flags exit 2.
 
-Terminal execution states are eligible immediately. A `started` record becomes eligible after 24 hours. Open matched PRs, unmatched results, and ambiguous results become due after 24 hours. Temporarily unavailable evidence retries after at least one hour. Unresolved records become `dormant` 30 days after the run finishes; complete merged or closed-unmerged records and `not_applicable` records become `quiescent`. `active`, `quiescent`, and `dormant` control automatic work only—explicit reconciliation can refresh any eligible record.
+Terminal execution states are eligible immediately. A `started` record becomes eligible after 24 hours. Open matched PRs, unmatched results, and ambiguous results become due after 24 hours. Temporarily unavailable evidence retries after at least one hour. Unresolved records become `dormant` 30 days after the run finishes; complete merged or closed-unmerged records and `not_applicable` records become `quiescent`. `active`, `quiescent`, and `dormant` control automatic work only—explicit reconciliation can refresh any eligible record. If that refresh observes a formerly terminal PR open again, scheduling is recomputed and the record becomes active.
 
-Two reconcilers coordinate with a mode-`0700` per-run `.outcome.lock` directory. Automatic work skips a busy run; explicit selected work reports it. A lock older than ten minutes is recoverable through an atomic displacement step. Different runs do not share a global lock.
+Two reconcilers coordinate with a mode-`0700` per-run `.outcome.lock` directory. Automatic work skips a busy or disappeared run; explicit selected work reports it. Locks and recovery markers older than ten minutes are recoverable through atomic displacement. Different runs do not share a global lock.
 
 Existing schema-v1 execution records can be backfilled with `--all`. The reconciler does not synthesize IDs or reconstruct executions from before common run telemetry.
 
@@ -88,11 +88,13 @@ Set `AGENT_TELEMETRY=0` to disable both execution and outcome telemetry. The rec
 
 Reconciliation is trusted host-side and observational. It prefers the launcher's freshness-aware token helper, then trusted host `GH_TOKEN`/`GITHUB_TOKEN`, then host GitHub CLI authentication, and finally available unauthenticated public reads. A clear helper-token authentication failure permits the existing single forced-refresh retry; other failures do not. No competing token-minting mechanism exists.
 
-The Codex launcher validates and snapshots the optional adopted sibling before the coding child starts. Historical and post-run calls use only that snapshot, so child edits cannot cause later execution with launcher-owned GitHub authority. Claude Explore installs the common reconciler into its versioned trusted runtime, validates it with the same ownership/mode discipline, captures host authority before environment reduction, and never executes a repository's reconciler outside the sandbox. The Claude child receives neither the captured token nor token-helper path.
+The Codex launcher validates and snapshots its fixed optional adopted sibling before the coding child starts; ambient environment variables cannot select another reconciler. It also resolves and validates optional `gh`, Ruby, Git, and copy tooling before launch, rejects workspace-controlled selections, and uses the pinned paths afterward. Historical and post-run calls use only that snapshot and toolchain, so child edits cannot cause later execution with launcher-owned GitHub authority.
+
+Claude Explore installs the common reconciler only from within its trusted runtime source tree and never executes a repository's reconciler outside the sandbox. Before the child starts, it searches the original host path for ownership- and mode-safe tools, skips repository-controlled candidates, and pins the accepted absolute paths. Captured host GitHub authority, including a host `GH_CONFIG_DIR` where present, is available only to trusted reconciliation. The Claude child receives neither that host config nor the captured token/token-helper path; it receives the runtime's empty private session GitHub config directory instead.
 
 GitHub CLI and Ruby are optional reconciliation prerequisites, not mandatory coding-runtime preflight dependencies. Missing tools, API/authentication/permission/rate-limit/network/timeout/parse failures, and local write failures remain fail-open for the coding workload. Automatic calls emit at most one concise `AGENT_OUTCOME_WARNING:` and never include response bodies or credential values. Useful prior or partial evidence remains intact where it can be written safely.
 
-Normal repository tests use synthetic run records and deterministic fake GitHub commands. They do not contact GitHub or invoke a live coding model.
+The checked-in semantic validator is kept in schema-v1 parity for required fields, nullability, bounds, collection uniqueness, and malformed member handling; invalid adversarial JSON is reported rather than raising. Normal repository tests use synthetic run records and deterministic fake GitHub commands. They do not contact GitHub or invoke a live coding model.
 
 ## Related evidence layers and limitations
 
