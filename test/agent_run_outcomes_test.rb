@@ -25,6 +25,7 @@ class AgentRunOutcomesTest < Minitest::Test
     @fake_bin = File.join(@root, "bin")
     @fixtures = File.join(@root, "github.json")
     @gh_log = File.join(@root, "gh.log")
+    @gh_invocation_log = File.join(@root, "gh-invocations.jsonl")
     FileUtils.mkdir_p([@repository, @telemetry, @fake_bin])
     git("init", "-q", "-b", "main")
     git("remote", "add", "origin", "https://github.com/#{REPOSITORY}.git")
@@ -104,6 +105,54 @@ class AgentRunOutcomesTest < Minitest::Test
     assert_equal "not_applicable", outcome.dig("reconciliation", "observation_state")
     assert_equal "quiescent", outcome.dig("reconciliation", "automatic_state")
     refute File.exist?(@gh_log)
+  end
+
+  def test_github_api_is_pinned_to_github_com_and_enterprise_authority_is_scrubbed
+    run_id = create_run
+    write_fixtures(
+      pulls_endpoint => [[]],
+      commit_pulls_endpoint(SHA_A) => [[]]
+    )
+
+    result = reconcile("--run", run_id, env: {
+      "GH_HOST" => "enterprise.invalid",
+      "GH_ENTERPRISE_TOKEN" => "synthetic-enterprise-secret",
+      "GITHUB_ENTERPRISE_TOKEN" => "synthetic-enterprise-secret-2",
+      "FAKE_EXPECTED_GITHUB_TOKEN" => "synthetic-secret-token"
+    })
+
+    assert result.status.success?, result.stderr
+    invocations = read_gh_invocations
+    refute_empty invocations
+    invocations.each do |invocation|
+      assert_equal ["api", "--hostname", "github.com"], invocation.fetch("argv").first(3)
+      refute invocation.fetch("gh_host_present")
+      refute invocation.fetch("gh_enterprise_token_present")
+      refute invocation.fetch("github_enterprise_token_present")
+      assert invocation.fetch("github_token_matches_expected")
+    end
+  end
+
+  def test_github_api_preserves_launcher_helper_token_for_github_com
+    run_id = create_run
+    write_fixtures(
+      pulls_endpoint => [[]],
+      commit_pulls_endpoint(SHA_A) => [[]]
+    )
+    helper = File.join(@root, "github-token-helper")
+    File.write(helper, "#!/bin/sh\nprintf '%s\\n' 'synthetic-helper-token'\n")
+    File.chmod(0o700, helper)
+
+    result = reconcile("--run", run_id, env: {
+      "AGENT_GITHUB_TOKEN_HELPER" => helper,
+      "FAKE_EXPECTED_GITHUB_TOKEN" => "synthetic-helper-token"
+    })
+
+    assert result.status.success?, result.stderr
+    invocations = read_gh_invocations
+    refute_empty invocations
+    assert invocations.all? { |invocation| invocation.fetch("github_token_matches_expected") }
+    assert invocations.all? { |invocation| invocation.fetch("argv").first(3) == ["api", "--hostname", "github.com"] }
   end
 
   def test_branch_reuse_is_ambiguous_and_text_or_task_number_does_not_establish_association
@@ -531,6 +580,7 @@ class AgentRunOutcomesTest < Minitest::Test
       "OUTCOME_GH_BIN" => File.join(@fake_bin, "gh"),
       "FAKE_GH_FIXTURES" => @fixtures,
       "FAKE_GH_LOG" => @gh_log,
+      "FAKE_GH_INVOCATION_LOG" => @gh_invocation_log,
       "GH_TOKEN" => "synthetic-secret-token"
     }
   end
@@ -629,6 +679,10 @@ class AgentRunOutcomesTest < Minitest::Test
     JSON.parse(File.binread(File.join(@telemetry, run_id, "outcome.json")))
   end
 
+  def read_gh_invocations
+    File.readlines(@gh_invocation_log, chomp: true).map { |line| JSON.parse(line) }
+  end
+
   def write_fixtures(value)
     File.write(@fixtures, JSON.pretty_generate(value))
   end
@@ -689,6 +743,14 @@ class AgentRunOutcomesTest < Minitest::Test
       require "json"
       endpoint = ARGV.last
       File.open(ENV.fetch("FAKE_GH_LOG"), "a") { |file| file.puts(endpoint) }
+      invocation = {
+        "argv" => ARGV,
+        "gh_host_present" => ENV.key?("GH_HOST"),
+        "gh_enterprise_token_present" => ENV.key?("GH_ENTERPRISE_TOKEN"),
+        "github_enterprise_token_present" => ENV.key?("GITHUB_ENTERPRISE_TOKEN"),
+        "github_token_matches_expected" => ENV["GH_TOKEN"] == ENV["FAKE_EXPECTED_GITHUB_TOKEN"]
+      }
+      File.open(ENV.fetch("FAKE_GH_INVOCATION_LOG"), "a") { |file| file.puts(JSON.generate(invocation)) }
       sleep Float(ENV["FAKE_GH_DELAY"]) if ENV["FAKE_GH_DELAY"]
       fixtures = JSON.parse(File.binread(ENV.fetch("FAKE_GH_FIXTURES")))
       value = fixtures.fetch(endpoint, ARGV.include?("--slurp") ? [[]] : {})

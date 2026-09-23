@@ -114,7 +114,7 @@ module AgentRunOutcomes
       token, helper_error = helper_token
       return Result.new(error: helper_error) if helper_error
 
-      command = [@gh, "api"]
+      command = [@gh, "api", "--hostname", "github.com"]
       command.concat(["--paginate", "--slurp"]) if paginate
       command.concat(["-H", "Accept: #{accept}"]) if accept
       command << endpoint
@@ -149,7 +149,11 @@ module AgentRunOutcomes
     end
 
     def invoke(command, token)
-      environment = {}
+      environment = {
+        "GH_HOST" => nil,
+        "GH_ENTERPRISE_TOKEN" => nil,
+        "GITHUB_ENTERPRISE_TOKEN" => nil
+      }
       environment["GH_TOKEN"] = token if token
       @queries += 1
       output = error = nil

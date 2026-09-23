@@ -1730,11 +1730,15 @@ class LauncherTest < Minitest::Test
     FileUtils.mkdir_p(child_tools)
     host_tools = File.join(@harness.root, "host-tools")
     FileUtils.mkdir_p(host_tools)
-    %w[gh ruby].each do |name|
-      path = File.join(host_tools, name)
-      File.write(path, "#!/bin/sh\nexit 0\n")
-      File.chmod(0o700, path)
-    end
+    gh = File.join(host_tools, "gh")
+    File.write(gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, gh)
+    ruby = File.join(host_tools, "ruby")
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
     compromised = File.join(@harness.root, "compromised")
     mutation = <<~SH
       #!/bin/sh
@@ -1765,6 +1769,47 @@ class LauncherTest < Minitest::Test
       refute_equal File.realpath(File.join(child_tools, "ruby")), invocation.fetch(2)
     end
     refute File.exist?(compromised), "post-run reconciliation executed child-modified repository code"
+  end
+
+  def test_repository_controlled_openssl_is_not_used_for_outcome_snapshot_digest
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    repository_tools = File.join(@harness.repository, "outcome-tools")
+    FileUtils.mkdir_p(repository_tools)
+    marker = File.join(@harness.root, "repository-openssl-ran")
+    openssl = File.join(repository_tools, "openssl")
+    File.write(openssl, <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_OPENSSL_MARKER"
+      exit 0
+    SH
+    File.chmod(0o755, openssl)
+    host_tools = File.join(@harness.root, "host-tools")
+    FileUtils.mkdir_p(host_tools)
+    ruby = File.join(host_tools, "ruby")
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
+    @harness.commit_all("Add synthetic outcome reconciler and unsafe OpenSSL")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [repository_tools, host_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_OUTCOME_OPENSSL_MARKER" => marker
+    })
+
+    assert result.status.success?, failure_message("trusted outcome digest", result)
+    assert_equal 2, File.readlines(log).length
+    refute File.exist?(marker), "repository-controlled OpenSSL entered the outcome integrity path"
   end
 
   def test_ambient_outcome_reconciler_override_cannot_select_host_code

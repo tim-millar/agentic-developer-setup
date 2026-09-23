@@ -148,17 +148,26 @@ snapshot_outcome_reconciler() {
   OUTCOME_RECONCILER_SNAPSHOT=$OUTCOME_RECONCILER_DIR/agent_run_outcomes.sh
   "$OUTCOME_CP_BIN" "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
   chmod 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
-  digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
-  OUTCOME_RECONCILER_DIGEST="${digest_output##*= }"
+  digest_output=$(outcome_reconciler_digest "$OUTCOME_RECONCILER_SNAPSHOT") || return 1
+  OUTCOME_RECONCILER_DIGEST="$digest_output"
   [[ "$OUTCOME_RECONCILER_DIGEST" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+}
+
+outcome_reconciler_digest() {
+  local path="$1"
+  [[ -n "$OUTCOME_RUBY_BIN" ]] || return 1
+  "$ENV_BIN" \
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH \
+    "$OUTCOME_RUBY_BIN" --disable-gems -rdigest \
+    -e 'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$path"
 }
 
 run_outcome_reconciler() {
   local current_digest digest_output
   local -a outcome_env
   [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]] || return 0
-  digest_output=$("$OPENSSL_BIN" dgst -sha256 "$OUTCOME_RECONCILER_SNAPSHOT" 2>/dev/null) || return 1
-  current_digest="${digest_output##*= }"
+  digest_output=$(outcome_reconciler_digest "$OUTCOME_RECONCILER_SNAPSHOT") || return 1
+  current_digest="$digest_output"
   [[ "$current_digest" == "$OUTCOME_RECONCILER_DIGEST" ]] || return 1
   outcome_env=(
     -u AGENT_GITHUB_TOKEN_HELPER -u OUTCOME_GH_BIN -u OUTCOME_GIT_BIN -u OUTCOME_RUBY_BIN
