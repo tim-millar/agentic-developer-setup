@@ -1728,8 +1728,7 @@ class LauncherTest < Minitest::Test
     log = File.join(@harness.root, "outcome.log")
     child_tools = File.join(@harness.repository, "child-tools")
     FileUtils.mkdir_p(child_tools)
-    host_tools = File.join(@harness.root, "host-tools")
-    FileUtils.mkdir_p(host_tools)
+    host_tools = @harness.protected_host_directory("launcher-host-tools-")
     gh = File.join(host_tools, "gh")
     File.write(gh, "#!/bin/sh\nexit 0\n")
     File.chmod(0o700, gh)
@@ -1862,8 +1861,7 @@ class LauncherTest < Minitest::Test
       : > "$FAKE_OUTCOME_LOG"
     SH
     File.chmod(0o755, reconciler)
-    tools = File.join(@harness.root, "snapshot-tools")
-    FileUtils.mkdir_p(tools)
+    tools = @harness.protected_host_directory("launcher-snapshot-tools-")
     mktemp = File.join(tools, "mktemp")
     File.write(mktemp, <<~SH)
       #!/bin/sh
@@ -1897,8 +1895,7 @@ class LauncherTest < Minitest::Test
       : > "$FAKE_OUTCOME_LOG"
     SH
     File.chmod(0o755, reconciler)
-    tools = File.join(@harness.root, "snapshot-tools")
-    FileUtils.mkdir_p(tools)
+    tools = @harness.protected_host_directory("launcher-snapshot-tools-")
     ruby = File.join(tools, "ruby")
     File.write(ruby, "#!/bin/sh\nexit 71\n")
     File.chmod(0o700, ruby)
@@ -1937,8 +1934,7 @@ class LauncherTest < Minitest::Test
       exit 0
     SH
     File.chmod(0o755, openssl)
-    host_tools = File.join(@harness.root, "host-tools")
-    FileUtils.mkdir_p(host_tools)
+    host_tools = @harness.protected_host_directory("launcher-host-tools-")
     ruby = File.join(host_tools, "ruby")
     File.write(ruby, <<~RUBY)
       #!#{RbConfig.ruby}
@@ -1976,7 +1972,7 @@ class LauncherTest < Minitest::Test
     @harness = LauncherHarness.new(telemetry: true)
     helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
       #!/bin/sh
-      : > "$FAKE_OUTCOME_LOG"
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
       exit 0
     SH
     File.chmod(0o755, helper)
@@ -1987,17 +1983,110 @@ class LauncherTest < Minitest::Test
       File.write(path, "#!/bin/sh\nexit 0\n")
       File.chmod(0o755, path)
     end
+    safe_tools = @harness.protected_host_directory("launcher-safe-outcome-tools-")
+    safe_gh = File.join(safe_tools, "gh")
+    File.write(safe_gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, safe_gh)
+    safe_ruby = File.join(safe_tools, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
     @harness.commit_all("Add unsafe synthetic outcome tools")
     log = File.join(@harness.root, "unsafe-outcome-tools.log")
 
     result = @harness.run(env: {
-      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "PATH" => [tools, safe_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
       "FAKE_OUTCOME_LOG" => log
     })
 
     assert result.status.success?, failure_message("unsafe optional outcome tools", result)
-    refute File.exist?(log), "repository-controlled Ruby was used to snapshot or run the reconciler"
+    expected = "#{File.realpath(safe_gh)}|#{File.realpath(safe_ruby)}"
+    assert_equal [expected, expected], File.readlines(log, chomp: true)
     assert_equal 1, @harness.codex_invocations.length
+  end
+
+  def test_temporary_outcome_tools_are_rejected_and_workload_status_remains_authoritative
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
+      case "$OUTCOME_GH_BIN|$OUTCOME_RUBY_BIN" in
+        *"$FAKE_UNSAFE_OUTCOME_TOOLS"*)
+          [ -z "$OUTCOME_GH_BIN" ] || "$OUTCOME_GH_BIN"
+          [ -z "$OUTCOME_RUBY_BIN" ] || "$OUTCOME_RUBY_BIN"
+          ;;
+      esac
+    SH
+    File.chmod(0o755, helper)
+    unsafe_tools = File.join(@harness.tmpdir, "unsafe-outcome-tools")
+    FileUtils.mkdir_p(unsafe_tools)
+    marker = File.join(@harness.root, "unsafe-outcome-tool-ran")
+    %w[gh ruby].each do |name|
+      path = File.join(unsafe_tools, name)
+      File.write(path, "#!/bin/sh\n: > \"$FAKE_UNSAFE_OUTCOME_MARKER\"\nexit 97\n")
+      File.chmod(0o700, path)
+    end
+    safe_ruby_dir = @harness.protected_host_directory("launcher-safe-ruby-")
+    safe_ruby = File.join(safe_ruby_dir, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "temporary-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [unsafe_tools, safe_ruby_dir, LauncherHarness::BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_UNSAFE_OUTCOME_TOOLS" => File.realpath(unsafe_tools),
+      "FAKE_UNSAFE_OUTCOME_MARKER" => marker,
+      "FAKE_CODEX_EXIT" => "23"
+    })
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    selections = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal 2, selections.length
+    selections.each do |gh_path, ruby_path|
+      refute_equal File.realpath(File.join(unsafe_tools, "gh")), gh_path
+      assert_equal File.realpath(safe_ruby), ruby_path
+    end
+    refute File.exist?(marker), "temporary outcome executable was invoked post-child"
+  end
+
+  def test_group_writable_candidate_is_skipped_for_protected_user_owned_outcome_tools
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    host_root = @harness.protected_host_directory("launcher-protected-tree-")
+    unsafe_tools = File.join(host_root, "group-writable", "bin")
+    safe_tools = File.join(host_root, "protected", "bin")
+    FileUtils.mkdir_p([unsafe_tools, safe_tools])
+    File.chmod(0o770, File.dirname(unsafe_tools))
+    %w[gh ruby].each do |name|
+      unsafe = File.join(unsafe_tools, name)
+      File.write(unsafe, "#!/bin/sh\nexit 97\n")
+      File.chmod(0o700, unsafe)
+    end
+    safe_gh = File.join(safe_tools, "gh")
+    File.write(safe_gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, safe_gh)
+    safe_ruby = File.join(safe_tools, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "protected-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [unsafe_tools, safe_tools, "/usr/bin", "/bin"].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log
+    })
+
+    assert_success(result, "protected current-user outcome tools")
+    expected = "#{File.realpath(safe_gh)}|#{File.realpath(safe_ruby)}"
+    assert_equal [expected, expected], File.readlines(log, chomp: true)
   end
 
   def test_outcome_reconciliation_failure_preserves_workload_status

@@ -118,6 +118,68 @@ resolve_host_executable() {
   return 1
 }
 
+post_child_path_is_within() {
+  local path=$1 root=$2
+  case "$path" in "$root"|"$root"/*) return 0 ;; *) return 1 ;; esac
+}
+
+post_child_executable_ancestry_is_safe() {
+  local resolved=$1 parent uid mode current_uid temp_root unsafe_root canonical_root
+  current_uid=$(/usr/bin/id -u 2>/dev/null) || return 1
+  temp_root=$($REALPATH_BIN "${TMPDIR:-/tmp}" 2>/dev/null) || return 1
+  post_child_path_is_within "$resolved" "$temp_root" && return 1
+  for unsafe_root in /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+    [ -e "$unsafe_root" ] || continue
+    canonical_root=$($REALPATH_BIN "$unsafe_root" 2>/dev/null) || return 1
+    post_child_path_is_within "$resolved" "$canonical_root" && return 1
+  done
+
+  parent=$(dirname "$resolved")
+  while :; do
+    [ -d "$parent" ] || return 1
+    uid=$(file_uid "$parent" 2>/dev/null) || return 1
+    [ "$uid" = 0 ] || [ "$uid" = "$current_uid" ] || return 1
+    mode=$(file_mode "$parent" 2>/dev/null) || return 1
+    [ $((8#$mode & 022)) -eq 0 ] || return 1
+    [ "$parent" = / ] && break
+    parent=$(dirname "$parent")
+  done
+}
+
+validate_post_child_host_executable() {
+  local candidate=$1 resolved uid mode repository_root
+  case "$candidate" in /*) ;; *) return 1 ;; esac
+  resolved=$($REALPATH_BIN "$candidate" 2>/dev/null) || return 1
+  [ -f "$resolved" ] && [ -x "$resolved" ] || return 1
+  post_child_executable_ancestry_is_safe "$resolved" || return 1
+  uid=$(file_uid "$resolved" 2>/dev/null) || return 1
+  [ "$uid" = 0 ] || [ "$uid" = "$(/usr/bin/id -u)" ] || return 1
+  mode=$(file_mode "$resolved" 2>/dev/null) || return 1
+  [ $((8#$mode & 022)) -eq 0 ] || return 1
+  if [ -n "${TELEMETRY_REPO_ROOT:-}" ]; then
+    repository_root=$($REALPATH_BIN "$TELEMETRY_REPO_ROOT" 2>/dev/null) || return 1
+    post_child_path_is_within "$resolved" "$repository_root" && return 1
+  fi
+  printf '%s\n' "$resolved"
+}
+
+resolve_post_child_host_executable() {
+  local name=$1 directory candidate resolved old_ifs=$IFS
+  IFS=:
+  for directory in $ORIGINAL_PATH; do
+    IFS=$old_ifs
+    case "$directory" in /*) ;; *) IFS=:; continue ;; esac
+    candidate=$directory/$name
+    [ -x "$candidate" ] || { IFS=:; continue; }
+    resolved=$(validate_post_child_host_executable "$candidate" 2>/dev/null) || { IFS=:; continue; }
+    IFS=$old_ifs
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS=$old_ifs
+  return 1
+}
+
 SCRIPT_REAL=""
 RUNTIME_ROOT=""
 POLICY_FILE=""
@@ -726,14 +788,14 @@ capture_outcome_authority() {
   PINNED_OUTCOME_RECONCILER=$RUNTIME_ROOT/lib/agent_run_outcomes.sh
   PINNED_OUTCOME_TOKEN_HELPER=""
   if [ -n "${AGENT_GITHUB_TOKEN_HELPER:-}" ]; then
-    PINNED_OUTCOME_TOKEN_HELPER=$(validate_host_executable "$AGENT_GITHUB_TOKEN_HELPER" 2>/dev/null || true)
+    PINNED_OUTCOME_TOKEN_HELPER=$(validate_post_child_host_executable "$AGENT_GITHUB_TOKEN_HELPER" 2>/dev/null || true)
   fi
   PINNED_OUTCOME_HOST_GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
   PINNED_OUTCOME_TELEMETRY_DIR=${AGENT_TELEMETRY_DIR:-}
   PINNED_OUTCOME_HOST_GH_CONFIG_DIR=${GH_CONFIG_DIR:-}
-  PINNED_OUTCOME_GH_BIN=$(resolve_host_executable gh 2>/dev/null || true)
-  PINNED_OUTCOME_RUBY_BIN=$(resolve_host_executable ruby 2>/dev/null || true)
-  PINNED_OUTCOME_GIT_BIN=$(validate_host_executable "${TELEMETRY_GIT_TARGET:-}" 2>/dev/null || true)
+  PINNED_OUTCOME_GH_BIN=$(resolve_post_child_host_executable gh 2>/dev/null || true)
+  PINNED_OUTCOME_RUBY_BIN=$(resolve_post_child_host_executable ruby 2>/dev/null || true)
+  PINNED_OUTCOME_GIT_BIN=$(validate_post_child_host_executable "${TELEMETRY_GIT_TARGET:-}" 2>/dev/null || true)
 }
 
 run_outcome_reconciler() {

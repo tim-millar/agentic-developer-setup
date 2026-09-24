@@ -202,19 +202,48 @@ run_outcome_reconciler() {
   "$ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
 }
 
-resolve_outcome_executable() {
-  local name="$1" found resolved parent mode uid
-  found="$(command -v "$name" 2>/dev/null || true)"
-  [[ "$found" == /* ]] || return 1
-  if [[ -L "$found" ]]; then
-    [[ -n "$OUTCOME_REALPATH_BIN" ]] || return 1
-    resolved="$("$OUTCOME_REALPATH_BIN" "$found" 2>/dev/null)" || return 1
-  else
-    parent="$(cd -P "$(dirname "$found")" 2>/dev/null && pwd)" || return 1
-    resolved="$parent/$(basename "$found")"
-  fi
+outcome_path_is_within() {
+  local path="$1" root="$2"
+  [[ "$path" == "$root" || "$path" == "$root"/* ]]
+}
+
+outcome_executable_ancestry_is_safe() {
+  local resolved="$1" parent uid mode current_uid temp_root unsafe_root canonical_root
+
+  [[ -n "$OUTCOME_REALPATH_BIN" ]] || return 1
+  current_uid="$(/usr/bin/id -u 2>/dev/null)" || return 1
+  temp_root="$("$OUTCOME_REALPATH_BIN" "${TMPDIR:-/tmp}" 2>/dev/null)" || return 1
+  outcome_path_is_within "$resolved" "$temp_root" && return 1
+  for unsafe_root in /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+    [[ -e "$unsafe_root" ]] || continue
+    canonical_root="$("$OUTCOME_REALPATH_BIN" "$unsafe_root" 2>/dev/null)" || return 1
+    outcome_path_is_within "$resolved" "$canonical_root" && return 1
+  done
+
+  parent="$(dirname "$resolved")"
+  while :; do
+    [[ -d "$parent" ]] || return 1
+    if mode="$(/usr/bin/stat -f '%Lp' "$parent" 2>/dev/null)"; then :
+    else mode="$(/usr/bin/stat -c '%a' "$parent" 2>/dev/null)" || return 1
+    fi
+    if uid="$(/usr/bin/stat -f '%u' "$parent" 2>/dev/null)"; then :
+    else uid="$(/usr/bin/stat -c '%u' "$parent" 2>/dev/null)" || return 1
+    fi
+    [[ "$uid" == 0 || "$uid" == "$current_uid" ]] || return 1
+    (( (8#$mode & 022) == 0 )) || return 1
+    [[ "$parent" == / ]] && break
+    parent="$(dirname "$parent")"
+  done
+}
+
+validate_outcome_executable() {
+  local found="$1" resolved mode uid
+
+  [[ "$found" == /* && -n "$OUTCOME_REALPATH_BIN" ]] || return 1
+  resolved="$("$OUTCOME_REALPATH_BIN" "$found" 2>/dev/null)" || return 1
   [[ -f "$resolved" && -x "$resolved" ]] || return 1
   case "$resolved" in "$REPO_ROOT"|"$REPO_ROOT"/*) return 1 ;; esac
+  outcome_executable_ancestry_is_safe "$resolved" || return 1
   if mode="$(/usr/bin/stat -f '%Lp' "$resolved" 2>/dev/null)"; then :
   else mode="$(/usr/bin/stat -c '%a' "$resolved" 2>/dev/null)" || return 1
   fi
@@ -224,6 +253,24 @@ resolve_outcome_executable() {
   [[ "$uid" == 0 || "$uid" == "$(/usr/bin/id -u)" ]] || return 1
   (( (8#$mode & 022) == 0 )) || return 1
   printf '%s\n' "$resolved"
+}
+
+resolve_outcome_executable() {
+  local name="$1" directory candidate resolved old_ifs="$IFS"
+
+  IFS=:
+  for directory in $PATH; do
+    IFS="$old_ifs"
+    [[ "$directory" == /* ]] || { IFS=:; continue; }
+    candidate="$directory/$name"
+    [[ -x "$candidate" ]] || { IFS=:; continue; }
+    resolved="$(validate_outcome_executable "$candidate" 2>/dev/null)" || { IFS=:; continue; }
+    IFS="$old_ifs"
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS="$old_ifs"
+  return 1
 }
 
 trap cleanup EXIT

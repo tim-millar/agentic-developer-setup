@@ -37,6 +37,7 @@ class LauncherHarness
     :codex_version_stdin_log
 
   def initialize(telemetry: false)
+    @protected_host_paths = []
     @root = File.realpath(Dir.mktmpdir("launcher-test-"))
     @repository = File.join(root, "adopted-repository")
     @home = File.join(root, "home")
@@ -77,6 +78,17 @@ class LauncherHarness
 
   def close
     FileUtils.remove_entry_secure(root) if root && File.exist?(root)
+    @protected_host_paths.each do |path|
+      FileUtils.remove_entry_secure(path) if File.exist?(path)
+    end
+    @protected_host_paths.clear
+  end
+
+  def protected_host_directory(prefix = "launcher-protected-tools-")
+    path = File.realpath(Dir.mktmpdir(prefix, Dir.home))
+    File.chmod(0o700, path)
+    @protected_host_paths << path
+    path
   end
 
   def base_env

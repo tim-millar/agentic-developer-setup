@@ -13,6 +13,7 @@ class ClaudeExploreHarness
   attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target, :claude_version_env_log
 
   def initialize(prefix: "claude-explore-test-", telemetry: false)
+    @protected_host_paths = []
     @root = Dir.mktmpdir(prefix)
     @home = File.join(root, "home")
     @fake_bin = File.join(root, "fake-bin")
@@ -48,6 +49,17 @@ class ClaudeExploreHarness
 
   def cleanup
     FileUtils.remove_entry_secure(root) if File.exist?(root)
+    @protected_host_paths.each do |path|
+      FileUtils.remove_entry_secure(path) if File.exist?(path)
+    end
+    @protected_host_paths.clear
+  end
+
+  def protected_host_directory(prefix = "claude-protected-tools-")
+    path = File.realpath(Dir.mktmpdir(prefix, Dir.home))
+    File.chmod(0o700, path)
+    @protected_host_paths << path
+    path
   end
 
   def install(operation = "install", claude: claude_launcher, extra_env: {})

@@ -522,8 +522,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     FileUtils.mkdir_p(File.join(repository, "scripts"))
     repository_tools = File.join(repository, "child-tools")
     FileUtils.mkdir_p(repository_tools)
-    host_tools = File.join(@harness.root, "host-tools")
-    FileUtils.mkdir_p(host_tools)
+    host_tools = @harness.protected_host_directory("claude-host-tools-")
     %w[gh ruby].each { |name| @harness.write_executable(File.join(host_tools, name), "#!/bin/sh\nexit 0\n") }
     compromised = File.join(@harness.root, "repository-reconciler-ran")
     File.write(File.join(repository, "scripts/agent_run_outcomes.sh"), "#!/bin/sh\n: > #{compromised.dump}\n")
@@ -592,8 +591,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     tools = File.join(repository, "bin")
     FileUtils.mkdir_p(tools)
     %w[gh ruby].each { |name| @harness.write_executable(File.join(tools, name), "#!/bin/sh\nexit 0\n") }
-    trusted_tools = File.join(@harness.root, "trusted-tools")
-    FileUtils.mkdir_p(trusted_tools)
+    trusted_tools = @harness.protected_host_directory("claude-trusted-tools-")
     %w[gh ruby].each { |name| @harness.write_executable(File.join(trusted_tools, name), "#!/bin/sh\nexit 0\n") }
     log = File.join(@harness.root, "unsafe-tool-selection.log")
     installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
@@ -613,6 +611,97 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     selections = File.readlines(log, chomp: true)
     expected = "#{File.realpath(File.join(trusted_tools, "gh"))}|#{File.realpath(File.join(trusted_tools, "ruby"))}"
     assert_equal [expected, expected], selections
+  end
+
+  def test_outcome_tool_resolution_skips_temporary_and_group_writable_candidates
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    unsafe_tools = File.join(@harness.root, "temporary-outcome-tools")
+    protected_root = @harness.protected_host_directory("claude-protected-tree-")
+    group_writable_tools = File.join(protected_root, "group-writable", "bin")
+    safe_tools = File.join(protected_root, "protected", "bin")
+    FileUtils.mkdir_p([unsafe_tools, group_writable_tools, safe_tools])
+    File.chmod(0o770, File.dirname(group_writable_tools))
+    marker = File.join(@harness.root, "unsafe-outcome-tool-ran")
+    [unsafe_tools, group_writable_tools].each do |directory|
+      %w[gh ruby].each do |name|
+        @harness.write_executable(
+          File.join(directory, name),
+          "#!/bin/sh\n: > \"$FAKE_UNSAFE_OUTCOME_MARKER\"\nexit 97\n"
+        )
+      end
+    end
+    %w[gh ruby].each { |name| @harness.write_executable(File.join(safe_tools, name), "#!/bin/sh\nexit 0\n") }
+    safe_helper = File.join(safe_tools, "token-helper")
+    @harness.write_executable(safe_helper, "#!/bin/sh\nprintf '%s\\n' synthetic-token\n")
+    log = File.join(@harness.root, "outcome-ancestry-selection.log")
+    installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
+    File.write(installed, <<~SH)
+      #!/bin/sh
+      printf '%s|%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" "$AGENT_GITHUB_TOKEN_HELPER" >> #{log.dump}
+      case "$OUTCOME_GH_BIN|$OUTCOME_RUBY_BIN|$AGENT_GITHUB_TOKEN_HELPER" in
+        *"$FAKE_UNSAFE_OUTCOME_ROOT"*)
+          [ -z "$OUTCOME_GH_BIN" ] || "$OUTCOME_GH_BIN"
+          [ -z "$OUTCOME_RUBY_BIN" ] || "$OUTCOME_RUBY_BIN"
+          [ -z "$AGENT_GITHUB_TOKEN_HELPER" ] || "$AGENT_GITHUB_TOKEN_HELPER"
+          ;;
+      esac
+    SH
+    File.chmod(0o700, installed)
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {
+      "PATH" => [unsafe_tools, group_writable_tools, safe_tools, @harness.env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "AGENT_GITHUB_TOKEN_HELPER" => safe_helper,
+      "FAKE_UNSAFE_OUTCOME_ROOT" => @harness.root,
+      "FAKE_UNSAFE_OUTCOME_MARKER" => marker
+    })
+
+    assert status.success?, stderr
+    expected = [
+      File.realpath(File.join(safe_tools, "gh")),
+      File.realpath(File.join(safe_tools, "ruby")),
+      File.realpath(safe_helper)
+    ].join("|")
+    assert_equal [expected, expected], File.readlines(log, chomp: true)
+    refute File.exist?(marker), "unsafe temporary or group-writable outcome executable was invoked"
+  end
+
+  def test_only_temporary_outcome_authority_is_rejected_fail_open
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    unsafe_tools = File.join(@harness.root, "temporary-only-outcome-tools")
+    FileUtils.mkdir_p(unsafe_tools)
+    marker = File.join(@harness.root, "temporary-only-outcome-tool-ran")
+    %w[gh ruby token-helper].each do |name|
+      @harness.write_executable(
+        File.join(unsafe_tools, name),
+        "#!/bin/sh\n: > \"$FAKE_UNSAFE_OUTCOME_MARKER\"\nexit 97\n"
+      )
+    end
+    installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
+    File.write(installed, <<~SH)
+      #!/bin/sh
+      [ -z "$OUTCOME_GH_BIN" ] || "$OUTCOME_GH_BIN"
+      [ -z "$OUTCOME_RUBY_BIN" ] || "$OUTCOME_RUBY_BIN"
+      [ -z "${AGENT_GITHUB_TOKEN_HELPER:-}" ] || "$AGENT_GITHUB_TOKEN_HELPER"
+      exit 44
+    SH
+    File.chmod(0o700, installed)
+
+    _stdout, stderr, status = @harness.runtime(
+      extra_env: {
+        "PATH" => unsafe_tools,
+        "AGENT_GITHUB_TOKEN_HELPER" => File.join(unsafe_tools, "token-helper"),
+        "FAKE_UNSAFE_OUTCOME_MARKER" => marker,
+        "FAKE_CLAUDE_EXIT" => "19"
+      }
+    )
+
+    assert_equal 19, status.exitstatus
+    assert_equal 1, stderr.scan("AGENT_OUTCOME_WARNING:").length
+    refute File.exist?(marker), "temporary outcome authority was executed"
   end
 
   def test_claude_launcher_path_hierarchy_and_relative_xdg_fail_closed
