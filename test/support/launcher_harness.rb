@@ -91,6 +91,27 @@ class LauncherHarness
     path
   end
 
+  def protected_host_path_without(*excluded_names)
+    destination = protected_host_directory("launcher-protected-path-")
+    source_directories = [*ENV.fetch("PATH", "").split(File::PATH_SEPARATOR), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].uniq
+    source_directories.each do |directory|
+      next unless File.directory?(directory)
+
+      Dir.children(directory).sort.each do |name|
+        next if excluded_names.include?(name)
+
+        source = File.join(directory, name)
+        target = File.join(destination, name)
+        next if File.exist?(target) || File.symlink?(target) || !File.file?(source) || !File.executable?(source)
+
+        File.symlink(File.realpath(source), target)
+      rescue Errno::ENOENT, Errno::EACCES
+        next
+      end
+    end
+    destination
+  end
+
   def base_env
     launcher_path = [@fake_bin, BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR)
     {

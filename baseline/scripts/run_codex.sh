@@ -23,9 +23,12 @@ OUTCOME_CREDENTIAL_DIR=""
 OUTCOME_TOKEN_HELPER=""
 OUTCOME_SETUP_WARNING_EMITTED="0"
 OUTCOME_TELEMETRY_DIR="${AGENT_TELEMETRY_DIR:-}"
+OUTCOME_CHMOD_BIN=""
 OUTCOME_CP_BIN=""
+OUTCOME_ENV_BIN=""
 OUTCOME_GH_BIN=""
 OUTCOME_GIT_BIN=""
+OUTCOME_MKTEMP_BIN=""
 OUTCOME_REALPATH_BIN=""
 OUTCOME_RUBY_BIN=""
 
@@ -162,12 +165,13 @@ snapshot_outcome_reconciler() {
     echo "Error: framework outcome reconciler is unsafe: $OUTCOME_RECONCILER_SOURCE" >&2
     return 2
   fi
-  [[ -n "$OUTCOME_CP_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 0
-  OUTCOME_RECONCILER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
-  chmod 700 "$OUTCOME_RECONCILER_DIR" || return 1
+  [[ -n "$OUTCOME_CHMOD_BIN" && -n "$OUTCOME_CP_BIN" && -n "$OUTCOME_ENV_BIN" &&
+     -n "$OUTCOME_MKTEMP_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 1
+  OUTCOME_RECONCILER_DIR=$("$OUTCOME_MKTEMP_BIN" -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_RECONCILER_DIR" || return 1
   OUTCOME_RECONCILER_SNAPSHOT=$OUTCOME_RECONCILER_DIR/agent_run_outcomes.sh
   "$OUTCOME_CP_BIN" "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
-  chmod 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
   digest_output=$(outcome_reconciler_digest "$OUTCOME_RECONCILER_SNAPSHOT") || return 1
   OUTCOME_RECONCILER_DIGEST="$digest_output"
   [[ "$OUTCOME_RECONCILER_DIGEST" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
@@ -175,8 +179,8 @@ snapshot_outcome_reconciler() {
 
 outcome_reconciler_digest() {
   local path="$1"
-  [[ -n "$OUTCOME_RUBY_BIN" ]] || return 1
-  "$ENV_BIN" \
+  [[ -n "$OUTCOME_ENV_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 1
+  "$OUTCOME_ENV_BIN" \
     -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH \
     "$OUTCOME_RUBY_BIN" --disable-gems -rdigest \
     -e 'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$path"
@@ -190,7 +194,9 @@ run_outcome_reconciler() {
   current_digest="$digest_output"
   [[ "$current_digest" == "$OUTCOME_RECONCILER_DIGEST" ]] || return 1
   outcome_env=(
-    -u AGENT_GITHUB_TOKEN_HELPER -u OUTCOME_GH_BIN -u OUTCOME_GIT_BIN -u OUTCOME_RUBY_BIN
+    -u AGENT_GITHUB_TOKEN_HELPER
+    -u OUTCOME_CHMOD_BIN -u OUTCOME_CP_BIN -u OUTCOME_ENV_BIN -u OUTCOME_GH_BIN
+    -u OUTCOME_GIT_BIN -u OUTCOME_MKTEMP_BIN -u OUTCOME_RUBY_BIN
     -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH
     "AGENT_OUTCOME_CURRENT_RUN_ID=$AGENT_TELEMETRY_RUN_ID"
     "OUTCOME_GH_BIN=$OUTCOME_GH_BIN"
@@ -199,7 +205,7 @@ run_outcome_reconciler() {
   )
   [[ -z "$OUTCOME_TELEMETRY_DIR" ]] || outcome_env+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
   [[ -z "$OUTCOME_TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$OUTCOME_TOKEN_HELPER")
-  "$ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
+  "$OUTCOME_ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
 }
 
 outcome_path_is_within() {
@@ -746,8 +752,11 @@ if [[ -x /usr/bin/realpath ]]; then OUTCOME_REALPATH_BIN=/usr/bin/realpath
 elif [[ -x /bin/realpath ]]; then OUTCOME_REALPATH_BIN=/bin/realpath
 fi
 OUTCOME_CP_BIN="$(resolve_outcome_executable cp 2>/dev/null || true)"
+OUTCOME_ENV_BIN="$(resolve_outcome_executable env 2>/dev/null || true)"
 OUTCOME_GH_BIN="$(resolve_outcome_executable gh 2>/dev/null || true)"
 OUTCOME_GIT_BIN="$(resolve_outcome_executable git 2>/dev/null || true)"
+OUTCOME_MKTEMP_BIN="$(resolve_outcome_executable mktemp 2>/dev/null || true)"
+OUTCOME_CHMOD_BIN="$(resolve_outcome_executable chmod 2>/dev/null || true)"
 OUTCOME_RUBY_BIN="$(resolve_outcome_executable ruby 2>/dev/null || true)"
 
 if snapshot_outcome_reconciler; then
@@ -1168,15 +1177,16 @@ publish_renewal_result() {
 create_outcome_token_helper() {
   local state_pointer
 
-  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$OUTCOME_CP_BIN" ]] || return 0
-  OUTCOME_CREDENTIAL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex.outcome-credentials.XXXXXX")" || return 1
-  chmod 700 "$OUTCOME_CREDENTIAL_DIR" || return 1
+  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$OUTCOME_CHMOD_BIN" && -n "$OUTCOME_CP_BIN" &&
+     -n "$OUTCOME_MKTEMP_BIN" ]] || return 0
+  OUTCOME_CREDENTIAL_DIR="$("$OUTCOME_MKTEMP_BIN" -d "${TMPDIR:-/tmp}/codex.outcome-credentials.XXXXXX")" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_CREDENTIAL_DIR" || return 1
   OUTCOME_TOKEN_HELPER="${OUTCOME_CREDENTIAL_DIR}/current-token-helper"
   state_pointer="${OUTCOME_CREDENTIAL_DIR}/credential-state"
   "$OUTCOME_CP_BIN" "$TOKEN_HELPER" "$OUTCOME_TOKEN_HELPER" || return 1
-  chmod 700 "$OUTCOME_TOKEN_HELPER" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_TOKEN_HELPER" || return 1
   printf '%s\n' "$SESSION_CREDENTIAL_DIR" > "$state_pointer" || return 1
-  chmod 600 "$state_pointer" || return 1
+  "$OUTCOME_CHMOD_BIN" 600 "$state_pointer" || return 1
 }
 
 create_app_session_credentials() {

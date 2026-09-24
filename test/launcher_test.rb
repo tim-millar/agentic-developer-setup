@@ -2089,6 +2089,124 @@ class LauncherTest < Minitest::Test
     assert_equal [expected, expected], File.readlines(log, chomp: true)
   end
 
+  def test_outcome_setup_uses_pinned_env_mktemp_and_chmod_past_hostile_repository_candidates
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    hostile_tools = File.join(@harness.repository, "hostile-outcome-tools")
+    FileUtils.mkdir_p(hostile_tools)
+    hostile_marker = File.join(@harness.root, "hostile-outcome-setup-tool-ran")
+    File.write(File.join(hostile_tools, "env"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*agent_run_outcomes.sh*|*--disable-gems*) : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER" ;;
+      esac
+      exec /usr/bin/env "$@"
+    SH
+    File.write(File.join(hostile_tools, "mktemp"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*codex.outcome-credentials*) : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER" ;;
+      esac
+      exec /usr/bin/mktemp "$@"
+    SH
+    File.write(File.join(hostile_tools, "chmod"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*codex.outcome-credentials*)
+          : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER"
+          for target do :; done
+          [ -d "$target" ] || printf '#!/bin/sh\n: > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER"\n' > "$target"
+          ;;
+      esac
+      exec /bin/chmod "$@"
+    SH
+    %w[env mktemp chmod].each { |name| File.chmod(0o755, File.join(hostile_tools, name)) }
+
+    safe_tools = @harness.protected_host_directory("launcher-safe-setup-tools-")
+    safe_log = File.join(@harness.root, "safe-outcome-setup-tools.log")
+    {
+      "env" => "/usr/bin/env",
+      "mktemp" => "/usr/bin/mktemp",
+      "chmod" => "/bin/chmod"
+    }.each do |name, delegate|
+      path = File.join(safe_tools, name)
+      File.write(path, <<~SH)
+        #!/bin/sh
+        printf '#{name}:%s\n' "$*" >> "$FAKE_SAFE_OUTCOME_SETUP_LOG"
+        exec #{delegate} "$@"
+      SH
+      File.chmod(0o700, path)
+    end
+    @harness.commit_all("Add hostile outcome setup utilities")
+    log = File.join(@harness.root, "outcome-setup.log")
+    launcher_path = [hostile_tools, safe_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR)
+
+    result = @harness.run_app(env: {
+      "PATH" => launcher_path,
+      "FAKE_EXPECTED_LAUNCHER_PATH" => launcher_path,
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_HOSTILE_OUTCOME_SETUP_MARKER" => hostile_marker,
+      "FAKE_SAFE_OUTCOME_SETUP_LOG" => safe_log
+    })
+
+    assert_success(result, "pinned outcome setup utilities")
+    assert_equal 2, File.readlines(log).length
+    refute File.exist?(hostile_marker), "repository-controlled setup utility entered the trusted outcome path"
+    safe_invocations = File.readlines(safe_log, chomp: true)
+    assert safe_invocations.any? { |line| line.start_with?("env:") && line.include?("--disable-gems") }
+    assert safe_invocations.any? { |line| line.start_with?("env:") && line.include?("agent_run_outcomes.sh") }
+    assert safe_invocations.any? { |line| line.start_with?("mktemp:") && line.include?("agent-outcomes.") }
+    assert safe_invocations.any? { |line| line.start_with?("mktemp:") && line.include?("codex.outcome-credentials.") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("agent_run_outcomes.sh") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("current-token-helper") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("credential-state") }
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_missing_trusted_outcome_env_warns_once_and_preserves_workload_status
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    hostile_tools = File.join(@harness.repository, "hostile-env")
+    FileUtils.mkdir_p(hostile_tools)
+    hostile_env = File.join(hostile_tools, "env")
+    File.write(hostile_env, <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*agent_run_outcomes.sh*|*--disable-gems*) : > "$FAKE_HOSTILE_OUTCOME_ENV_MARKER" ;;
+      esac
+      exec /usr/bin/env "$@"
+    SH
+    File.chmod(0o755, hostile_env)
+    safe_path = @harness.protected_host_path_without("env")
+    @harness.commit_all("Add hostile outcome env")
+    log = File.join(@harness.root, "missing-outcome-env.log")
+    marker = File.join(@harness.root, "hostile-outcome-env-ran")
+
+    result = @harness.run(env: {
+      "PATH" => [hostile_tools, safe_path].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_HOSTILE_OUTCOME_ENV_MARKER" => marker,
+      "FAKE_CODEX_EXIT" => "29"
+    })
+
+    assert_equal 29, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log), "incomplete outcome setup was later executed"
+    refute File.exist?(marker), "unsafe env entered the trusted outcome path"
+    assert_empty @harness.launcher_temporary_paths
+  end
+
   def test_outcome_reconciliation_failure_preserves_workload_status
     @harness.close
     @harness = LauncherHarness.new(telemetry: true)
