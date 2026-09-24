@@ -224,7 +224,8 @@ class LauncherHarness
   end
 
   def launcher_temporary_paths
-    Dir[File.join(tmpdir, "codex.{credentials,gh,askpass,host-env}.*")]
+    Dir[File.join(tmpdir, "codex.{credentials,gh,askpass,host-env,outcome-credentials}.*")] +
+      Dir[File.join(tmpdir, "agent-outcomes.*")]
   end
 
   def inherited_path
@@ -705,7 +706,8 @@ class LauncherHarness
       safe_values = %w[
         AGENT_NAME AGENT_GIT_MODE AGENT_LAUNCHED_BY_NAME AGENT_LAUNCHED_BY_EMAIL
         AGENT_REPO_ROOT AGENT_GITHUB_ACCESS_MODE AGENT_PROMPT_FILE AGENT_ISSUE_NUMBER
-        AGENT_EXTRA_PROMPT_FILE AGENT_GITHUB_TOKEN_HELPER GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME
+        AGENT_EXTRA_PROMPT_FILE AGENT_GITHUB_TOKEN_HELPER OUTCOME_TOKEN_HELPER AGENT_OUTCOME_TOKEN_HELPER
+        GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME
         GIT_COMMITTER_EMAIL GH_CONFIG_DIR GIT_ASKPASS GIT_TERMINAL_PROMPT
         GCM_INTERACTIVE SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND SSH_ASKPASS
         GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1
@@ -739,6 +741,10 @@ class LauncherHarness
       if ENV["FAKE_CODEX_MUTATE_OUTCOME_HELPER"]
         File.binwrite(ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"), ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_CONTENT"))
         File.chmod(0o755, ENV.fetch("FAKE_CODEX_MUTATE_OUTCOME_HELPER"))
+      end
+      if ENV["FAKE_CODEX_MUTATE_TOKEN_HELPER"] == "1"
+        File.binwrite(ENV.fetch("AGENT_GITHUB_TOKEN_HELPER"), ENV.fetch("FAKE_CODEX_MUTATE_TOKEN_HELPER_CONTENT"))
+        File.chmod(0o700, ENV.fetch("AGENT_GITHUB_TOKEN_HELPER"))
       end
       if ENV["FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR"]
         directory = ENV.fetch("FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR")

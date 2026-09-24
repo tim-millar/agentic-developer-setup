@@ -19,6 +19,9 @@ OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"
 OUTCOME_RECONCILER_DIR=""
 OUTCOME_RECONCILER_SNAPSHOT=""
 OUTCOME_RECONCILER_DIGEST=""
+OUTCOME_CREDENTIAL_DIR=""
+OUTCOME_TOKEN_HELPER=""
+OUTCOME_SETUP_WARNING_EMITTED="0"
 OUTCOME_TELEMETRY_DIR="${AGENT_TELEMETRY_DIR:-}"
 OUTCOME_CP_BIN=""
 OUTCOME_GH_BIN=""
@@ -128,10 +131,27 @@ cleanup() {
   [[ -n "$TMP_ASKPASS" && -f "$TMP_ASKPASS" ]] && rm -f "$TMP_ASKPASS"
   [[ -n "$TMP_GH_CONFIG_DIR" && -d "$TMP_GH_CONFIG_DIR" ]] && rm -rf "$TMP_GH_CONFIG_DIR"
   [[ -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]] && rm -rf "$SESSION_CREDENTIAL_DIR"
+  [[ -n "$OUTCOME_CREDENTIAL_DIR" && -d "$OUTCOME_CREDENTIAL_DIR" ]] && rm -rf "$OUTCOME_CREDENTIAL_DIR"
   [[ -n "$HOST_ENV_DIR" && -d "$HOST_ENV_DIR" ]] && rm -rf "$HOST_ENV_DIR"
   [[ -n "$OUTCOME_RECONCILER_DIR" && -d "$OUTCOME_RECONCILER_DIR" ]] && rm -rf "$OUTCOME_RECONCILER_DIR"
 
   return "$status"
+}
+
+disable_outcome_reconciliation() {
+  [[ -n "$OUTCOME_CREDENTIAL_DIR" && -d "$OUTCOME_CREDENTIAL_DIR" ]] && rm -rf "$OUTCOME_CREDENTIAL_DIR" 2>/dev/null || true
+  [[ -n "$OUTCOME_RECONCILER_DIR" && -d "$OUTCOME_RECONCILER_DIR" ]] && rm -rf "$OUTCOME_RECONCILER_DIR" 2>/dev/null || true
+  OUTCOME_CREDENTIAL_DIR=""
+  OUTCOME_TOKEN_HELPER=""
+  OUTCOME_RECONCILER_DIR=""
+  OUTCOME_RECONCILER_SNAPSHOT=""
+  OUTCOME_RECONCILER_DIGEST=""
+}
+
+warn_outcome_setup_unavailable() {
+  [[ "$OUTCOME_SETUP_WARNING_EMITTED" == 0 ]] || return 0
+  OUTCOME_SETUP_WARNING_EMITTED="1"
+  printf '%s\n' 'AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable' >&2
 }
 
 snapshot_outcome_reconciler() {
@@ -140,7 +160,7 @@ snapshot_outcome_reconciler() {
   [[ -e "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]] || return 0
   if [[ ! -f "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]]; then
     echo "Error: framework outcome reconciler is unsafe: $OUTCOME_RECONCILER_SOURCE" >&2
-    return 1
+    return 2
   fi
   [[ -n "$OUTCOME_CP_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 0
   OUTCOME_RECONCILER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
@@ -178,7 +198,7 @@ run_outcome_reconciler() {
     "OUTCOME_RUBY_BIN=$OUTCOME_RUBY_BIN"
   )
   [[ -z "$OUTCOME_TELEMETRY_DIR" ]] || outcome_env+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
-  [[ -z "$TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$TOKEN_HELPER")
+  [[ -z "$OUTCOME_TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$OUTCOME_TOKEN_HELPER")
   "$ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
 }
 
@@ -683,7 +703,16 @@ OUTCOME_GH_BIN="$(resolve_outcome_executable gh 2>/dev/null || true)"
 OUTCOME_GIT_BIN="$(resolve_outcome_executable git 2>/dev/null || true)"
 OUTCOME_RUBY_BIN="$(resolve_outcome_executable ruby 2>/dev/null || true)"
 
-snapshot_outcome_reconciler || exit 1
+if snapshot_outcome_reconciler; then
+  :
+else
+  OUTCOME_SETUP_STATUS=$?
+  if [[ "$OUTCOME_SETUP_STATUS" -eq 2 ]]; then
+    exit 1
+  fi
+  disable_outcome_reconciliation
+  warn_outcome_setup_unavailable
+fi
 
 if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
   CODEX_VERSION_ENV=("PATH=$PATH")
@@ -1089,6 +1118,20 @@ publish_renewal_result() {
   atomic_publish "$RENEWAL_RESULT_FILE" 600 "$contents"
 }
 
+create_outcome_token_helper() {
+  local state_pointer
+
+  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$OUTCOME_CP_BIN" ]] || return 0
+  OUTCOME_CREDENTIAL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex.outcome-credentials.XXXXXX")" || return 1
+  chmod 700 "$OUTCOME_CREDENTIAL_DIR" || return 1
+  OUTCOME_TOKEN_HELPER="${OUTCOME_CREDENTIAL_DIR}/current-token-helper"
+  state_pointer="${OUTCOME_CREDENTIAL_DIR}/credential-state"
+  "$OUTCOME_CP_BIN" "$TOKEN_HELPER" "$OUTCOME_TOKEN_HELPER" || return 1
+  chmod 700 "$OUTCOME_TOKEN_HELPER" || return 1
+  printf '%s\n' "$SESSION_CREDENTIAL_DIR" > "$state_pointer" || return 1
+  chmod 600 "$state_pointer" || return 1
+}
+
 create_app_session_credentials() {
   SESSION_CREDENTIAL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex.credentials.XXXXXX")"
   chmod 700 "$SESSION_CREDENTIAL_DIR"
@@ -1115,7 +1158,12 @@ create_app_session_credentials() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-credential_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+credential_dir="$helper_dir"
+if [[ -f "$helper_dir/credential-state" ]]; then
+  IFS= read -r credential_dir < "$helper_dir/credential-state"
+  [[ "$credential_dir" == /* && -d "$credential_dir" ]] || exit 1
+fi
 token_file="${credential_dir}/current-token"
 metadata_file="${credential_dir}/current-token.meta"
 pid_file="${credential_dir}/renewal-worker.pid"
@@ -1261,6 +1309,11 @@ done
 EOF
   } > "$TOKEN_HELPER"
   chmod 700 "$TOKEN_HELPER"
+
+  if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]] && ! create_outcome_token_helper; then
+    disable_outcome_reconciliation
+    warn_outcome_setup_unavailable
+  fi
 
   cat > "$TMP_ASKPASS" <<'EOF'
 #!/usr/bin/env bash

@@ -202,6 +202,55 @@ class AgentRunOutcomesTest < Minitest::Test
     refute File.exist?(@gh_log)
   end
 
+  def test_supported_telemetry_github_remote_forms_match_selected_runs
+    remotes = [
+      "https://github.com/#{REPOSITORY}",
+      "https://github.com/#{REPOSITORY}.git",
+      "git@github.com:#{REPOSITORY}",
+      "git@github.com:#{REPOSITORY}.git",
+      "ssh://git@github.com/#{REPOSITORY}",
+      "ssh://git@github.com/#{REPOSITORY}.git"
+    ]
+    write_fixtures(
+      pulls_endpoint => [[]],
+      commit_pulls_endpoint(SHA_A) => [[]]
+    )
+
+    remotes.each do |remote|
+      git("remote", "set-url", "origin", remote)
+      run_id = create_run
+      result = reconcile("--run", run_id)
+      assert result.status.success?, "#{remote}: #{result.stderr}"
+      assert_equal "unmatched", read_outcome(run_id).dig("correlation", "state")
+    end
+  end
+
+  def test_ssh_url_github_remote_is_selected_automatically
+    git("remote", "set-url", "origin", "ssh://git@github.com/#{REPOSITORY}.git")
+    run_id = create_run
+    write_fixtures(
+      pulls_endpoint => [[]],
+      commit_pulls_endpoint(SHA_A) => [[]]
+    )
+
+    result = reconcile("--automatic")
+
+    assert result.status.success?, result.stderr
+    assert_equal "unmatched", read_outcome(run_id).dig("correlation", "state")
+  end
+
+  def test_enterprise_ssh_remote_is_not_a_supported_github_com_identity
+    git("remote", "set-url", "origin", "ssh://git@enterprise.example.com/#{REPOSITORY}.git")
+    run_id = create_run
+
+    result = reconcile("--run", run_id)
+
+    refute result.status.success?
+    assert_includes result.stderr, "selected run belongs to another repository"
+    refute File.exist?(File.join(@telemetry, run_id, "outcome.json"))
+    refute File.exist?(@gh_log)
+  end
+
   def test_malformed_nested_source_record_is_rejected_without_sidecar
     run_id = create_run
     path = File.join(@telemetry, run_id, "run.json")

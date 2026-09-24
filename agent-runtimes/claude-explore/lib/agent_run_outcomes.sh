@@ -276,8 +276,8 @@ module AgentRunOutcomes
       output, status = Open3.capture2(git, "-C", @repository_root, "remote", "get-url", "origin")
       return unless status.success?
       url = output.strip.sub(/\.git\z/, "")
-      match = url.match(%r{(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\z})
-      match && match[1]
+      match = url.match(%r{\A(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})\z})
+      match && "#{match[1]}/#{match[2]}"
     rescue SystemCallError
       nil
     end

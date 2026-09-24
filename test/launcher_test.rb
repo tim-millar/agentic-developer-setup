@@ -1771,6 +1771,153 @@ class LauncherTest < Minitest::Test
     refute File.exist?(compromised), "post-run reconciliation executed child-modified repository code"
   end
 
+  def test_post_child_outcomes_use_a_separate_unexposed_token_helper
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      token="$($AGENT_GITHUB_TOKEN_HELPER)" || exit 71
+      token_state=unexpected
+      if [ "$token" = "$FAKE_EXPECTED_OUTCOME_TOKEN" ]; then token_state=matches; fi
+      printf '%s|%s|%s\n' "$*" "$AGENT_GITHUB_TOKEN_HELPER" "$token_state" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    @harness.commit_all("Add synthetic credential-aware outcome reconciler")
+    log = File.join(@harness.root, "outcome-token-helper.log")
+    marker = File.join(@harness.root, "mutated-child-helper-ran")
+    mutated_helper = <<~SH
+      #!/bin/sh
+      : > "$FAKE_CHILD_TOKEN_HELPER_MARKER"
+      printf '%s\n' 'mutated-token'
+    SH
+
+    result = @harness.run_app(env: {
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_EXPECTED_OUTCOME_TOKEN" => LauncherHarness::INSTALLATION_TOKEN,
+      "FAKE_CODEX_MUTATE_TOKEN_HELPER" => "1",
+      "FAKE_CODEX_MUTATE_TOKEN_HELPER_CONTENT" => mutated_helper,
+      "FAKE_CHILD_TOKEN_HELPER_MARKER" => marker
+    })
+
+    assert_success(result, "separate trusted outcome token helper")
+    invocations = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal 2, invocations.length
+    child_helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    trusted_helpers = invocations.map { |invocation| invocation.fetch(1) }.uniq
+    assert_equal 1, trusted_helpers.length
+    trusted_helper = trusted_helpers.fetch(0)
+    refute_equal child_helper, trusted_helper
+    refute_equal File.dirname(child_helper), File.dirname(trusted_helper)
+    assert invocations.all? { |invocation| invocation.fetch(2) == "matches" }
+    refute File.exist?(marker), "post-child reconciliation executed the child-mutated helper"
+    assert_equal "unset", env_fact("OUTCOME_TOKEN_HELPER", "state")
+    assert_equal "unset", env_fact("AGENT_OUTCOME_TOKEN_HELPER", "state")
+    refute_includes JSON.generate(@harness.invocation), trusted_helper
+    refute_includes @harness.invocation.fetch("args").join("\n"), trusted_helper
+    refute File.exist?(child_helper)
+    refute File.exist?(trusted_helper)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_trusted_outcome_helper_force_refresh_uses_the_existing_renewal_worker
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, reconciler)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    session = start_renewable_session
+    child_helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    trusted_helpers = Dir[File.join(@harness.tmpdir, "codex.outcome-credentials.*", "current-token-helper")]
+    assert_equal 1, trusted_helpers.length
+    trusted_helper = trusted_helpers.fetch(0)
+    refute_equal child_helper, trusted_helper
+    posts_before = @harness.token_attempts
+
+    assert_helper_token(
+      @harness.run_generated_helper(trusted_helper, "--force-refresh"),
+      LauncherHarness::RENEWED_INSTALLATION_TOKEN
+    )
+
+    credential_dir = File.dirname(child_helper)
+    assert_equal posts_before + 1, @harness.token_attempts
+    assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
+    assert_equal "success", parse_state_file(File.join(credential_dir, "renewal-result")).fetch("outcome")
+    assert File.file?(File.join(credential_dir, "renewal-worker.pid"))
+    refute File.exist?(File.join(File.dirname(trusted_helper), "renewal-worker.pid"))
+
+    result = finish_renewable_session(session)
+    assert_success(result, "trusted outcome helper forced refresh")
+    refute File.exist?(child_helper)
+    refute File.exist?(trusted_helper)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_outcome_snapshot_mktemp_failure_is_warned_and_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    tools = File.join(@harness.root, "snapshot-tools")
+    FileUtils.mkdir_p(tools)
+    mktemp = File.join(tools, "mktemp")
+    File.write(mktemp, <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes.*) exit 71 ;;
+      esac
+      exec /usr/bin/mktemp "$@"
+    SH
+    File.chmod(0o700, mktemp)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_CODEX_EXIT" => "23"
+    })
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_outcome_snapshot_digest_failure_cleans_partial_state_and_is_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    tools = File.join(@harness.root, "snapshot-tools")
+    FileUtils.mkdir_p(tools)
+    ruby = File.join(tools, "ruby")
+    File.write(ruby, "#!/bin/sh\nexit 71\n")
+    File.chmod(0o700, ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_CODEX_EXIT" => "19"
+    })
+
+    assert_equal 19, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
   def test_repository_controlled_openssl_is_not_used_for_outcome_snapshot_digest
     @harness.close
     @harness = LauncherHarness.new(telemetry: true)
