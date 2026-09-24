@@ -222,7 +222,7 @@ module AgenticDeveloperSetup
 
       def known_nested_file?(relative_path)
         basename = File.basename(relative_path)
-        return true if relative_path.match?(%r{\Ascripts/(?:run_codex|agent_run_telemetry|mint_gh_app_token)\.sh\z}i)
+        return true if relative_path.match?(%r{\Ascripts/(?:run_codex|agent_run_telemetry|agent_run_outcomes|mint_gh_app_token)\.sh\z}i)
         return true if relative_path.match?(%r{\A\.github/(?:workflows/[^/]+\.(?:yml|yaml)|ISSUE_TEMPLATE/[^/]+\.(?:md|yml|yaml)|PULL_REQUEST_TEMPLATE(?:/[^/]+)?\.md)\z}i)
         return true if relative_path.match?(%r{\Adocs/(?:adr|adrs)/.+\.(?:md|markdown|rst|txt)\z}i)
         return true if relative_path.start_with?("docs/") && basename.match?(/\A(?:README|AGENT_PROMPT|ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|SECURITY|DEPLOY|OPERATIONS|COMMITS|FRAMEWORK_ADOPTION|ADOPTION)[^\/]*\.(?:md|markdown|rst|txt)\z/i)

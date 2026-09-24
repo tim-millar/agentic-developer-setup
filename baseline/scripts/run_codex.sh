@@ -15,6 +15,22 @@ if [[ ! -f "$TELEMETRY_HELPER" || -L "$TELEMETRY_HELPER" ]]; then
 fi
 # shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
 source "$TELEMETRY_HELPER"
+OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"
+OUTCOME_RECONCILER_DIR=""
+OUTCOME_RECONCILER_SNAPSHOT=""
+OUTCOME_RECONCILER_DIGEST=""
+OUTCOME_CREDENTIAL_DIR=""
+OUTCOME_TOKEN_HELPER=""
+OUTCOME_SETUP_WARNING_EMITTED="0"
+OUTCOME_TELEMETRY_DIR="${AGENT_TELEMETRY_DIR:-}"
+OUTCOME_CHMOD_BIN=""
+OUTCOME_CP_BIN=""
+OUTCOME_ENV_BIN=""
+OUTCOME_GH_BIN=""
+OUTCOME_GIT_BIN=""
+OUTCOME_MKTEMP_BIN=""
+OUTCOME_REALPATH_BIN=""
+OUTCOME_RUBY_BIN=""
 
 EXPECTED_OWNER="${EXPECTED_OWNER:-tim-millar}"
 EXPECTED_REPO="${EXPECTED_REPO:-$(basename "$REPOSITORY_HINT")}"
@@ -62,6 +78,7 @@ CODEX_VERSION_PROBE_PID=""
 CODEX_VERSION_CAPTURE_PID=""
 HOST_ENV_DIR=""
 GIT_BIN=""
+OPENSSL_BIN=""
 
 CODEX_VERSION_PROBE_TIMEOUT_SECONDS=5
 CODEX_VERSION_PROBE_MAX_BYTES=128
@@ -102,6 +119,10 @@ cleanup() {
 
   cleanup_codex_version_probe
   agent_telemetry_finalize_pending "$status" "$GIT_BIN" "$REPO_ROOT"
+  if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$AGENT_TELEMETRY_RUN_ID" ]]; then
+    run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
+      printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
+  fi
 
   if [[ -n "$SESSION_SHUTDOWN_FILE" && -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]]; then
     : > "$SESSION_SHUTDOWN_FILE" 2>/dev/null || true
@@ -113,9 +134,149 @@ cleanup() {
   [[ -n "$TMP_ASKPASS" && -f "$TMP_ASKPASS" ]] && rm -f "$TMP_ASKPASS"
   [[ -n "$TMP_GH_CONFIG_DIR" && -d "$TMP_GH_CONFIG_DIR" ]] && rm -rf "$TMP_GH_CONFIG_DIR"
   [[ -n "$SESSION_CREDENTIAL_DIR" && -d "$SESSION_CREDENTIAL_DIR" ]] && rm -rf "$SESSION_CREDENTIAL_DIR"
+  [[ -n "$OUTCOME_CREDENTIAL_DIR" && -d "$OUTCOME_CREDENTIAL_DIR" ]] && rm -rf "$OUTCOME_CREDENTIAL_DIR"
   [[ -n "$HOST_ENV_DIR" && -d "$HOST_ENV_DIR" ]] && rm -rf "$HOST_ENV_DIR"
+  [[ -n "$OUTCOME_RECONCILER_DIR" && -d "$OUTCOME_RECONCILER_DIR" ]] && rm -rf "$OUTCOME_RECONCILER_DIR"
 
   return "$status"
+}
+
+disable_outcome_reconciliation() {
+  [[ -n "$OUTCOME_CREDENTIAL_DIR" && -d "$OUTCOME_CREDENTIAL_DIR" ]] && rm -rf "$OUTCOME_CREDENTIAL_DIR" 2>/dev/null || true
+  [[ -n "$OUTCOME_RECONCILER_DIR" && -d "$OUTCOME_RECONCILER_DIR" ]] && rm -rf "$OUTCOME_RECONCILER_DIR" 2>/dev/null || true
+  OUTCOME_CREDENTIAL_DIR=""
+  OUTCOME_TOKEN_HELPER=""
+  OUTCOME_RECONCILER_DIR=""
+  OUTCOME_RECONCILER_SNAPSHOT=""
+  OUTCOME_RECONCILER_DIGEST=""
+}
+
+warn_outcome_setup_unavailable() {
+  [[ "$OUTCOME_SETUP_WARNING_EMITTED" == 0 ]] || return 0
+  OUTCOME_SETUP_WARNING_EMITTED="1"
+  printf '%s\n' 'AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable' >&2
+}
+
+snapshot_outcome_reconciler() {
+  local digest_output
+
+  [[ -e "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]] || return 0
+  if [[ ! -f "$OUTCOME_RECONCILER_SOURCE" || -L "$OUTCOME_RECONCILER_SOURCE" ]]; then
+    echo "Error: framework outcome reconciler is unsafe: $OUTCOME_RECONCILER_SOURCE" >&2
+    return 2
+  fi
+  [[ -n "$OUTCOME_CHMOD_BIN" && -n "$OUTCOME_CP_BIN" && -n "$OUTCOME_ENV_BIN" &&
+     -n "$OUTCOME_MKTEMP_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 1
+  OUTCOME_RECONCILER_DIR=$("$OUTCOME_MKTEMP_BIN" -d "${TMPDIR:-/tmp}/agent-outcomes.XXXXXX") || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_RECONCILER_DIR" || return 1
+  OUTCOME_RECONCILER_SNAPSHOT=$OUTCOME_RECONCILER_DIR/agent_run_outcomes.sh
+  "$OUTCOME_CP_BIN" "$OUTCOME_RECONCILER_SOURCE" "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_RECONCILER_SNAPSHOT" || return 1
+  digest_output=$(outcome_reconciler_digest "$OUTCOME_RECONCILER_SNAPSHOT") || return 1
+  OUTCOME_RECONCILER_DIGEST="$digest_output"
+  [[ "$OUTCOME_RECONCILER_DIGEST" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+}
+
+outcome_reconciler_digest() {
+  local path="$1"
+  [[ -n "$OUTCOME_ENV_BIN" && -n "$OUTCOME_RUBY_BIN" ]] || return 1
+  "$OUTCOME_ENV_BIN" \
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH \
+    "$OUTCOME_RUBY_BIN" --disable-gems -rdigest \
+    -e 'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$path"
+}
+
+run_outcome_reconciler() {
+  local current_digest digest_output
+  local -a outcome_env
+  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]] || return 0
+  digest_output=$(outcome_reconciler_digest "$OUTCOME_RECONCILER_SNAPSHOT") || return 1
+  current_digest="$digest_output"
+  [[ "$current_digest" == "$OUTCOME_RECONCILER_DIGEST" ]] || return 1
+  outcome_env=(
+    -u AGENT_GITHUB_TOKEN_HELPER
+    -u OUTCOME_CHMOD_BIN -u OUTCOME_CP_BIN -u OUTCOME_ENV_BIN -u OUTCOME_GH_BIN
+    -u OUTCOME_GIT_BIN -u OUTCOME_MKTEMP_BIN -u OUTCOME_RUBY_BIN
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH
+    "AGENT_OUTCOME_CURRENT_RUN_ID=$AGENT_TELEMETRY_RUN_ID"
+    "OUTCOME_GH_BIN=$OUTCOME_GH_BIN"
+    "OUTCOME_GIT_BIN=$OUTCOME_GIT_BIN"
+    "OUTCOME_RUBY_BIN=$OUTCOME_RUBY_BIN"
+  )
+  [[ -z "$OUTCOME_TELEMETRY_DIR" ]] || outcome_env+=("AGENT_TELEMETRY_DIR=$OUTCOME_TELEMETRY_DIR")
+  [[ -z "$OUTCOME_TOKEN_HELPER" ]] || outcome_env+=("AGENT_GITHUB_TOKEN_HELPER=$OUTCOME_TOKEN_HELPER")
+  "$OUTCOME_ENV_BIN" "${outcome_env[@]}" "$OUTCOME_RECONCILER_SNAPSHOT" "$@"
+}
+
+outcome_path_is_within() {
+  local path="$1" root="$2"
+  [[ "$path" == "$root" || "$path" == "$root"/* ]]
+}
+
+outcome_executable_ancestry_is_safe() {
+  local resolved="$1" parent uid mode current_uid temp_root unsafe_root canonical_root
+
+  [[ -n "$OUTCOME_REALPATH_BIN" ]] || return 1
+  current_uid="$(/usr/bin/id -u 2>/dev/null)" || return 1
+  temp_root="$("$OUTCOME_REALPATH_BIN" "${TMPDIR:-/tmp}" 2>/dev/null)" || return 1
+  outcome_path_is_within "$resolved" "$temp_root" && return 1
+  for unsafe_root in /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+    [[ -e "$unsafe_root" ]] || continue
+    canonical_root="$("$OUTCOME_REALPATH_BIN" "$unsafe_root" 2>/dev/null)" || return 1
+    outcome_path_is_within "$resolved" "$canonical_root" && return 1
+  done
+
+  parent="$(dirname "$resolved")"
+  while :; do
+    [[ -d "$parent" ]] || return 1
+    if mode="$(/usr/bin/stat -f '%Lp' "$parent" 2>/dev/null)"; then :
+    else mode="$(/usr/bin/stat -c '%a' "$parent" 2>/dev/null)" || return 1
+    fi
+    if uid="$(/usr/bin/stat -f '%u' "$parent" 2>/dev/null)"; then :
+    else uid="$(/usr/bin/stat -c '%u' "$parent" 2>/dev/null)" || return 1
+    fi
+    [[ "$uid" == 0 || "$uid" == "$current_uid" ]] || return 1
+    (( (8#$mode & 022) == 0 )) || return 1
+    [[ "$parent" == / ]] && break
+    parent="$(dirname "$parent")"
+  done
+}
+
+validate_outcome_executable() {
+  local found="$1" resolved mode uid
+
+  [[ "$found" == /* && -n "$OUTCOME_REALPATH_BIN" ]] || return 1
+  resolved="$("$OUTCOME_REALPATH_BIN" "$found" 2>/dev/null)" || return 1
+  [[ -f "$resolved" && -x "$resolved" ]] || return 1
+  case "$resolved" in "$REPO_ROOT"|"$REPO_ROOT"/*) return 1 ;; esac
+  outcome_executable_ancestry_is_safe "$resolved" || return 1
+  if mode="$(/usr/bin/stat -f '%Lp' "$resolved" 2>/dev/null)"; then :
+  else mode="$(/usr/bin/stat -c '%a' "$resolved" 2>/dev/null)" || return 1
+  fi
+  if uid="$(/usr/bin/stat -f '%u' "$resolved" 2>/dev/null)"; then :
+  else uid="$(/usr/bin/stat -c '%u' "$resolved" 2>/dev/null)" || return 1
+  fi
+  [[ "$uid" == 0 || "$uid" == "$(/usr/bin/id -u)" ]] || return 1
+  (( (8#$mode & 022) == 0 )) || return 1
+  printf '%s\n' "$resolved"
+}
+
+resolve_outcome_executable() {
+  local name="$1" directory candidate resolved old_ifs="$IFS"
+
+  IFS=:
+  for directory in $PATH; do
+    IFS="$old_ifs"
+    [[ "$directory" == /* ]] || { IFS=:; continue; }
+    candidate="$directory/$name"
+    [[ -x "$candidate" ]] || { IFS=:; continue; }
+    resolved="$(validate_outcome_executable "$candidate" 2>/dev/null)" || { IFS=:; continue; }
+    IFS="$old_ifs"
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS="$old_ifs"
+  return 1
 }
 
 trap cleanup EXIT
@@ -557,7 +718,7 @@ observe_codex_requested_configuration() {
 }
 
 if ! codex_invocation_is_inspection; then
-  agent_telemetry_start codex-cli agent-development-framework/codex 1 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
+  agent_telemetry_start codex-cli agent-development-framework/codex 2 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
   observe_codex_requested_configuration
   if [[ -n "$RESUME_SESSION" ]]; then agent_telemetry_set_session launcher_requested "$RESUME_SESSION"; fi
 fi
@@ -586,6 +747,28 @@ ENV_BIN="$(command -v env)"
 CHMOD_BIN="$(command -v chmod)"
 CODEX_BIN="$(command -v "$CODEX_BIN")"
 GIT_BIN="$(command -v git)"
+OPENSSL_BIN="$(command -v openssl)"
+if [[ -x /usr/bin/realpath ]]; then OUTCOME_REALPATH_BIN=/usr/bin/realpath
+elif [[ -x /bin/realpath ]]; then OUTCOME_REALPATH_BIN=/bin/realpath
+fi
+OUTCOME_CP_BIN="$(resolve_outcome_executable cp 2>/dev/null || true)"
+OUTCOME_ENV_BIN="$(resolve_outcome_executable env 2>/dev/null || true)"
+OUTCOME_GH_BIN="$(resolve_outcome_executable gh 2>/dev/null || true)"
+OUTCOME_GIT_BIN="$(resolve_outcome_executable git 2>/dev/null || true)"
+OUTCOME_MKTEMP_BIN="$(resolve_outcome_executable mktemp 2>/dev/null || true)"
+OUTCOME_CHMOD_BIN="$(resolve_outcome_executable chmod 2>/dev/null || true)"
+OUTCOME_RUBY_BIN="$(resolve_outcome_executable ruby 2>/dev/null || true)"
+
+if snapshot_outcome_reconciler; then
+  :
+else
+  OUTCOME_SETUP_STATUS=$?
+  if [[ "$OUTCOME_SETUP_STATUS" -eq 2 ]]; then
+    exit 1
+  fi
+  disable_outcome_reconciliation
+  warn_outcome_setup_unavailable
+fi
 
 if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
   CODEX_VERSION_ENV=("PATH=$PATH")
@@ -991,6 +1174,21 @@ publish_renewal_result() {
   atomic_publish "$RENEWAL_RESULT_FILE" 600 "$contents"
 }
 
+create_outcome_token_helper() {
+  local state_pointer
+
+  [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$OUTCOME_CHMOD_BIN" && -n "$OUTCOME_CP_BIN" &&
+     -n "$OUTCOME_MKTEMP_BIN" ]] || return 0
+  OUTCOME_CREDENTIAL_DIR="$("$OUTCOME_MKTEMP_BIN" -d "${TMPDIR:-/tmp}/codex.outcome-credentials.XXXXXX")" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_CREDENTIAL_DIR" || return 1
+  OUTCOME_TOKEN_HELPER="${OUTCOME_CREDENTIAL_DIR}/current-token-helper"
+  state_pointer="${OUTCOME_CREDENTIAL_DIR}/credential-state"
+  "$OUTCOME_CP_BIN" "$TOKEN_HELPER" "$OUTCOME_TOKEN_HELPER" || return 1
+  "$OUTCOME_CHMOD_BIN" 700 "$OUTCOME_TOKEN_HELPER" || return 1
+  printf '%s\n' "$SESSION_CREDENTIAL_DIR" > "$state_pointer" || return 1
+  "$OUTCOME_CHMOD_BIN" 600 "$state_pointer" || return 1
+}
+
 create_app_session_credentials() {
   SESSION_CREDENTIAL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex.credentials.XXXXXX")"
   chmod 700 "$SESSION_CREDENTIAL_DIR"
@@ -1017,7 +1215,12 @@ create_app_session_credentials() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-credential_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+credential_dir="$helper_dir"
+if [[ -f "$helper_dir/credential-state" ]]; then
+  IFS= read -r credential_dir < "$helper_dir/credential-state"
+  [[ "$credential_dir" == /* && -d "$credential_dir" ]] || exit 1
+fi
 token_file="${credential_dir}/current-token"
 metadata_file="${credential_dir}/current-token.meta"
 pid_file="${credential_dir}/renewal-worker.pid"
@@ -1163,6 +1366,11 @@ done
 EOF
   } > "$TOKEN_HELPER"
   chmod 700 "$TOKEN_HELPER"
+
+  if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]] && ! create_outcome_token_helper; then
+    disable_outcome_reconciliation
+    warn_outcome_setup_unavailable
+  fi
 
   cat > "$TMP_ASKPASS" <<'EOF'
 #!/usr/bin/env bash
@@ -1827,6 +2035,10 @@ agent_telemetry_mark_preflight_complete
 
 if [[ "$GITHUB_ACCESS_MODE" == "app" ]]; then
   start_renewal_worker
+fi
+
+if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" ]]; then
+  run_outcome_reconciler --automatic >/dev/null || true
 fi
 
 if ! agent_telemetry_capture_git START "$GIT_BIN" "$REPO_ROOT"; then

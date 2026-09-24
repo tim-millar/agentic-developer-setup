@@ -51,7 +51,7 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_equal "codex-cli", record.dig("runtime", "client", "id")
     assert_equal({"evidence_kind" => "runtime_observed", "value" => "1.2.3"}, record.dig("runtime", "client", "version"))
     assert_equal "agent-development-framework/codex", record.dig("runtime", "harness", "id")
-    assert_equal 1, record.dig("runtime", "harness", "version")
+    assert_equal 2, record.dig("runtime", "harness", "version")
     expected_revision = "sha256:#{Digest::SHA256.file(@harness.launcher).hexdigest}"
     assert_equal expected_revision, record.dig("runtime", "harness", "revision")
     assert_equal "gpt-test", record.dig("configuration", "model", "requested", "value")

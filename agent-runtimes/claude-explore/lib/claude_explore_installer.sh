@@ -14,6 +14,8 @@ else die "required executable is unavailable: realpath"
 fi
 SCRIPT_REAL=$($REALPATH_BIN "${BASH_SOURCE[0]}" 2>/dev/null) || die "cannot resolve installer source"
 SOURCE_ROOT=$(dirname "$(dirname "$SCRIPT_REAL")")
+OUTCOME_SOURCE=$($REALPATH_BIN "$SOURCE_ROOT/lib/agent_run_outcomes.sh" 2>/dev/null) || die "cannot resolve outcome reconciler source"
+case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *) die "outcome reconciler source resolves outside runtime" ;; esac
 POLICY_FILE=$SOURCE_ROOT/policy.sh
 [ -f "$POLICY_FILE" ] && [ ! -L "$POLICY_FILE" ] || die "source policy is missing or unsafe"
 case "$($REALPATH_BIN "$POLICY_FILE")" in "$SOURCE_ROOT"/*) ;; *) die "source policy resolves outside runtime" ;; esac
@@ -149,6 +151,8 @@ validate_source() {
     case "$($REALPATH_BIN "$SOURCE_ROOT/$path")" in "$SOURCE_ROOT"/*) ;; *) die "source file resolves outside runtime: $path" ;; esac
   done
   safe_file "$SOURCE_ROOT/lib/agent_run_telemetry.sh" || die "source telemetry helper is incomplete or unsafe"
+  safe_executable "$OUTCOME_SOURCE" || die "source outcome reconciler is incomplete or unsafe"
+  case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *) die "outcome reconciler source resolves outside runtime" ;; esac
   safe_file "$SOURCE_ROOT/policy.sh" || die "source policy is incomplete or unsafe"
 }
 
@@ -162,8 +166,9 @@ stage_runtime() {
   cp "$SOURCE_ROOT/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_runtime.sh" || die "cannot stage runtime library"
   cp "$SOURCE_ROOT/lib/claude_explore_guard.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot stage guard"
   cp "$SOURCE_ROOT/lib/agent_run_telemetry.sh" "$STAGE/lib/agent_run_telemetry.sh" || die "cannot stage telemetry helper"
+  cp "$OUTCOME_SOURCE" "$STAGE/lib/agent_run_outcomes.sh" || die "cannot stage outcome reconciler"
   cp "$SOURCE_ROOT/policy.sh" "$STAGE/policy.sh" || die "cannot stage policy"
-  chmod 700 "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_guard.sh" || die "cannot protect executable runtime files"
+  chmod 700 "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_runtime.sh" "$STAGE/lib/claude_explore_guard.sh" "$STAGE/lib/agent_run_outcomes.sh" || die "cannot protect executable runtime files"
   chmod 600 "$STAGE/lib/agent_run_telemetry.sh" "$STAGE/policy.sh" || die "cannot protect policy and telemetry files"
   for path in "$STAGE/bin/claude-explore" "$STAGE/lib/claude_explore_guard.sh"; do
     /bin/sh -n "$path" || { syntax_valid=0; break; }

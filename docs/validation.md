@@ -2,7 +2,7 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness, outcome-evidence surface, and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/validate_agent_run_outcome.rb`, `schemas/agent-run-outcome-v1.schema.json`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
@@ -94,7 +94,7 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `scripts/run_codex.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/validate_agent_run_outcome.rb`, `schemas/agent-run-outcome-v1.schema.json`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
 - `baseline/AGENTS.md`, `baseline/REVIEW.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - `baseline/REVIEW.md -> REVIEW.md` is a recommended repository-owned review-policy component; the root `REVIEW.md` is this repository's self-hosted specialised policy;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.

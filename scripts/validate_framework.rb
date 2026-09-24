@@ -13,7 +13,7 @@ class FrameworkValidator
   ACCESS_MODES = %w[disabled app].freeze
   ADAPTER_STATUSES = %w[supported planned].freeze
   RUNTIME_DISTRIBUTIONS = %w[repository global-user].freeze
-  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry].freeze
+  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry outcomes].freeze
   RUNTIME_PLATFORMS = %w[macos linux].freeze
 
   def initialize(root)
@@ -676,7 +676,7 @@ class FrameworkValidator
   end
 
   def validate_repository_structure
-    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
+    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
     required_directories = %w[docs scripts baseline prompts adapters]
     required_files.each { |path| validate_existing_source(path, "repository structure: #{path}", :file) }
     required_directories.each { |path| validate_existing_source(path, "repository structure: #{path}", :directory) }

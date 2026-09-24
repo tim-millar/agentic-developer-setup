@@ -1715,6 +1715,528 @@ class LauncherTest < Minitest::Test
     assert_equal @harness.expected_codex_args("resume", "abc"), @harness.invocation.fetch("args")
   end
 
+  def test_outcome_reconciler_is_snapshotted_before_child_and_reused_after_terminal_finalization
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s|%s|%s\n' "$*" "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" "$OUTCOME_GIT_BIN" >> "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+    child_tools = File.join(@harness.repository, "child-tools")
+    FileUtils.mkdir_p(child_tools)
+    host_tools = @harness.protected_host_directory("launcher-host-tools-")
+    gh = File.join(host_tools, "gh")
+    File.write(gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, gh)
+    ruby = File.join(host_tools, "ruby")
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
+    compromised = File.join(@harness.root, "compromised")
+    mutation = <<~SH
+      #!/bin/sh
+      : > "$FAKE_COMPROMISED_MARKER"
+      exit 0
+    SH
+
+    result = @harness.run(env: {
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_COMPROMISED_MARKER" => compromised,
+      "FAKE_CODEX_MUTATE_OUTCOME_HELPER" => helper,
+      "FAKE_CODEX_MUTATE_OUTCOME_CONTENT" => mutation,
+      "FAKE_CODEX_CREATE_OUTCOME_TOOL_DIR" => child_tools,
+      "PATH" => [child_tools, host_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "OUTCOME_GH_BIN" => "/arbitrary/ambient/gh",
+      "OUTCOME_RUBY_BIN" => "/arbitrary/ambient/ruby"
+    })
+
+    assert result.status.success?, failure_message("outcome snapshot", result)
+    invocations = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal "--automatic", invocations.fetch(0).fetch(0)
+    assert_match(/\A--run run-/, invocations.fetch(1).fetch(0))
+    assert_equal 2, invocations.length
+    invocations.each do |invocation|
+      assert_equal File.realpath(File.join(host_tools, "gh")), invocation.fetch(1)
+      assert_equal File.realpath(File.join(host_tools, "ruby")), invocation.fetch(2)
+      refute_equal File.realpath(File.join(child_tools, "gh")), invocation.fetch(1)
+      refute_equal File.realpath(File.join(child_tools, "ruby")), invocation.fetch(2)
+    end
+    refute File.exist?(compromised), "post-run reconciliation executed child-modified repository code"
+  end
+
+  def test_post_child_outcomes_use_a_separate_unexposed_token_helper
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      token="$($AGENT_GITHUB_TOKEN_HELPER)" || exit 71
+      token_state=unexpected
+      if [ "$token" = "$FAKE_EXPECTED_OUTCOME_TOKEN" ]; then token_state=matches; fi
+      printf '%s|%s|%s\n' "$*" "$AGENT_GITHUB_TOKEN_HELPER" "$token_state" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    @harness.commit_all("Add synthetic credential-aware outcome reconciler")
+    log = File.join(@harness.root, "outcome-token-helper.log")
+    marker = File.join(@harness.root, "mutated-child-helper-ran")
+    mutated_helper = <<~SH
+      #!/bin/sh
+      : > "$FAKE_CHILD_TOKEN_HELPER_MARKER"
+      printf '%s\n' 'mutated-token'
+    SH
+
+    result = @harness.run_app(env: {
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_EXPECTED_OUTCOME_TOKEN" => LauncherHarness::INSTALLATION_TOKEN,
+      "FAKE_CODEX_MUTATE_TOKEN_HELPER" => "1",
+      "FAKE_CODEX_MUTATE_TOKEN_HELPER_CONTENT" => mutated_helper,
+      "FAKE_CHILD_TOKEN_HELPER_MARKER" => marker
+    })
+
+    assert_success(result, "separate trusted outcome token helper")
+    invocations = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal 2, invocations.length
+    child_helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    trusted_helpers = invocations.map { |invocation| invocation.fetch(1) }.uniq
+    assert_equal 1, trusted_helpers.length
+    trusted_helper = trusted_helpers.fetch(0)
+    refute_equal child_helper, trusted_helper
+    refute_equal File.dirname(child_helper), File.dirname(trusted_helper)
+    assert invocations.all? { |invocation| invocation.fetch(2) == "matches" }
+    refute File.exist?(marker), "post-child reconciliation executed the child-mutated helper"
+    assert_equal "unset", env_fact("OUTCOME_TOKEN_HELPER", "state")
+    assert_equal "unset", env_fact("AGENT_OUTCOME_TOKEN_HELPER", "state")
+    refute_includes JSON.generate(@harness.invocation), trusted_helper
+    refute_includes @harness.invocation.fetch("args").join("\n"), trusted_helper
+    refute File.exist?(child_helper)
+    refute File.exist?(trusted_helper)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_trusted_outcome_helper_force_refresh_uses_the_existing_renewal_worker
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, reconciler)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    session = start_renewable_session
+    child_helper = env_fact("AGENT_GITHUB_TOKEN_HELPER", "value")
+    trusted_helpers = Dir[File.join(@harness.tmpdir, "codex.outcome-credentials.*", "current-token-helper")]
+    assert_equal 1, trusted_helpers.length
+    trusted_helper = trusted_helpers.fetch(0)
+    refute_equal child_helper, trusted_helper
+    posts_before = @harness.token_attempts
+
+    assert_helper_token(
+      @harness.run_generated_helper(trusted_helper, "--force-refresh"),
+      LauncherHarness::RENEWED_INSTALLATION_TOKEN
+    )
+
+    credential_dir = File.dirname(child_helper)
+    assert_equal posts_before + 1, @harness.token_attempts
+    assert_equal "2", parse_state_file(File.join(credential_dir, "current-token.meta")).fetch("generation")
+    assert_equal "success", parse_state_file(File.join(credential_dir, "renewal-result")).fetch("outcome")
+    assert File.file?(File.join(credential_dir, "renewal-worker.pid"))
+    refute File.exist?(File.join(File.dirname(trusted_helper), "renewal-worker.pid"))
+
+    result = finish_renewable_session(session)
+    assert_success(result, "trusted outcome helper forced refresh")
+    refute File.exist?(child_helper)
+    refute File.exist?(trusted_helper)
+    assert_empty @harness.launcher_temporary_paths
+  ensure
+    stop_renewable_session(session)
+  end
+
+  def test_outcome_snapshot_mktemp_failure_is_warned_and_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    tools = @harness.protected_host_directory("launcher-snapshot-tools-")
+    mktemp = File.join(tools, "mktemp")
+    File.write(mktemp, <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes.*) exit 71 ;;
+      esac
+      exec /usr/bin/mktemp "$@"
+    SH
+    File.chmod(0o700, mktemp)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_CODEX_EXIT" => "23"
+    })
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_outcome_snapshot_digest_failure_cleans_partial_state_and_is_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    reconciler = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, reconciler)
+    tools = @harness.protected_host_directory("launcher-snapshot-tools-")
+    ruby = File.join(tools, "ruby")
+    File.write(ruby, "#!/bin/sh\nexit 71\n")
+    File.chmod(0o700, ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_CODEX_EXIT" => "19"
+    })
+
+    assert_equal 19, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log)
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_repository_controlled_openssl_is_not_used_for_outcome_snapshot_digest
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    repository_tools = File.join(@harness.repository, "outcome-tools")
+    FileUtils.mkdir_p(repository_tools)
+    marker = File.join(@harness.root, "repository-openssl-ran")
+    openssl = File.join(repository_tools, "openssl")
+    File.write(openssl, <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_OPENSSL_MARKER"
+      exit 0
+    SH
+    File.chmod(0o755, openssl)
+    host_tools = @harness.protected_host_directory("launcher-host-tools-")
+    ruby = File.join(host_tools, "ruby")
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
+    @harness.commit_all("Add synthetic outcome reconciler and unsafe OpenSSL")
+    log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => [repository_tools, host_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_OUTCOME_OPENSSL_MARKER" => marker
+    })
+
+    assert result.status.success?, failure_message("trusted outcome digest", result)
+    assert_equal 2, File.readlines(log).length
+    refute File.exist?(marker), "repository-controlled OpenSSL entered the outcome integrity path"
+  end
+
+  def test_ambient_outcome_reconciler_override_cannot_select_host_code
+    marker = File.join(@harness.root, "ambient-outcome-code-ran")
+    external = File.join(@harness.root, "ambient-outcome-reconciler")
+    File.write(external, "#!/bin/sh\n: > #{marker.dump}\n")
+    File.chmod(0o700, external)
+
+    result = @harness.run(env: {"AGENT_OUTCOME_RECONCILER_PATH" => external})
+
+    assert result.status.success?, failure_message("ambient outcome override", result)
+    refute File.exist?(marker)
+  end
+
+  def test_repository_controlled_optional_outcome_tools_are_rejected_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
+      exit 0
+    SH
+    File.chmod(0o755, helper)
+    tools = File.join(@harness.repository, "outcome-tools")
+    FileUtils.mkdir_p(tools)
+    %w[gh ruby].each do |name|
+      path = File.join(tools, name)
+      File.write(path, "#!/bin/sh\nexit 0\n")
+      File.chmod(0o755, path)
+    end
+    safe_tools = @harness.protected_host_directory("launcher-safe-outcome-tools-")
+    safe_gh = File.join(safe_tools, "gh")
+    File.write(safe_gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, safe_gh)
+    safe_ruby = File.join(safe_tools, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
+    @harness.commit_all("Add unsafe synthetic outcome tools")
+    log = File.join(@harness.root, "unsafe-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [tools, safe_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log
+    })
+
+    assert result.status.success?, failure_message("unsafe optional outcome tools", result)
+    expected = "#{File.realpath(safe_gh)}|#{File.realpath(safe_ruby)}"
+    assert_equal [expected, expected], File.readlines(log, chomp: true)
+    assert_equal 1, @harness.codex_invocations.length
+  end
+
+  def test_temporary_outcome_tools_are_rejected_and_workload_status_remains_authoritative
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
+      case "$OUTCOME_GH_BIN|$OUTCOME_RUBY_BIN" in
+        *"$FAKE_UNSAFE_OUTCOME_TOOLS"*)
+          [ -z "$OUTCOME_GH_BIN" ] || "$OUTCOME_GH_BIN"
+          [ -z "$OUTCOME_RUBY_BIN" ] || "$OUTCOME_RUBY_BIN"
+          ;;
+      esac
+    SH
+    File.chmod(0o755, helper)
+    unsafe_tools = File.join(@harness.tmpdir, "unsafe-outcome-tools")
+    FileUtils.mkdir_p(unsafe_tools)
+    marker = File.join(@harness.root, "unsafe-outcome-tool-ran")
+    %w[gh ruby].each do |name|
+      path = File.join(unsafe_tools, name)
+      File.write(path, "#!/bin/sh\n: > \"$FAKE_UNSAFE_OUTCOME_MARKER\"\nexit 97\n")
+      File.chmod(0o700, path)
+    end
+    safe_ruby_dir = @harness.protected_host_directory("launcher-safe-ruby-")
+    safe_ruby = File.join(safe_ruby_dir, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "temporary-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [unsafe_tools, safe_ruby_dir, LauncherHarness::BASH_DIRECTORY, "/usr/bin", "/bin"].uniq.join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_UNSAFE_OUTCOME_TOOLS" => File.realpath(unsafe_tools),
+      "FAKE_UNSAFE_OUTCOME_MARKER" => marker,
+      "FAKE_CODEX_EXIT" => "23"
+    })
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    selections = File.readlines(log, chomp: true).map { |line| line.split("|", -1) }
+    assert_equal 2, selections.length
+    selections.each do |gh_path, ruby_path|
+      refute_equal File.realpath(File.join(unsafe_tools, "gh")), gh_path
+      assert_equal File.realpath(safe_ruby), ruby_path
+    end
+    refute File.exist?(marker), "temporary outcome executable was invoked post-child"
+  end
+
+  def test_group_writable_candidate_is_skipped_for_protected_user_owned_outcome_tools
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s|%s\n' "$OUTCOME_GH_BIN" "$OUTCOME_RUBY_BIN" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    host_root = @harness.protected_host_directory("launcher-protected-tree-")
+    unsafe_tools = File.join(host_root, "group-writable", "bin")
+    safe_tools = File.join(host_root, "protected", "bin")
+    FileUtils.mkdir_p([unsafe_tools, safe_tools])
+    File.chmod(0o770, File.dirname(unsafe_tools))
+    %w[gh ruby].each do |name|
+      unsafe = File.join(unsafe_tools, name)
+      File.write(unsafe, "#!/bin/sh\nexit 97\n")
+      File.chmod(0o700, unsafe)
+    end
+    safe_gh = File.join(safe_tools, "gh")
+    File.write(safe_gh, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o700, safe_gh)
+    safe_ruby = File.join(safe_tools, "ruby")
+    File.write(safe_ruby, "#!#{RbConfig.ruby}\nexec(#{RbConfig.ruby.dump}, *ARGV)\n")
+    File.chmod(0o700, safe_ruby)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    log = File.join(@harness.root, "protected-outcome-tools.log")
+
+    result = @harness.run(env: {
+      "PATH" => [unsafe_tools, safe_tools, "/usr/bin", "/bin"].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log
+    })
+
+    assert_success(result, "protected current-user outcome tools")
+    expected = "#{File.realpath(safe_gh)}|#{File.realpath(safe_ruby)}"
+    assert_equal [expected, expected], File.readlines(log, chomp: true)
+  end
+
+  def test_outcome_setup_uses_pinned_env_mktemp_and_chmod_past_hostile_repository_candidates
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    hostile_tools = File.join(@harness.repository, "hostile-outcome-tools")
+    FileUtils.mkdir_p(hostile_tools)
+    hostile_marker = File.join(@harness.root, "hostile-outcome-setup-tool-ran")
+    File.write(File.join(hostile_tools, "env"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*agent_run_outcomes.sh*|*--disable-gems*) : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER" ;;
+      esac
+      exec /usr/bin/env "$@"
+    SH
+    File.write(File.join(hostile_tools, "mktemp"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*codex.outcome-credentials*) : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER" ;;
+      esac
+      exec /usr/bin/mktemp "$@"
+    SH
+    File.write(File.join(hostile_tools, "chmod"), <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*codex.outcome-credentials*)
+          : > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER"
+          for target do :; done
+          [ -d "$target" ] || printf '#!/bin/sh\n: > "$FAKE_HOSTILE_OUTCOME_SETUP_MARKER"\n' > "$target"
+          ;;
+      esac
+      exec /bin/chmod "$@"
+    SH
+    %w[env mktemp chmod].each { |name| File.chmod(0o755, File.join(hostile_tools, name)) }
+
+    safe_tools = @harness.protected_host_directory("launcher-safe-setup-tools-")
+    safe_log = File.join(@harness.root, "safe-outcome-setup-tools.log")
+    {
+      "env" => "/usr/bin/env",
+      "mktemp" => "/usr/bin/mktemp",
+      "chmod" => "/bin/chmod"
+    }.each do |name, delegate|
+      path = File.join(safe_tools, name)
+      File.write(path, <<~SH)
+        #!/bin/sh
+        printf '#{name}:%s\n' "$*" >> "$FAKE_SAFE_OUTCOME_SETUP_LOG"
+        exec #{delegate} "$@"
+      SH
+      File.chmod(0o700, path)
+    end
+    @harness.commit_all("Add hostile outcome setup utilities")
+    log = File.join(@harness.root, "outcome-setup.log")
+    launcher_path = [hostile_tools, safe_tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR)
+
+    result = @harness.run_app(env: {
+      "PATH" => launcher_path,
+      "FAKE_EXPECTED_LAUNCHER_PATH" => launcher_path,
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_HOSTILE_OUTCOME_SETUP_MARKER" => hostile_marker,
+      "FAKE_SAFE_OUTCOME_SETUP_LOG" => safe_log
+    })
+
+    assert_success(result, "pinned outcome setup utilities")
+    assert_equal 2, File.readlines(log).length
+    refute File.exist?(hostile_marker), "repository-controlled setup utility entered the trusted outcome path"
+    safe_invocations = File.readlines(safe_log, chomp: true)
+    assert safe_invocations.any? { |line| line.start_with?("env:") && line.include?("--disable-gems") }
+    assert safe_invocations.any? { |line| line.start_with?("env:") && line.include?("agent_run_outcomes.sh") }
+    assert safe_invocations.any? { |line| line.start_with?("mktemp:") && line.include?("agent-outcomes.") }
+    assert safe_invocations.any? { |line| line.start_with?("mktemp:") && line.include?("codex.outcome-credentials.") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("agent_run_outcomes.sh") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("current-token-helper") }
+    assert safe_invocations.any? { |line| line.start_with?("chmod:") && line.include?("credential-state") }
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_missing_trusted_outcome_env_warns_once_and_preserves_workload_status
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      : > "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    hostile_tools = File.join(@harness.repository, "hostile-env")
+    FileUtils.mkdir_p(hostile_tools)
+    hostile_env = File.join(hostile_tools, "env")
+    File.write(hostile_env, <<~SH)
+      #!/bin/sh
+      case "$*" in
+        *agent-outcomes*|*agent_run_outcomes.sh*|*--disable-gems*) : > "$FAKE_HOSTILE_OUTCOME_ENV_MARKER" ;;
+      esac
+      exec /usr/bin/env "$@"
+    SH
+    File.chmod(0o755, hostile_env)
+    safe_path = @harness.protected_host_path_without("env")
+    @harness.commit_all("Add hostile outcome env")
+    log = File.join(@harness.root, "missing-outcome-env.log")
+    marker = File.join(@harness.root, "hostile-outcome-env-ran")
+
+    result = @harness.run(env: {
+      "PATH" => [hostile_tools, safe_path].join(File::PATH_SEPARATOR),
+      "FAKE_OUTCOME_LOG" => log,
+      "FAKE_HOSTILE_OUTCOME_ENV_MARKER" => marker,
+      "FAKE_CODEX_EXIT" => "29"
+    })
+
+    assert_equal 29, result.status.exitstatus
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING: outcome reconciliation setup was unavailable").length
+    refute File.exist?(log), "incomplete outcome setup was later executed"
+    refute File.exist?(marker), "unsafe env entered the trusted outcome path"
+    assert_empty @harness.launcher_temporary_paths
+  end
+
+  def test_outcome_reconciliation_failure_preserves_workload_status
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      exit 44
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add failing synthetic outcome reconciler")
+
+    result = @harness.run(env: {"FAKE_CODEX_EXIT" => "23"})
+
+    assert_equal 23, result.status.exitstatus
+    assert_equal 1, result.stderr.scan("AGENT_OUTCOME_WARNING:").length
+  end
+
+  def test_unsafe_optional_outcome_reconciler_is_rejected_before_child_launch
+    target = File.join(@harness.root, "outside-outcome-reconciler")
+    File.write(target, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, target)
+    helper = File.join(@harness.repository, "scripts/agent_run_outcomes.sh")
+    File.symlink(target, helper)
+
+    result = @harness.run("--allow-dirty")
+
+    refute result.status.success?
+    assert_includes result.stderr, "framework outcome reconciler is unsafe"
+    assert_empty @harness.codex_invocations
+  end
+
   private
 
   def replace_harness

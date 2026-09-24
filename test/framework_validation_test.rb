@@ -34,10 +34,33 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
+  end
+
+  def test_root_codex_wrapper_does_not_grant_ambient_outcome_source_authority
+    wrapper = File.read(File.join(REPOSITORY_ROOT, "scripts", "run_codex.sh"))
+    launcher = File.read(File.join(REPOSITORY_ROOT, "baseline", "scripts", "run_codex.sh"))
+
+    refute_includes wrapper, "AGENT_OUTCOME_RECONCILER_PATH"
+    refute_includes launcher, "AGENT_OUTCOME_RECONCILER_PATH"
+    assert_includes launcher, 'OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"'
+    refute_includes launcher, "require_cmd cp"
+  end
+
+  def test_runtime_outcome_metadata_uses_each_runtime_owned_source
+    metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"), aliases: false)
+    runtimes = metadata.fetch("agent_runtimes").fetch("supported").to_h { |runtime| [runtime.fetch("id"), runtime] }
+    source_for = lambda do |runtime|
+      runtime.fetch("artefacts").find { |artefact| artefact["role"] == "outcomes" }.fetch("source_path")
+    end
+
+    assert_equal "baseline/scripts/agent_run_outcomes.sh", source_for.call(runtimes.fetch("codex"))
+    assert_equal "agent-runtimes/claude-explore/lib/agent_run_outcomes.sh", source_for.call(runtimes.fetch("claude-explore"))
+    assert_equal File.binread(File.join(REPOSITORY_ROOT, "baseline/scripts/agent_run_outcomes.sh")),
+      File.binread(File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore/lib/agent_run_outcomes.sh"))
   end
 
   def test_target_paths_are_not_checked_for_existence
@@ -634,11 +657,12 @@ class FrameworkValidationTest < Minitest::Test
   private
 
   def build_fixture
-    %w[docs scripts .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
+    %w[docs scripts schemas .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
       AGENTS.md README.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
+      docs/run-outcomes.md scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
       baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md

@@ -13,6 +13,7 @@ class ClaudeExploreHarness
   attr_reader :root, :home, :fake_bin, :env, :claude_launcher, :claude_target, :claude_version_env_log
 
   def initialize(prefix: "claude-explore-test-", telemetry: false)
+    @protected_host_paths = []
     @root = Dir.mktmpdir(prefix)
     @home = File.join(root, "home")
     @fake_bin = File.join(root, "fake-bin")
@@ -48,6 +49,17 @@ class ClaudeExploreHarness
 
   def cleanup
     FileUtils.remove_entry_secure(root) if File.exist?(root)
+    @protected_host_paths.each do |path|
+      FileUtils.remove_entry_secure(path) if File.exist?(path)
+    end
+    @protected_host_paths.clear
+  end
+
+  def protected_host_directory(prefix = "claude-protected-tools-")
+    path = File.realpath(Dir.mktmpdir(prefix, Dir.home))
+    File.chmod(0o700, path)
+    @protected_host_paths << path
+    path
   end
 
   def install(operation = "install", claude: claude_launcher, extra_env: {})
@@ -126,7 +138,7 @@ class ClaudeExploreHarness
     FileUtils.cp_r(source, destination, preserve: true)
     if version
       policy = File.join(destination, "policy.sh")
-      contents = File.read(policy).sub("CLAUDE_EXPLORE_RUNTIME_VERSION=1", "CLAUDE_EXPLORE_RUNTIME_VERSION=#{version}")
+      contents = File.read(policy).sub(/CLAUDE_EXPLORE_RUNTIME_VERSION=\d+/, "CLAUDE_EXPLORE_RUNTIME_VERSION=#{version}")
       File.write(policy, contents)
       File.chmod(0o600, policy)
     end
@@ -201,6 +213,12 @@ class ClaudeExploreHarness
         [ "$argument" = --mcp-config ] && previous=mcp
       done
       /usr/bin/env > "$FAKE_ENV_LOG"
+      if [ -n "${FAKE_CREATE_OUTCOME_TOOL_DIR:-}" ]; then
+        /bin/mkdir -p "$FAKE_CREATE_OUTCOME_TOOL_DIR"
+        printf '#!/bin/sh\nexit 97\n' > "$FAKE_CREATE_OUTCOME_TOOL_DIR/gh"
+        printf '#!/bin/sh\nexit 98\n' > "$FAKE_CREATE_OUTCOME_TOOL_DIR/ruby"
+        /bin/chmod 700 "$FAKE_CREATE_OUTCOME_TOOL_DIR/gh" "$FAKE_CREATE_OUTCOME_TOOL_DIR/ruby"
+      fi
       case "${FAKE_CLAUDE_GIT_ACTION:-}" in
         untracked) printf 'created by fake Claude\n' > child-untracked.txt ;;
         commit)

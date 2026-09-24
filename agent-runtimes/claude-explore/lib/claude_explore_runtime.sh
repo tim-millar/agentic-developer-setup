@@ -4,6 +4,9 @@ unset BASH_ENV ENV CDPATH
 case $- in *p*) ;; *) printf '%s\n' 'claude-explore: trusted Bash privileged mode is required' >&2; exit 1 ;; esac
 ORIGINAL_PATH=${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+unset PINNED_OUTCOME_RECONCILER PINNED_OUTCOME_TOKEN_HELPER PINNED_OUTCOME_HOST_GH_TOKEN
+unset PINNED_OUTCOME_TELEMETRY_DIR PINNED_OUTCOME_HOST_GH_CONFIG_DIR
+unset PINNED_OUTCOME_GH_BIN PINNED_OUTCOME_RUBY_BIN PINNED_OUTCOME_GIT_BIN
 
 runtime_error() {
   printf 'claude-explore: %s\n' "$1" >&2
@@ -81,6 +84,102 @@ safe_path_ancestors() {
   done
 }
 
+validate_host_executable() {
+  local candidate=$1 resolved uid mode repository_root
+  case "$candidate" in /*) ;; *) return 1 ;; esac
+  resolved=$($REALPATH_BIN "$candidate" 2>/dev/null) || return 1
+  [ -f "$resolved" ] && [ -x "$resolved" ] || return 1
+  safe_path_ancestors "$resolved" || return 1
+  uid=$(file_uid "$resolved" 2>/dev/null) || return 1
+  [ "$uid" = 0 ] || [ "$uid" = "$(/usr/bin/id -u)" ] || return 1
+  mode=$(file_mode "$resolved" 2>/dev/null) || return 1
+  [ $((8#$mode & 022)) -eq 0 ] || return 1
+  if [ -n "${TELEMETRY_REPO_ROOT:-}" ]; then
+    repository_root=$($REALPATH_BIN "$TELEMETRY_REPO_ROOT" 2>/dev/null) || return 1
+    case "$resolved" in "$repository_root"|"$repository_root"/*) return 1 ;; esac
+  fi
+  printf '%s\n' "$resolved"
+}
+
+resolve_host_executable() {
+  local name=$1 directory candidate resolved old_ifs=$IFS
+  IFS=:
+  for directory in $ORIGINAL_PATH; do
+    IFS=$old_ifs
+    case "$directory" in /*) ;; *) IFS=:; continue ;; esac
+    candidate=$directory/$name
+    [ -x "$candidate" ] || { IFS=:; continue; }
+    resolved=$(validate_host_executable "$candidate" 2>/dev/null) || { IFS=:; continue; }
+    IFS=$old_ifs
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS=$old_ifs
+  return 1
+}
+
+post_child_path_is_within() {
+  local path=$1 root=$2
+  case "$path" in "$root"|"$root"/*) return 0 ;; *) return 1 ;; esac
+}
+
+post_child_executable_ancestry_is_safe() {
+  local resolved=$1 parent uid mode current_uid temp_root unsafe_root canonical_root
+  current_uid=$(/usr/bin/id -u 2>/dev/null) || return 1
+  temp_root=$($REALPATH_BIN "${TMPDIR:-/tmp}" 2>/dev/null) || return 1
+  post_child_path_is_within "$resolved" "$temp_root" && return 1
+  for unsafe_root in /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+    [ -e "$unsafe_root" ] || continue
+    canonical_root=$($REALPATH_BIN "$unsafe_root" 2>/dev/null) || return 1
+    post_child_path_is_within "$resolved" "$canonical_root" && return 1
+  done
+
+  parent=$(dirname "$resolved")
+  while :; do
+    [ -d "$parent" ] || return 1
+    uid=$(file_uid "$parent" 2>/dev/null) || return 1
+    [ "$uid" = 0 ] || [ "$uid" = "$current_uid" ] || return 1
+    mode=$(file_mode "$parent" 2>/dev/null) || return 1
+    [ $((8#$mode & 022)) -eq 0 ] || return 1
+    [ "$parent" = / ] && break
+    parent=$(dirname "$parent")
+  done
+}
+
+validate_post_child_host_executable() {
+  local candidate=$1 resolved uid mode repository_root
+  case "$candidate" in /*) ;; *) return 1 ;; esac
+  resolved=$($REALPATH_BIN "$candidate" 2>/dev/null) || return 1
+  [ -f "$resolved" ] && [ -x "$resolved" ] || return 1
+  post_child_executable_ancestry_is_safe "$resolved" || return 1
+  uid=$(file_uid "$resolved" 2>/dev/null) || return 1
+  [ "$uid" = 0 ] || [ "$uid" = "$(/usr/bin/id -u)" ] || return 1
+  mode=$(file_mode "$resolved" 2>/dev/null) || return 1
+  [ $((8#$mode & 022)) -eq 0 ] || return 1
+  if [ -n "${TELEMETRY_REPO_ROOT:-}" ]; then
+    repository_root=$($REALPATH_BIN "$TELEMETRY_REPO_ROOT" 2>/dev/null) || return 1
+    post_child_path_is_within "$resolved" "$repository_root" && return 1
+  fi
+  printf '%s\n' "$resolved"
+}
+
+resolve_post_child_host_executable() {
+  local name=$1 directory candidate resolved old_ifs=$IFS
+  IFS=:
+  for directory in $ORIGINAL_PATH; do
+    IFS=$old_ifs
+    case "$directory" in /*) ;; *) IFS=:; continue ;; esac
+    candidate=$directory/$name
+    [ -x "$candidate" ] || { IFS=:; continue; }
+    resolved=$(validate_post_child_host_executable "$candidate" 2>/dev/null) || { IFS=:; continue; }
+    IFS=$old_ifs
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  IFS=$old_ifs
+  return 1
+}
+
 SCRIPT_REAL=""
 RUNTIME_ROOT=""
 POLICY_FILE=""
@@ -96,6 +195,7 @@ initialize_runtime_source() {
     case "$path" in "$RUNTIME_ROOT"/*) ;; *) runtime_error "runtime content resolves outside installation"; return 1 ;; esac
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "telemetry runtime content is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "outcome runtime content is missing or unsafe"; return 1; }
   safe_owned_policy "$POLICY_FILE" || { runtime_error "policy is missing or unsafe"; return 1; }
   # shellcheck disable=SC1090 -- path is derived and validated above.
   . "$POLICY_FILE"
@@ -419,6 +519,7 @@ validate_installed_runtime() {
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "installed outcome reconciler is missing or unsafe"; return 1; }
   safe_owned_policy "$RUNTIME_ROOT/policy.sh" || { runtime_error "installed policy is missing or unsafe"; return 1; }
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }
   current_link=$DATA_INSTALL_ROOT/current
@@ -676,7 +777,43 @@ runtime_exit_cleanup() {
   local status=$?
   cleanup_session || true
   agent_telemetry_finalize_pending "$status" "${TELEMETRY_GIT_BIN:-}" "${TELEMETRY_REPO_ROOT:-}"
+  if [ -n "${AGENT_TELEMETRY_RUN_ID:-}" ]; then
+    run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
+      printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
+  fi
   return "$status"
+}
+
+capture_outcome_authority() {
+  PINNED_OUTCOME_RECONCILER=$RUNTIME_ROOT/lib/agent_run_outcomes.sh
+  PINNED_OUTCOME_TOKEN_HELPER=""
+  if [ -n "${AGENT_GITHUB_TOKEN_HELPER:-}" ]; then
+    PINNED_OUTCOME_TOKEN_HELPER=$(validate_post_child_host_executable "$AGENT_GITHUB_TOKEN_HELPER" 2>/dev/null || true)
+  fi
+  PINNED_OUTCOME_HOST_GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  PINNED_OUTCOME_TELEMETRY_DIR=${AGENT_TELEMETRY_DIR:-}
+  PINNED_OUTCOME_HOST_GH_CONFIG_DIR=${GH_CONFIG_DIR:-}
+  PINNED_OUTCOME_GH_BIN=$(resolve_post_child_host_executable gh 2>/dev/null || true)
+  PINNED_OUTCOME_RUBY_BIN=$(resolve_post_child_host_executable ruby 2>/dev/null || true)
+  PINNED_OUTCOME_GIT_BIN=$(validate_post_child_host_executable "${TELEMETRY_GIT_TARGET:-}" 2>/dev/null || true)
+}
+
+run_outcome_reconciler() {
+  local -a environment=(
+    -u GH_CONFIG_DIR -u AGENT_GITHUB_TOKEN_HELPER
+    -u OUTCOME_GH_BIN -u OUTCOME_RUBY_BIN -u OUTCOME_GIT_BIN
+    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH
+  )
+  [ -x "${PINNED_OUTCOME_RECONCILER:-}" ] || return 0
+  environment+=("AGENT_OUTCOME_CURRENT_RUN_ID=${AGENT_TELEMETRY_RUN_ID:-}")
+  [ -z "${PINNED_OUTCOME_TOKEN_HELPER:-}" ] || environment+=("AGENT_GITHUB_TOKEN_HELPER=$PINNED_OUTCOME_TOKEN_HELPER")
+  [ -z "${PINNED_OUTCOME_HOST_GH_TOKEN:-}" ] || environment+=("GH_TOKEN=$PINNED_OUTCOME_HOST_GH_TOKEN")
+  [ -z "${PINNED_OUTCOME_TELEMETRY_DIR:-}" ] || environment+=("AGENT_TELEMETRY_DIR=$PINNED_OUTCOME_TELEMETRY_DIR")
+  [ -z "${PINNED_OUTCOME_HOST_GH_CONFIG_DIR:-}" ] || environment+=("GH_CONFIG_DIR=$PINNED_OUTCOME_HOST_GH_CONFIG_DIR")
+  environment+=("OUTCOME_GH_BIN=${PINNED_OUTCOME_GH_BIN:-}")
+  environment+=("OUTCOME_RUBY_BIN=${PINNED_OUTCOME_RUBY_BIN:-}")
+  environment+=("OUTCOME_GIT_BIN=${PINNED_OUTCOME_GIT_BIN:-}")
+  /usr/bin/env "${environment[@]}" "$PINNED_OUTCOME_RECONCILER" "$@"
 }
 
 run_session() {
@@ -702,6 +839,8 @@ run_session() {
   if ! agent_telemetry_observe_repository "$TELEMETRY_GIT_BIN" "$TELEMETRY_REPO_ROOT"; then
     agent_telemetry_warning "could not observe repository identity"
   fi
+  capture_outcome_authority
+  run_outcome_reconciler --automatic >/dev/null || true
   make_session || { cleanup_session; runtime_error "could not create private session state"; return 1; }
   CHILD_PID=""
   trap 'AGENT_TELEMETRY_SIGNAL=INT; [ -z "$CHILD_PID" ] || kill -INT "$CHILD_PID" 2>/dev/null || :' INT
