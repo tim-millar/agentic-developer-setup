@@ -60,8 +60,7 @@ agent_usage_start() {
     return 0
   fi
 
-  /usr/bin/env \
-    -u RUBYOPT -u RUBYLIB -u BUNDLE_GEMFILE -u GEM_HOME -u GEM_PATH \
+  /usr/bin/env -i \
     "$ruby_bin" --disable-gems "$AGENT_USAGE_COLLECTOR_SNAPSHOT" \
       --run-dir "$AGENT_TELEMETRY_RUN_DIR" \
       --run-id "$AGENT_TELEMETRY_RUN_ID" \

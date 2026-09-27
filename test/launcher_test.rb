@@ -1772,6 +1772,97 @@ class LauncherTest < Minitest::Test
     assert_includes configs, "otel.log_user_prompt=false"
   end
 
+  def test_codex_usage_collector_receives_no_ambient_authority
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    collector_environment_log = File.join(@harness.root, "usage-collector-environment.jsonl")
+    host_path = trusted_usage_ruby_path(environment_log: collector_environment_log)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    outcome_log = File.join(@harness.root, "outcome.log")
+    payload = {
+      "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+        codex_usage_record("thread-minimal-env", "gpt-minimal-env", 12, 4, 2, 1, 1)
+      ]}]}]
+    }
+    secret_environment = {
+      "GITHUB_APP_ID" => LauncherHarness::APP_ID,
+      "GITHUB_APP_INSTALLATION_ID" => LauncherHarness::INSTALLATION_ID,
+      "GITHUB_APP_PRIVATE_KEY_PATH" => @harness.key_file,
+      "GH_TOKEN" => "synthetic-gh-token",
+      "GITHUB_TOKEN" => "synthetic-github-token",
+      "GITHUB_PAT" => "synthetic-github-pat",
+      "INSTALL_TOKEN" => "synthetic-install-token",
+      "AGENT_GITHUB_TOKEN_HELPER" => "/synthetic/token-helper",
+      "GIT_ASKPASS" => "/synthetic/askpass",
+      "SSH_AUTH_SOCK" => "/synthetic/ssh-agent.sock",
+      "AWS_SECRET_ACCESS_KEY" => "synthetic-cloud-secret",
+      "DATABASE_URL" => "postgres://synthetic-database-secret",
+      "SYNTHETIC_USAGE_COLLECTOR_SECRET" => "synthetic-arbitrary-secret"
+    }
+
+    result = @harness.run_app(env: secret_environment.merge(
+      "PATH" => host_path,
+      "FAKE_EXPECTED_LAUNCHER_PATH" => host_path,
+      "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload),
+      "FAKE_CODEX_EXIT" => "23",
+      "FAKE_OUTCOME_LOG" => outcome_log
+    ))
+
+    assert_equal 23, result.status.exitstatus, failure_message("minimal Codex collector environment", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "complete", usage.dig("collection", "state")
+    assert_equal "thread-minimal-env", usage.dig("measurements", 0, "provider_session_id")
+    %w[HOME PATH LANG LC_ALL LC_CTYPE TMPDIR].each do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    secret_environment.each_key do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    secret_environment.each_value { |secret| refute_includes JSON.generate(usage), secret }
+
+    assert secret_fact("GH_TOKEN", "matches_installation_token")
+    assert secret_fact("GITHUB_TOKEN", "matches_installation_token")
+    assert secret_fact("INSTALL_TOKEN", "matches_installation_token")
+    assert_equal "set", env_fact("AGENT_GITHUB_TOKEN_HELPER", "state")
+    assert_equal "set", env_fact("GIT_ASKPASS", "state")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
+    assert_equal ["--automatic", @harness.telemetry_run_directories.fetch(0).then { |directory| "--run #{File.basename(directory)}" }],
+      File.readlines(outcome_log, chomp: true)
+  end
+
+  def test_sanitized_codex_collector_setup_failure_is_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    host_path = trusted_usage_ruby_path(required_environment: "SYNTHETIC_USAGE_COLLECTOR_REQUIRED")
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    outcome_log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => host_path,
+      "SYNTHETIC_USAGE_COLLECTOR_REQUIRED" => "present-only-in-parent",
+      "FAKE_CODEX_EXIT" => "17",
+      "FAKE_OUTCOME_LOG" => outcome_log
+    })
+
+    assert_equal 17, result.status.exitstatus, failure_message("sanitized collector setup failure", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "unavailable", usage.dig("collection", "state")
+    assert_equal "collector_setup_failed", usage.dig("collection", "reason")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 2, File.readlines(outcome_log, chomp: true).length
+  end
+
   def test_codex_usage_observed_before_a_signalled_child_is_retained
     @harness.close
     @harness = LauncherHarness.new(telemetry: true)
@@ -2425,15 +2516,24 @@ class LauncherTest < Minitest::Test
     LauncherHarness.new
   end
 
-  def trusted_usage_ruby_path
+  def trusted_usage_ruby_path(environment_log: nil, required_environment: nil)
     tools = @harness.protected_host_directory("launcher-usage-tools-")
     ruby = File.join(tools, "ruby")
     File.write(ruby, <<~RUBY)
       #!#{RbConfig.ruby}
+      if ARGV.any? { |argument| argument.end_with?(".usage.collector.rb") }
+        require "json"
+        #{environment_log ? "File.open(#{environment_log.dump}, \"a\", 0o600) { |file| file.puts(JSON.generate(ENV.keys.sort)) }" : "nil"}
+        #{required_environment ? "exit 86 unless ENV.key?(#{required_environment.dump})" : "nil"}
+      end
       exec(#{RbConfig.ruby.dump}, *ARGV)
     RUBY
     File.chmod(0o700, ruby)
     [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR)
+  end
+
+  def collector_environment_names(path)
+    File.readlines(path, chomp: true).flat_map { |line| JSON.parse(line) }.uniq.sort
   end
 
   def codex_usage_record(session, model, input, output, cached, written, reasoning)

@@ -169,6 +169,77 @@ class RunUsageTest < Minitest::Test
     assert_valid(record)
   end
 
+  def test_malformed_otel_containers_are_unavailable_not_zero_usage
+    malformed_payloads = [
+      {"resourceLogs" => "not-an-array"},
+      {"resourceLogs" => ["not-an-object"]},
+      {"resourceLogs" => [{"scopeLogs" => "not-an-array"}]},
+      {"resourceLogs" => [{"scopeLogs" => ["not-an-object"]}]},
+      {"resourceLogs" => [{"scopeLogs" => [{"logRecords" => "not-an-array"}]}]},
+      {"resourceLogs" => [{"scopeLogs" => [{"logRecords" => ["not-an-object"]}]}]}
+    ]
+
+    malformed_payloads.each_with_index do |malformed_payload, index|
+      collector = start_collector(
+        "anthropic",
+        "claude_code_otel_api_request_v1",
+        run_id: distinct_run_id(index + 1)
+      )
+      post(collector, malformed_payload)
+      record = stop_collector(collector)
+
+      assert_equal "unavailable", record.dig("collection", "state"), malformed_payload.inspect
+      assert_equal "collector_parse_failed", record.dig("collection", "reason"), malformed_payload.inspect
+      assert_includes record.dig("collection", "warnings"), "relevant_event_malformed"
+      assert_empty record["measurements"]
+      assert_nil record.dig("observed_totals", "input_total")
+      assert_nil record.dig("observed_totals", "output_total")
+      assert_valid(record)
+    end
+  end
+
+  def test_structurally_valid_empty_otel_containers_are_complete_zero_usage
+    empty_payloads = [
+      {},
+      {"resourceLogs" => []},
+      {"resourceLogs" => [{}]},
+      {"resourceLogs" => [{"scopeLogs" => []}]},
+      {"resourceLogs" => [{"scopeLogs" => [{}]}]},
+      {"resourceLogs" => [{"scopeLogs" => [{"logRecords" => []}]}]}
+    ]
+
+    empty_payloads.each_with_index do |empty_payload, index|
+      collector = start_collector(
+        "anthropic",
+        "claude_code_otel_api_request_v1",
+        run_id: distinct_run_id(index + 101)
+      )
+      post(collector, empty_payload)
+      record = stop_collector(collector)
+
+      assert_equal "complete", record.dig("collection", "state"), empty_payload.inspect
+      assert_nil record.dig("collection", "reason")
+      assert_empty record["measurements"]
+      assert_equal 0, record.dig("observed_totals", "input_total")
+      assert_equal "not_applicable", record.dig("cost_summary", "state")
+      assert_valid(record)
+    end
+  end
+
+  def test_malformed_container_after_valid_record_in_same_payload_retains_partial_measurement
+    collector = start_collector("anthropic", "claude_code_otel_api_request_v1")
+    post(collector, payload([claude_record("same-session", input: 4, output: 2), "not-an-object"]))
+    record = stop_collector(collector)
+
+    assert_equal "partial", record.dig("collection", "state")
+    assert_equal "collector_parse_failed", record.dig("collection", "reason")
+    assert_includes record.dig("collection", "warnings"), "relevant_event_malformed"
+    assert_equal 1, record["measurements"].length
+    assert_equal "same-session", record.dig("measurements", 0, "provider_session_id")
+    assert_equal 4, record.dig("observed_totals", "input_total")
+    assert_valid(record)
+  end
+
   def test_malformed_payload_after_valid_evidence_retains_partial_measurement
     collector = start_collector("anthropic", "claude_code_otel_api_request_v1")
     post(collector, payload([claude_record("same-session", input: 4, output: 2)]))
@@ -361,6 +432,10 @@ class RunUsageTest < Minitest::Test
   end
 
   private
+
+  def distinct_run_id(suffix)
+    "run-20300102T030405Z-#{format("%032x", suffix)}"
+  end
 
   def start_collector(provider, source_interface, run_id: RUN_ID)
     directory = create_retained_run(run_id)

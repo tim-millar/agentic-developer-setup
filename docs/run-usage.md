@@ -27,6 +27,7 @@ For a telemetry-bearing workload, the trusted host launcher starts an invocation
 - binds an ephemeral port on `127.0.0.1` only;
 - exposes only `/v1/logs`;
 - generates a random per-run nonce and requires it in `x-agent-run-usage-token`;
+- runs the pinned Ruby process with an empty environment because all required paths and operational inputs are explicit arguments;
 - parses request bodies in memory and never archives raw OTLP payloads;
 - immediately ignores events and attributes outside the provider whitelist;
 - writes only normalized evidence and a permission-restricted normalized recovery checkpoint beneath the run directory;
@@ -122,6 +123,8 @@ For scalar evidence, `0` is an observed zero and `null` means the source did not
 | `disabled` | Normal execution telemetry exists, but `AGENT_USAGE_TELEMETRY=0` was explicit. |
 
 Reasons and warnings use closed codes rather than provider error prose. Setup, parsing, collector, and finalization failures never block the coding workload, replace its exit status, prevent independent `run.json` finalization, or prevent independent outcome reconciliation.
+
+The decoded OTLP envelope and each traversed `resourceLogs`, `scopeLogs`, and `logRecords` container/member must have the expected object or array shape. Structurally valid empty containers can therefore produce complete zero-measurement evidence, while malformed structure records `collector_parse_failed`; valid measurements accepted before the malformed input remain as partial evidence.
 
 ## Cost summary states
 

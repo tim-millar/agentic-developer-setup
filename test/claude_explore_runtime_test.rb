@@ -598,15 +598,31 @@ class ClaudeExploreRuntimeTest < Minitest::Test
         claude_usage_record("session-b", "claude-b", 7, 2, 0, 1, 45)
       ]}]}]
     }
+    collector_environment_log = File.join(@harness.root, "usage-collector-environment.jsonl")
+    collector_authority = {
+      "GITHUB_APP_ID" => "synthetic-app-id",
+      "GITHUB_APP_INSTALLATION_ID" => "synthetic-installation-id",
+      "GITHUB_APP_PRIVATE_KEY_PATH" => "/synthetic/private-key.pem",
+      "GH_TOKEN" => "synthetic-gh-token",
+      "GITHUB_TOKEN" => "synthetic-github-token",
+      "GITHUB_PAT" => "synthetic-github-pat",
+      "INSTALL_TOKEN" => "synthetic-install-token",
+      "AGENT_GITHUB_TOKEN_HELPER" => "/synthetic/token-helper",
+      "GIT_ASKPASS" => "/synthetic/askpass",
+      "SSH_AUTH_SOCK" => "/synthetic/ssh-agent.sock",
+      "AWS_SECRET_ACCESS_KEY" => "synthetic-cloud-secret",
+      "DATABASE_URL" => "postgres://synthetic-database-secret",
+      "SYNTHETIC_USAGE_COLLECTOR_SECRET" => "synthetic-arbitrary-secret"
+    }
 
-    _stdout, stderr, status = @harness.runtime(extra_env: {
-      "PATH" => trusted_claude_usage_ruby_path,
+    _stdout, stderr, status = @harness.runtime(extra_env: collector_authority.merge(
+      "PATH" => trusted_claude_usage_ruby_path(environment_log: collector_environment_log),
       "OTEL_METRICS_EXPORTER" => "console",
       "OTEL_TRACES_EXPORTER" => "console",
       "OTEL_EXPORTER_OTLP_ENDPOINT" => "http://metrics.example.test:4318",
       "FAKE_CLAUDE_OTLP_JSON" => JSON.generate(payload),
       "FAKE_CLAUDE_EXIT" => "19"
-    })
+    ))
 
     assert_equal 19, status.exitstatus, stderr
     usage = @harness.usage_records.fetch(0)
@@ -615,6 +631,13 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_equal 2, usage.fetch("measurements").length
     assert_equal 168, usage.dig("cost_summary", "observed_usd_micros")
     assert_equal 0o600, File.stat(File.join(@harness.telemetry_run_directories.fetch(0), "usage.json")).mode & 0o777
+    %w[HOME PATH LANG LC_ALL LC_CTYPE TMPDIR].each do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    collector_authority.each_key do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    collector_authority.each_value { |secret| refute_includes JSON.generate(usage), secret }
     environment = @harness.read(@harness.env.fetch("FAKE_ENV_LOG"))
     assert_includes environment, "OTEL_METRICS_EXPORTER=console\n"
     assert_includes environment, "OTEL_TRACES_EXPORTER=console\n"
@@ -624,6 +647,11 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes environment, "OTEL_LOG_TOOL_DETAILS=0\n"
     assert_includes environment, "OTEL_LOG_TOOL_CONTENT=0\n"
     refute_includes environment, "OTEL_LOG_RAW_API_BODIES="
+    %w[
+      synthetic-gh-token synthetic-github-token synthetic-github-pat
+      /synthetic/token-helper /synthetic/askpass /synthetic/ssh-agent.sock
+      synthetic-cloud-secret postgres://synthetic-database-secret
+    ].each { |secret| refute_includes environment, secret }
   end
 
   def test_claude_usage_opt_out_preserves_existing_log_exporter_and_records_disabled
@@ -1044,11 +1072,23 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert status.success?, stderr
   end
 
-  def trusted_claude_usage_ruby_path
+  def trusted_claude_usage_ruby_path(environment_log: nil)
     tools = @harness.protected_host_directory("claude-usage-tools-")
     ruby = File.join(tools, "ruby")
-    File.symlink(File.realpath(RbConfig.ruby), ruby)
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      if ARGV.any? { |argument| argument.end_with?(".usage.collector.rb") }
+        require "json"
+        #{environment_log ? "File.open(#{environment_log.dump}, \"a\", 0o600) { |file| file.puts(JSON.generate(ENV.keys.sort)) }" : "nil"}
+      end
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
     [tools, @harness.env.fetch("PATH")].join(File::PATH_SEPARATOR)
+  end
+
+  def collector_environment_names(path)
+    File.readlines(path, chomp: true).flat_map { |line| JSON.parse(line) }.uniq.sort
   end
 
   def claude_usage_record(session, model, input, output, cache_read, cache_write, cost)

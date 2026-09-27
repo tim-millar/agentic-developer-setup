@@ -165,12 +165,36 @@ class AgentRunUsageCollector
   def process_payload(payload)
     return record_parse_failure unless payload.is_a?(Hash)
 
-    records = Array(payload["resourceLogs"]).flat_map do |resource_log|
-      next [] unless resource_log.is_a?(Hash)
+    resource_logs = payload.fetch("resourceLogs", [])
+    return record_parse_failure unless resource_logs.is_a?(Array)
 
-      Array(resource_log["scopeLogs"]).flat_map { |scope_log| Array(scope_log["logRecords"]) }
+    resource_logs.each do |resource_log|
+      unless resource_log.is_a?(Hash)
+        record_parse_failure
+        next
+      end
+
+      scope_logs = resource_log.fetch("scopeLogs", [])
+      unless scope_logs.is_a?(Array)
+        record_parse_failure
+        next
+      end
+
+      scope_logs.each do |scope_log|
+        unless scope_log.is_a?(Hash)
+          record_parse_failure
+          next
+        end
+
+        log_records = scope_log.fetch("logRecords", [])
+        unless log_records.is_a?(Array)
+          record_parse_failure
+          next
+        end
+
+        log_records.each { |record| process_record(record) }
+      end
     end
-    records.each { |record| process_record(record) }
   end
 
   def process_record(record)
