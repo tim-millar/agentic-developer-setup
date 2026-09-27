@@ -90,10 +90,31 @@ class RunUsageTest < Minitest::Test
     record = stop_collector(collector)
 
     assert_equal "complete", record.dig("collection", "state")
-    assert_equal [30, 15], record["measurements"].map { |item| item.dig("tokens", "input_uncached") }
+    assert_equal [40, 15], record["measurements"].map { |item| item.dig("tokens", "input_uncached") }
     assert_equal 13, record.dig("observed_totals", "output_reasoning")
     assert_equal "unavailable", record.dig("cost_summary", "state")
     assert_equal "source_does_not_report_cost", record.dig("cost_summary", "reason")
+    assert_valid(record)
+  end
+
+  def test_codex_cache_write_is_not_subtracted_from_uncached_input
+    collector = start_collector("openai", "codex_otel_response_completed_v1")
+    post(collector, payload([log_record("codex.sse_event", {
+      "event.kind" => "response.completed", "model" => "gpt-current", "input_token_count" => 3,
+      "output_token_count" => 5, "cached_token_count" => 1, "cache_write_token_count" => 2,
+      "reasoning_token_count" => 2
+    })]))
+    record = stop_collector(collector)
+
+    assert_equal "complete", record.dig("collection", "state")
+    assert_equal({
+      "input_total" => 3,
+      "input_uncached" => 2,
+      "input_cache_read" => 1,
+      "input_cache_write" => 2,
+      "output_total" => 5,
+      "output_reasoning" => 2
+    }, record.dig("measurements", 0, "tokens"))
     assert_valid(record)
   end
 
@@ -122,16 +143,16 @@ class RunUsageTest < Minitest::Test
     collector = start_collector("openai", "codex_otel_response_completed_v1")
     post(collector, payload([log_record("codex.sse_event", {
       "event.kind" => "response.completed", "model" => "gpt-a", "input_token_count" => 10,
-      "output_token_count" => 2, "cached_token_count" => 8, "cache_write_token_count" => 4,
+      "output_token_count" => 2, "cached_token_count" => 11, "cache_write_token_count" => 4,
       "reasoning_token_count" => 1
     })]))
     record = stop_collector(collector)
 
     assert_equal "partial", record.dig("collection", "state")
     assert_equal "normalization_inconsistent", record.dig("collection", "reason")
-    assert_includes record.dig("collection", "warnings"), "codex_input_cache_exceeds_total"
+    assert_includes record.dig("collection", "warnings"), "codex_cached_input_exceeds_total"
     assert_nil record.dig("measurements", 0, "tokens", "input_uncached")
-    assert_equal 8, record.dig("measurements", 0, "native_usage", "cached_token_count")
+    assert_equal 11, record.dig("measurements", 0, "native_usage", "cached_token_count")
     assert_valid(record)
   end
 
@@ -221,8 +242,7 @@ class RunUsageTest < Minitest::Test
   end
 
   def test_disabled_collection_writes_valid_restricted_terminal_sidecar
-    directory = File.join(@root, RUN_ID)
-    FileUtils.mkdir_p(directory, mode: 0o700)
+    directory = create_retained_run
     script = <<~BASH
       source "$1"
       source "$2"
@@ -244,8 +264,7 @@ class RunUsageTest < Minitest::Test
   end
 
   def test_run_finalized_before_collection_setup_records_source_unavailable
-    directory = File.join(@root, RUN_ID)
-    FileUtils.mkdir_p(directory, mode: 0o700)
+    directory = create_retained_run
     script = <<~BASH
       source "$1"
       source "$2"
@@ -264,8 +283,7 @@ class RunUsageTest < Minitest::Test
   end
 
   def test_existing_terminal_usage_is_not_overwritten
-    directory = File.join(@root, RUN_ID)
-    FileUtils.mkdir_p(directory, mode: 0o700)
+    directory = create_retained_run
     path = File.join(directory, "usage.json")
     File.binwrite(path, "terminal sentinel\n")
     script = <<~BASH
@@ -281,6 +299,21 @@ class RunUsageTest < Minitest::Test
     _stdout, _stderr, status = Open3.capture3("/bin/bash", "-c", script, "usage-test", TELEMETRY_HELPER, USAGE_HELPER, RUN_ID, directory)
     assert status.success?
     assert_equal "terminal sentinel\n", File.binread(path)
+  end
+
+  def test_usage_publication_does_not_create_a_sidecar_without_a_retained_run
+    script = <<~BASH
+      source "$1"
+      source "$2"
+      AGENT_TELEMETRY_ACTIVE=0
+      AGENT_TELEMETRY_RUN_ID=""
+      AGENT_TELEMETRY_RUN_DIR=""
+      agent_usage_publish
+    BASH
+    _stdout, stderr, status = Open3.capture3("/bin/bash", "-c", script, "usage-test", TELEMETRY_HELPER, USAGE_HELPER)
+
+    assert status.success?, stderr
+    assert_empty Dir.children(@root)
   end
 
   def test_semantic_validator_rejects_adversarial_inconsistencies_without_crashing
@@ -330,8 +363,7 @@ class RunUsageTest < Minitest::Test
   private
 
   def start_collector(provider, source_interface, run_id: RUN_ID)
-    directory = File.join(@root, run_id)
-    FileUtils.mkdir_p(directory, mode: 0o700)
+    directory = create_retained_run(run_id)
     ready = File.join(directory, ".usage.ready")
     pid = Process.spawn(
       RbConfig.ruby, "--disable-gems", COLLECTOR,
@@ -348,6 +380,13 @@ class RunUsageTest < Minitest::Test
     end
     port, token = File.readlines(ready, chomp: true)
     {pid:, directory:, port: Integer(port, 10), token:}
+  end
+
+  def create_retained_run(run_id = RUN_ID)
+    directory = File.join(@root, run_id)
+    FileUtils.mkdir_p(directory, mode: 0o700)
+    File.binwrite(File.join(directory, "run.json"), "{}\n")
+    directory
   end
 
   def stop_collector(collector)

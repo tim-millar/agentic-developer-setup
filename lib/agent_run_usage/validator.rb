@@ -188,8 +188,8 @@ module AgentRunUsage
           error("#{location}.native_usage.#{name}", "is required for an accepted Codex response") unless native[name].is_a?(Integer)
         end
         input, read, write = native.values_at("input_token_count", "cached_token_count", "cache_write_token_count")
-        uncached = if [input, read, write].all? { |value| value.is_a?(Integer) } && read + write <= input
-          input - read - write
+        uncached = if [input, read].all? { |value| value.is_a?(Integer) } && read <= input
+          input - read
         end
         expected = {
           "input_total" => input,
@@ -200,9 +200,9 @@ module AgentRunUsage
           "output_reasoning" => native["reasoning_token_count"]
         }
         expected.each { |name, value| error("#{location}.tokens.#{name}", "does not reproduce native usage") unless tokens[name] == value }
-        inconsistent = [input, read, write].all? { |value| value.is_a?(Integer) } && read + write > input
+        inconsistent = [input, read].all? { |value| value.is_a?(Integer) } && read > input
         warnings = Array(@record.dig("collection", "warnings"))
-        error("collection.warnings", "must identify inconsistent Codex input counts") if inconsistent && !warnings.include?("codex_input_cache_exceeds_total")
+        error("collection.warnings", "must identify inconsistent Codex input counts") if inconsistent && !warnings.include?("codex_cached_input_exceeds_total")
       else
         error("#{location}.native_usage", "does not match provider")
       end

@@ -284,11 +284,11 @@ class AgentRunUsageCollector
     write = nonnegative(attributes, "cache_write_token_count")
     reasoning = nonnegative(attributes, "reasoning_token_count")
     uncached = nil
-    if [read, write].all? { |value| value.is_a?(Integer) }
-      if read + write <= input
-        uncached = input - read - write
+    if read.is_a?(Integer)
+      if read <= input
+        uncached = input - read
       else
-        add_warning("codex_input_cache_exceeds_total")
+        add_warning("codex_cached_input_exceeds_total")
         @failure_reason ||= "normalization_inconsistent"
       end
     end

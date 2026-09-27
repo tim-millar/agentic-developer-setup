@@ -545,9 +545,6 @@ validate_forwarded_codex_config() {
           die_usage "forwarded Codex config cannot override launcher-owned shell-environment policy"
           ;;
       esac
-      if [[ "${AGENT_TELEMETRY_ACTIVE:-0}" == 1 && "${AGENT_USAGE_TELEMETRY:-1}" != 0 && ( "$key" == otel || "$key" == otel.* ) ]]; then
-        die_usage "forwarded Codex config cannot override launcher-owned usage telemetry routing"
-      fi
     elif [[ "$argument" == -c || "$argument" == --config || "$argument" == -c=* || "$argument" == --config=* ]]; then
       die_usage "forwarded Codex config requires a key=value assignment"
     fi
@@ -557,6 +554,37 @@ validate_forwarded_codex_config() {
 }
 
 validate_forwarded_codex_config
+
+validate_forwarded_codex_usage_config() {
+  local index=0 argument assignment key
+
+  [[ "${AGENT_USAGE_MODE:-inactive}" == active ]] || return 0
+  while [[ "$index" -lt "${#CODEX_ARGS[@]}" ]]; do
+    argument="${CODEX_ARGS[$index]}"
+    assignment=""
+
+    case "$argument" in
+      -c|--config)
+        index=$((index + 1))
+        assignment="${CODEX_ARGS[$index]}"
+        ;;
+      --config=*) assignment="${argument#--config=}" ;;
+      -c=*) assignment="${argument#-c=}" ;;
+      -c?*) assignment="${argument#-c}" ;;
+    esac
+
+    if [[ -n "$assignment" ]]; then
+      key="${assignment%%=*}"
+      key="${key#"${key%%[![:space:]]*}"}"
+      key="${key%"${key##*[![:space:]]}"}"
+      if [[ "$key" == otel || "$key" == otel.* ]]; then
+        die_usage "forwarded Codex config cannot override launcher-owned usage telemetry routing"
+      fi
+    fi
+
+    index=$((index + 1))
+  done
+}
 
 codex_invocation_is_inspection() {
   local index=0 argument
@@ -804,6 +832,7 @@ if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
     agent_telemetry_set_client_version "$CODEX_VERSION_VALUE"
   fi
   agent_usage_start openai codex_otel_response_completed_v1 "$CODEX_VERSION_VALUE" "$USAGE_COLLECTOR_SOURCE" "$OUTCOME_RUBY_BIN"
+  validate_forwarded_codex_usage_config
 fi
 
 PROMPT_FILE="${PROMPT_FILE_OVERRIDE:-$PROMPT_FILE_DEFAULT}"

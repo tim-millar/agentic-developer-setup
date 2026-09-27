@@ -484,6 +484,27 @@ class LauncherHarness
     BASH
   end
 
+  def fail_telemetry_clock_from(name, failure_call:)
+    raise ArgumentError, "unsupported telemetry clock" unless %w[timestamp epoch].include?(name)
+
+    counter = "#{helper_clock_file}-#{name}"
+    success = if name == "timestamp"
+      "/usr/bin/printf '2026-09-13T12:00:%02d.000Z' \"$count\""
+    else
+      "/usr/bin/printf '%s' \"$((100 + count))\""
+    end
+    append_telemetry_helper(<<~BASH)
+      agent_telemetry_#{name}() {
+        local count=0
+        if [[ -f #{counter.dump} ]]; then count=$(/bin/cat #{counter.dump} 2>/dev/null || /usr/bin/printf '0'); fi
+        count=$((count + 1))
+        /usr/bin/printf '%s' "$count" > #{counter.dump}
+        [[ "$count" -lt #{Integer(failure_call)} ]] || return 1
+        #{success}
+      }
+    BASH
+  end
+
   def fail_telemetry_randomness
     append_telemetry_helper("agent_telemetry_random_hex() { return 1; }\n")
   end

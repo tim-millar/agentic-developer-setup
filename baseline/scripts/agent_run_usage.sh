@@ -129,7 +129,11 @@ agent_usage_render_fallback() {
   local state="$1" reason="$2" source_json client_json input_total input_uncached cache_read cache_write output_total output_reasoning
   local timestamp
 
-  timestamp=$(agent_telemetry_timestamp 2>/dev/null || /bin/date -u '+%Y-%m-%dT%H:%M:%S.000Z')
+  timestamp=$(agent_telemetry_observe_timestamp 2>/dev/null || true)
+  if [[ -z "$timestamp" && "${AGENT_TELEMETRY_RUN_STARTED_AT:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]]; then
+    timestamp="$AGENT_TELEMETRY_RUN_STARTED_AT"
+  fi
+  [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]] || return 1
   if [[ -n "$AGENT_USAGE_SOURCE_INTERFACE" ]]; then source_json=$(agent_telemetry_json_string "$AGENT_USAGE_SOURCE_INTERFACE"); else source_json=null; fi
   if [[ -n "$AGENT_USAGE_CLIENT_VERSION" ]]; then client_json=$(agent_telemetry_json_string "$AGENT_USAGE_CLIENT_VERSION"); else client_json=null; fi
   if [[ "$state" == unavailable || -z "$AGENT_USAGE_SOURCE_INTERFACE" ]]; then
@@ -149,12 +153,22 @@ agent_usage_render_fallback() {
   printf '}\n'
 }
 
+agent_usage_retained_run_is_valid() {
+  local run_id="${AGENT_TELEMETRY_RUN_ID:-}" run_dir="${AGENT_TELEMETRY_RUN_DIR:-}"
+
+  [[ "$run_id" =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$ ]] || return 1
+  [[ "$run_dir" == /* && "${run_dir##*/}" == "$run_id" ]] || return 1
+  [[ -d "$run_dir" && ! -L "$run_dir" ]] || return 1
+  [[ -f "$run_dir/run.json" && ! -L "$run_dir/run.json" ]] || return 1
+}
+
 agent_usage_publish() {
+  agent_usage_retained_run_is_valid || return 0
+
   local candidate="$AGENT_TELEMETRY_RUN_DIR/.usage.finalized.json"
   local fallback="$AGENT_TELEMETRY_RUN_DIR/.usage.fallback.$$" reason
   local usage="$AGENT_TELEMETRY_RUN_DIR/usage.json"
 
-  [[ "${AGENT_TELEMETRY_ACTIVE:-0}" == 1 && -n "${AGENT_TELEMETRY_RUN_DIR:-}" ]] || return 0
   [[ "$AGENT_USAGE_EXISTING_RECORD" == 0 ]] || return 0
 
   if [[ "$AGENT_USAGE_MODE" == disabled ]]; then

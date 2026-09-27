@@ -2,6 +2,7 @@
 
 require "minitest/autorun"
 require "timeout"
+require_relative "../lib/agent_run_usage/validator"
 require_relative "support/launcher_harness"
 
 class LauncherTest < Minitest::Test
@@ -448,6 +449,27 @@ class LauncherTest < Minitest::Test
     assert_equal @harness.expected_codex_args(*arguments, @harness.expected_prompt),
       @harness.invocation.fetch("args")
     assert_path_contract(@harness.inherited_path)
+  end
+
+  def test_active_usage_collection_rejects_all_supported_forwarded_otel_config_forms_before_codex
+    cases = [
+      ["-c", 'otel.exporter="user"'],
+      ["--config", "otel.log_user_prompt=true"],
+      ['--config=otel.exporter="user"'],
+      ['-c=otel.exporter="user"'],
+      ['-cotel="user"']
+    ]
+
+    cases.each do |arguments|
+      @harness.close
+      @harness = LauncherHarness.new(telemetry: true)
+      result = @harness.run(*arguments, env: {"PATH" => trusted_usage_ruby_path})
+
+      assert_equal 2, result.status.exitstatus, failure_message(arguments.join(" "), result)
+      assert_includes result.stderr, "cannot override launcher-owned usage telemetry routing"
+      assert_empty @harness.codex_invocations
+      assert_equal "complete", @harness.usage_records.fetch(0).dig("collection", "state")
+    end
   end
 
   def test_bootstrap_path_cannot_replace_codex_or_launcher_security_tools
@@ -1791,12 +1813,13 @@ class LauncherTest < Minitest::Test
   def test_codex_usage_opt_out_leaves_provider_otel_arguments_untouched_and_records_disabled
     @harness.close
     @harness = LauncherHarness.new(telemetry: true)
-    result = @harness.run(env: {"AGENT_USAGE_TELEMETRY" => "0"})
+    forwarded = '--config=otel.exporter="http://127.0.0.1:4318/v1/logs"'
+    result = @harness.run(forwarded, env: {"AGENT_USAGE_TELEMETRY" => "0"})
 
     assert_success(result, "Codex usage opt-out")
     usage = @harness.usage_records.fetch(0)
     assert_equal "disabled", usage.dig("collection", "state")
-    refute @harness.invocation.fetch("args").any? { |argument| argument.include?("otel.exporter") }
+    assert_includes @harness.invocation.fetch("args"), forwarded
   end
 
   def test_codex_usage_collector_unavailable_fails_open_and_keeps_run_telemetry
@@ -1810,9 +1833,11 @@ class LauncherTest < Minitest::Test
     @harness.commit_all("Add synthetic outcome reconciler")
     outcome_log = File.join(@harness.root, "outcome.log")
     FileUtils.rm(File.join(@harness.repository, "scripts/agent_run_usage_collector.rb"))
-    result = @harness.run("--allow-dirty", env: {"FAKE_CODEX_EXIT" => "17", "FAKE_OUTCOME_LOG" => outcome_log})
+    forwarded = 'otel.exporter="http://127.0.0.1:4318/v1/logs"'
+    result = @harness.run("--allow-dirty", "-c", forwarded, env: {"FAKE_CODEX_EXIT" => "17", "FAKE_OUTCOME_LOG" => outcome_log})
 
     assert_equal 17, result.status.exitstatus
+    assert_includes @harness.invocation.fetch("args"), forwarded
     assert_equal "unavailable", @harness.usage_records.fetch(0).dig("collection", "state")
     assert_equal "collector_unavailable", @harness.usage_records.fetch(0).dig("collection", "reason")
     assert_nil @harness.usage_records.fetch(0).dig("observed_totals", "input_total")
@@ -1821,6 +1846,54 @@ class LauncherTest < Minitest::Test
     assert_equal 2, outcome_invocations.length
     assert_equal "--automatic", outcome_invocations.fetch(0)
     assert_match(/\A--run run-/, outcome_invocations.fetch(1))
+  end
+
+  def test_codex_usage_survives_terminal_execution_telemetry_timestamp_failures
+    [
+      [3, "child finish timestamp"],
+      [4, "run finish timestamp"]
+    ].each do |failure_call, warning|
+      @harness.close
+      @harness = LauncherHarness.new(telemetry: true)
+      @harness.override_telemetry_clock("timestamp", fail_on: failure_call)
+      payload = {
+        "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+          codex_usage_record("thread-retained", "gpt-retained", 3, 5, 1, 2, 2)
+        ]}]}]
+      }
+
+      result = @harness.run("--allow-dirty", env: {
+        "PATH" => trusted_usage_ruby_path,
+        "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload)
+      })
+
+      assert_success(result, warning)
+      assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe #{warning}"
+      assert_equal "started", @harness.telemetry_records.fetch(0).fetch("state")
+      usage = @harness.usage_records.fetch(0)
+      assert_equal "complete", usage.dig("collection", "state")
+      assert_equal 2, usage.dig("measurements", 0, "tokens", "input_uncached")
+      validator = AgentRunUsage::Validator.new(usage)
+      assert validator.validate, validator.errors.join("\n")
+    end
+  end
+
+  def test_disabled_usage_fallback_uses_retained_run_start_when_terminal_clock_stays_unavailable
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    @harness.fail_telemetry_clock_from("timestamp", failure_call: 3)
+
+    result = @harness.run("--allow-dirty", env: {"AGENT_USAGE_TELEMETRY" => "0"})
+
+    assert_success(result, "persistent terminal timestamp failure")
+    assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe child finish timestamp"
+    telemetry = @harness.telemetry_records.fetch(0)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "started", telemetry.fetch("state")
+    assert_equal "disabled", usage.dig("collection", "state")
+    assert_equal telemetry.dig("timing", "run_started_at"), usage.dig("collection", "finalized_at")
+    validator = AgentRunUsage::Validator.new(usage)
+    assert validator.validate, validator.errors.join("\n")
   end
 
   def test_outcome_reconciler_is_snapshotted_before_child_and_reused_after_terminal_finalization

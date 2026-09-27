@@ -55,7 +55,7 @@
           "uniqueItems": true,
           "items": {
             "enum": [
-              "codex_input_cache_exceeds_total",
+              "codex_cached_input_exceeds_total",
               "relevant_event_malformed",
               "collector_parse_failed",
               "collector_shutdown_incomplete"

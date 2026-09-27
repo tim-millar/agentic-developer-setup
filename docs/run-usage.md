@@ -32,7 +32,7 @@ For a telemetry-bearing workload, the trusted host launcher starts an invocation
 - writes only normalized evidence and a permission-restricted normalized recovery checkpoint beneath the run directory;
 - never forwards data or remains as an intentional daemon after the run.
 
-The provider performs its normal exporter shutdown when the coding child exits. The launcher then stops the collector with bounded waiting, finalizes `run.json`, atomically links the terminal candidate as mode-`0600` `usage.json`, and proceeds independently to outcome reconciliation. Existing terminal `usage.json` files are never silently replaced.
+The provider performs its normal exporter shutdown when the coding child exits. The launcher then stops the collector with bounded waiting, finalizes `run.json`, atomically links the terminal candidate as mode-`0600` `usage.json`, and proceeds independently to outcome reconciliation. If execution telemetry can no longer mutate an already-retained run, usage publication still proceeds against that validated run identity. When fallback evidence cannot observe a new terminal timestamp, it uses the run's already-validated start timestamp solely to remain schema-valid; that value does not claim the actual finalization instant. Existing terminal `usage.json` files are never silently replaced.
 
 This is local same-user process isolation, not hostile same-user containment. Loopback binding, a nonce, restrictive paths, trusted executable selection, and the Claude sandbox reduce accidental or repository-controlled interference. They do not stop a deliberately hostile process running as the same operating-system user.
 
@@ -46,7 +46,7 @@ Usage capture owns the provider's logs/events exporter for the managed invocatio
 | Execution telemetry enabled and `AGENT_USAGE_TELEMETRY=0` | Provider OTel routing is left untouched and `usage.json` records `collection.state: "disabled"`. |
 | Both enabled or unset | Local collection is attempted and always fails open. |
 
-Users who need their own provider log exporter for a framework-managed invocation should set `AGENT_USAGE_TELEMETRY=0`. Arbitrary direct `codex` or `claude` invocation is outside this contract.
+While local Codex collection is active, forwarded `otel` and `otel.*` configuration is rejected rather than allowed to override launcher-owned routing. If collection is disabled or cannot become active, that restriction does not apply and forwarded provider routing remains untouched. Users who need their own provider log exporter for a framework-managed invocation should set `AGENT_USAGE_TELEMETRY=0`. Arbitrary direct `codex` or `claude` invocation is outside this contract.
 
 ## Provider interfaces
 
@@ -91,12 +91,12 @@ Normalization is:
 input_total       = input_token_count
 input_cache_read  = cached_token_count
 input_cache_write = cache_write_token_count
-input_uncached    = input_token_count - cached_token_count - cache_write_token_count
+input_uncached    = input_token_count - cached_token_count
 output_total      = output_token_count
 output_reasoning  = reasoning_token_count
 ```
 
-Reasoning tokens are detail within output and are never added to `output_total`. If cached plus cache-write input exceeds total input, native counts remain unchanged, `input_uncached` becomes `null`, and collection records a normalization warning rather than clamping or inventing a value.
+Cache-write input remains a separately preserved dimension and is not subtracted from total input when deriving uncached input. Reasoning tokens are detail within output and are never added to `output_total`. If cached input exceeds total input, native counts remain unchanged, `input_uncached` becomes `null`, and collection records a normalization warning rather than clamping or inventing a value. Missing cached-input evidence likewise leaves `input_uncached` as `null`.
 
 The selected Codex OTel source does not report a runtime-estimated dollar amount equivalent to Claude's integer micros. Usage-bearing Codex runs therefore use `cost_summary.state: "unavailable"` and `reason: "source_does_not_report_cost"`. The framework does not infer API-list-price or subscription cost.
 
