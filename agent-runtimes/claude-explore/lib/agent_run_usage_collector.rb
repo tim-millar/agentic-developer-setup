@@ -365,13 +365,13 @@ class AgentRunUsageCollector
   def write_checkpoint
     warnings = (@warnings + ["collector_shutdown_incomplete"]).uniq
     state = @measurements.empty? ? "unavailable" : "partial"
-    record = build_record(state:, reason: "collector_shutdown_incomplete", warnings:)
+    record = build_record(state: state, reason: "collector_shutdown_incomplete", warnings: warnings)
     atomic_replace(@checkpoint_file, JSON.pretty_generate(record) + "\n")
   end
 
   def write_terminal
     state, reason = terminal_state
-    record = build_record(state:, reason:, warnings: @warnings)
+    record = build_record(state: state, reason: reason, warnings: @warnings)
     write_once(@terminal_file, JSON.pretty_generate(record) + "\n")
   end
 
