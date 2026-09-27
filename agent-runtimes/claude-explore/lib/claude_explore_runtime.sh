@@ -524,6 +524,8 @@ validate_installed_runtime() {
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
+  safe_owned_file "$RUNTIME_ROOT/lib/agent_run_usage.sh" || { runtime_error "installed usage helper is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_usage_collector.rb" || { runtime_error "installed usage collector is missing or unsafe"; return 1; }
   safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "installed outcome reconciler is missing or unsafe"; return 1; }
   safe_owned_policy "$RUNTIME_ROOT/policy.sh" || { runtime_error "installed policy is missing or unsafe"; return 1; }
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }

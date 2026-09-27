@@ -519,6 +519,29 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes stderr, "installed runtime content is missing or unsafe"
   end
 
+  def test_per_invocation_integrity_revalidates_usage_components_before_child_launch
+    [
+      ["lib/agent_run_usage.sh", 0o622, "installed usage helper is missing or unsafe"],
+      ["lib/agent_run_usage_collector.rb", 0o600, "installed usage collector is missing or unsafe"]
+    ].each do |relative, mode, diagnostic|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      install!
+      @harness.replace_installed_runtime_text(
+        "lib/claude_explore_runtime.sh",
+        "run_session \"$@\"",
+        "/bin/chmod #{mode.to_s(8)} \"$RUNTIME_ROOT/#{relative}\"\nrun_session \"$@\""
+      )
+      FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+
+      _stdout, stderr, status = @harness.runtime
+
+      refute status.success?
+      assert_includes stderr, diagnostic
+      refute File.exist?(@harness.env.fetch("FAKE_CLAUDE_LOG"))
+    end
+  end
+
   def test_outcome_reconciliation_uses_trusted_installed_copy_and_keeps_authority_from_child
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)

@@ -63,7 +63,7 @@ OTEL_LOG_TOOL_CONTENT=0
 OTEL_LOG_RAW_API_BODIES unset
 ```
 
-Only `claude_code.api_request` is accepted. The persisted whitelist is `session.id`, `event.sequence`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `cost_usd_micros`, `duration_ms`, `speed`, `query_source`, and `effort`. Framework-local `sequence`, not provider process sequence, orders accepted measurements.
+Only `claude_code.api_request` is accepted. The accepted attribute whitelist is `session.id`, `event.sequence`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `cost_usd_micros`, `duration_ms`, `speed`, `query_source`, and `effort`. Provider `event.sequence` may be accepted for source-interface filtering but is not persisted in schema v1. Framework-local `sequence`, not provider process sequence, orders persisted measurements.
 
 Normalization is:
 
