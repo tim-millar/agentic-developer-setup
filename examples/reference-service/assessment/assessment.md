@@ -55,6 +55,8 @@ Alternative conditions:
 | `agent_ready_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `agent_run_outcomes` | `evaluate_later` | `low` | Outcome reconciliation is coupled to execution telemetry and a supported framework launcher and should be evaluated with them rather than adopted independently. |
 | `agent_run_telemetry` | `evaluate_later` | `low` | Execution telemetry is coupled to a supported framework launcher and should be evaluated with that launcher rather than adopted independently. |
+| `agent_run_usage` | `evaluate_later` | `low` | Usage collection is coupled to execution telemetry and a supported framework launcher and should be evaluated with them rather than adopted independently. |
+| `agent_run_usage_collector` | `evaluate_later` | `low` | Usage collection is coupled to execution telemetry and a supported framework launcher and should be evaluated with them rather than adopted independently. |
 | `architecture_scaffold` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `bug_report_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `ci_workflow` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |

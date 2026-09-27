@@ -2,7 +2,7 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness, outcome-evidence surface, and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/validate_agent_run_outcome.rb`, `schemas/agent-run-outcome-v1.schema.json`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+The validation surface depends on the root self-hosted harness, usage/outcome evidence surfaces, and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-usage.md`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, both evidence validators and schemas, the usage semantic-validator library, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
@@ -61,6 +61,8 @@ The focused Ruby targets use the same bundle:
 ```sh
 make test-launcher
 make test-claude-runtime
+make test-usage
+make test-outcomes
 make test-assessment
 ```
 
@@ -94,7 +96,7 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/validate_agent_run_outcome.rb`, `schemas/agent-run-outcome-v1.schema.json`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, the run-usage and outcome documentation/validators/schemas, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
 - `baseline/AGENTS.md`, `baseline/REVIEW.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - `baseline/REVIEW.md -> REVIEW.md` is a recommended repository-owned review-policy component; the root `REVIEW.md` is this repository's self-hosted specialised policy;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
@@ -103,7 +105,7 @@ The root `scripts/agent_host_env.sh` hook validates before Codex starts that the
 
 The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts.
 
-Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported runtime source artefacts must exist and every supported runtime has exactly one launcher. Claude Explore additionally has exactly one installer and policy; Codex retains its single prompt relationship. Planned runtimes declare identity and description only.
+Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported runtime source artefacts must exist and every supported runtime has exactly one launcher, telemetry helper, usage helper, and usage collector. Claude Explore additionally has exactly one installer and policy; Codex retains its single prompt relationship. Planned runtimes declare identity and description only.
 
 ## Extending validation
 
@@ -138,4 +140,4 @@ Schema version 2 deliberately does not validate these incidental or future relat
 
 ## Offline boundary
 
-After `make setup` has completed, `make lint`, `make test`, `make validate`, `make test-claude-runtime`, and all stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions uses normal checkout and Ruby setup with Bundler caching before it runs the same `make check` command used locally.
+After `make setup` has completed, `make lint`, `make test`, `make validate`, the focused launcher/runtime/usage/outcome targets, and all stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions uses normal checkout and Ruby setup with Bundler caching before it runs the same `make check` command used locally.

@@ -15,6 +15,14 @@ if [[ ! -f "$TELEMETRY_HELPER" || -L "$TELEMETRY_HELPER" ]]; then
 fi
 # shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
 source "$TELEMETRY_HELPER"
+USAGE_HELPER="$SCRIPT_DIR/agent_run_usage.sh"
+USAGE_COLLECTOR_SOURCE="$SCRIPT_DIR/agent_run_usage_collector.rb"
+if [[ ! -f "$USAGE_HELPER" || -L "$USAGE_HELPER" ]]; then
+  echo "Error: framework usage helper not found or unsafe: $USAGE_HELPER" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090 -- fixed framework-owned sibling of this launcher.
+source "$USAGE_HELPER"
 OUTCOME_RECONCILER_SOURCE="$SCRIPT_DIR/agent_run_outcomes.sh"
 OUTCOME_RECONCILER_DIR=""
 OUTCOME_RECONCILER_SNAPSHOT=""
@@ -118,7 +126,9 @@ cleanup() {
   local status=$?
 
   cleanup_codex_version_probe
+  agent_usage_stop
   agent_telemetry_finalize_pending "$status" "$GIT_BIN" "$REPO_ROOT"
+  agent_usage_publish
   if [[ -n "$OUTCOME_RECONCILER_SNAPSHOT" && -n "$AGENT_TELEMETRY_RUN_ID" ]]; then
     run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
       printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
@@ -336,6 +346,7 @@ Environment:
   DEVELOPER_NAME               Developer name to record for this session
   DEVELOPER_EMAIL              Developer email to record for this session
   DEBUG_CODEX_PROMPT           If set to 1, save final prompt to TMPDIR or /tmp before launch
+  AGENT_USAGE_TELEMETRY        Set to 0 to keep run telemetry but disable usage collection
 EOF
 }
 
@@ -374,20 +385,30 @@ require_numeric_env() {
 
 run_codex() {
   local status
+  local -a usage_config=()
 
   agent_telemetry_mark_launch_intent
+
+  if [[ "$AGENT_USAGE_MODE" == active ]]; then
+    usage_config=(
+      -c "$(agent_usage_codex_exporter_config)"
+      -c "otel.log_user_prompt=false"
+    )
+  fi
 
   if [[ -n "$CODEX_PROFILE" ]]; then
     env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
       -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
       -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
       -c "$CODEX_PATH_CONFIG" \
+      "${usage_config[@]}" \
       "$@" <&0 &
   else
     env "${CODEX_ENV[@]}" "$CODEX_BIN" \
       -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
       -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
       -c "$CODEX_PATH_CONFIG" \
+      "${usage_config[@]}" \
       "$@" <&0 &
   fi
 
@@ -524,6 +545,9 @@ validate_forwarded_codex_config() {
           die_usage "forwarded Codex config cannot override launcher-owned shell-environment policy"
           ;;
       esac
+      if [[ "${AGENT_TELEMETRY_ACTIVE:-0}" == 1 && "${AGENT_USAGE_TELEMETRY:-1}" != 0 && ( "$key" == otel || "$key" == otel.* ) ]]; then
+        die_usage "forwarded Codex config cannot override launcher-owned usage telemetry routing"
+      fi
     elif [[ "$argument" == -c || "$argument" == --config || "$argument" == -c=* || "$argument" == --config=* ]]; then
       die_usage "forwarded Codex config requires a key=value assignment"
     fi
@@ -718,7 +742,7 @@ observe_codex_requested_configuration() {
 }
 
 if ! codex_invocation_is_inspection; then
-  agent_telemetry_start codex-cli agent-development-framework/codex 2 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
+  agent_telemetry_start codex-cli agent-development-framework/codex 3 "$SCRIPT_DIR/run_codex.sh" "$REPOSITORY_HINT"
   observe_codex_requested_configuration
   if [[ -n "$RESUME_SESSION" ]]; then agent_telemetry_set_session launcher_requested "$RESUME_SESSION"; fi
 fi
@@ -779,6 +803,7 @@ if [[ "$AGENT_TELEMETRY_ACTIVE" == 1 ]]; then
   if probe_codex_version; then
     agent_telemetry_set_client_version "$CODEX_VERSION_VALUE"
   fi
+  agent_usage_start openai codex_otel_response_completed_v1 "$CODEX_VERSION_VALUE" "$USAGE_COLLECTOR_SOURCE" "$OUTCOME_RUBY_BIN"
 fi
 
 PROMPT_FILE="${PROMPT_FILE_OVERRIDE:-$PROMPT_FILE_DEFAULT}"
@@ -2044,7 +2069,7 @@ fi
 if ! agent_telemetry_capture_git START "$GIT_BIN" "$REPO_ROOT"; then
   agent_telemetry_warning "could not observe start Git state"
 fi
-unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR
+unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR AGENT_USAGE_TELEMETRY
 
 unset GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY_PATH
 unset JWT TOKEN_JSON

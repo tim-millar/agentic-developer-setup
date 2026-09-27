@@ -155,6 +155,18 @@ baseline:
       target_path: scripts/agent_run_telemetry.sh
       description: Bash-only helper used by the Codex launcher to persist common execution telemetry.
 
+    - name: agent_run_usage
+      category: agent-usage-helper
+      source_path: baseline/scripts/agent_run_usage.sh
+      target_path: scripts/agent_run_usage.sh
+      description: Fail-open lifecycle helper for terminal provider-native model-usage evidence.
+
+    - name: agent_run_usage_collector
+      category: agent-usage-collector
+      source_path: baseline/scripts/agent_run_usage_collector.rb
+      target_path: scripts/agent_run_usage_collector.rb
+      description: Trusted loopback-only OTLP HTTP/JSON collector for whitelisted usage evidence.
+
     - name: agent_run_outcomes
       category: agent-outcome-reconciliation
       source_path: baseline/scripts/agent_run_outcomes.sh
@@ -202,7 +214,7 @@ agent_runtimes:
     - id: codex
       display_name: Codex
       status: supported
-      runtime_version: 2
+      runtime_version: 3
       distribution: repository
       description: >
         Codex-first local agent runtime for deterministic implementation tasks,
@@ -217,6 +229,12 @@ agent_runtimes:
         - role: telemetry
           source_path: baseline/scripts/agent_run_telemetry.sh
           target_path: scripts/agent_run_telemetry.sh
+        - role: usage
+          source_path: baseline/scripts/agent_run_usage.sh
+          target_path: scripts/agent_run_usage.sh
+        - role: usage-collector
+          source_path: baseline/scripts/agent_run_usage_collector.rb
+          target_path: scripts/agent_run_usage_collector.rb
         - role: outcomes
           source_path: baseline/scripts/agent_run_outcomes.sh
           target_path: scripts/agent_run_outcomes.sh
@@ -231,10 +249,12 @@ agent_runtimes:
         - repository prompt assembly
         - optional repository-scoped GitHub App access
         - automatic local execution telemetry
+        - automatic local provider usage telemetry
         - optional automatic implementation-outcome reconciliation
       limitations:
         - runtime behaviour is specific to Codex
         - outcome reconciliation requires optional host GitHub CLI and Ruby availability
+        - usage collection requires optional trusted host Ruby availability and otherwise fails open
       configuration:
         type: codex
         access_modes:
@@ -251,7 +271,7 @@ agent_runtimes:
     - id: claude-explore
       display_name: Claude Code Explore
       status: supported
-      runtime_version: 2
+      runtime_version: 3
       distribution: global-user
       description: >
         Supervised exploratory engineering with reduced ambient authority and a
@@ -265,6 +285,10 @@ agent_runtimes:
           source_path: agent-runtimes/claude-explore/policy.sh
         - role: telemetry
           source_path: agent-runtimes/claude-explore/lib/agent_run_telemetry.sh
+        - role: usage
+          source_path: agent-runtimes/claude-explore/lib/agent_run_usage.sh
+        - role: usage-collector
+          source_path: agent-runtimes/claude-explore/lib/agent_run_usage_collector.rb
         - role: outcomes
           source_path: agent-runtimes/claude-explore/lib/agent_run_outcomes.sh
       supported_platforms:
@@ -281,12 +305,14 @@ agent_runtimes:
         - local Git commits under guarded command policy
         - deterministic local PostgreSQL access
         - automatic local execution telemetry
+        - automatic local provider usage telemetry
         - optional trusted-host implementation-outcome reconciliation
       limitations:
         - reduced-authority guardrail rather than same-user containment
         - finite command and credential deny lists
         - sandbox-permitted network and application-mediated services remain possible
         - outcome reconciliation requires optional host GitHub CLI and Ruby availability
+        - usage collection requires optional trusted host Ruby availability and otherwise fails open
       configuration:
         type: claude-explore
         policy_schema_version: 1
@@ -316,6 +342,8 @@ adoption_tiers:
       - Makefile
       - scripts/run_codex.sh
       - scripts/agent_run_telemetry.sh
+      - scripts/agent_run_usage.sh
+      - scripts/agent_run_usage_collector.rb
       - scripts/agent_run_outcomes.sh
       - lefthook.yml
       - .github/workflows/ci.yml

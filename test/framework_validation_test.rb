@@ -34,7 +34,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -598,6 +598,22 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("artefacts[1]: source_path/target_path pair does not match a baseline artefact")
   end
 
+  def test_supported_runtime_requires_usage_helper_and_collector
+    mutate do |metadata|
+      metadata["agent_runtimes"]["supported"].first["artefacts"].reject! do |artefact|
+        %w[usage usage-collector].include?(artefact["role"])
+      end
+    end
+
+    assert_fails("requires exactly one usage artefact", "requires exactly one usage-collector artefact")
+  end
+
+  def test_runtime_usage_pair_requires_the_usage_baseline_category
+    mutate { |metadata| metadata["baseline"]["required"][3]["category"] = "command-surface" }
+
+    assert_fails("artefacts[3].category", "expected: agent-usage-helper")
+  end
+
   def test_issue_template_pair_must_match_baseline
     mutate { |metadata| metadata["issue_templates"]["primary"]["target_path"] = "target/issues/other.md" }
 
@@ -605,7 +621,7 @@ class FrameworkValidationTest < Minitest::Test
   end
 
   def test_issue_template_baseline_category_must_match
-    mutate { |metadata| metadata["baseline"]["required"][3]["category"] = "issue-template-config" }
+    mutate { |metadata| metadata["baseline"]["required"][5]["category"] = "issue-template-config" }
 
     assert_fails("issue_templates.primary.category", "expected: issue-template")
   end
@@ -657,14 +673,16 @@ class FrameworkValidationTest < Minitest::Test
   private
 
   def build_fixture
-    %w[docs scripts schemas .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
+    %w[docs scripts schemas lib/agent_run_usage .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
       AGENTS.md README.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt scripts/run_codex.sh
-      docs/run-outcomes.md scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json
+      docs/run-usage.md docs/run-outcomes.md scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb
+      lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json
       scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md
-      baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/docs/AGENT_PROMPT.txt
+      baseline/scripts/run_codex.sh baseline/scripts/agent_run_telemetry.sh baseline/scripts/agent_run_usage.sh
+      baseline/scripts/agent_run_usage_collector.rb baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))
@@ -700,6 +718,8 @@ class FrameworkValidationTest < Minitest::Test
           baseline_entry("launcher", "agent-launcher", "baseline/scripts/run_codex.sh", "bin/codex"),
           baseline_entry("runtime_prompt", "agent-session-brief", "baseline/docs/AGENT_PROMPT.txt", "target/docs/AGENT_PROMPT.txt"),
           baseline_entry("telemetry", "agent-telemetry-helper", "baseline/scripts/agent_run_telemetry.sh", "bin/agent-run-telemetry"),
+          baseline_entry("usage", "agent-usage-helper", "baseline/scripts/agent_run_usage.sh", "bin/agent-run-usage"),
+          baseline_entry("usage_collector", "agent-usage-collector", "baseline/scripts/agent_run_usage_collector.rb", "bin/agent-run-usage-collector"),
           baseline_entry("issue_template", "issue-template", "baseline/issues/implementation.md", "target/issues/implementation.md")
         ],
         "recommended" => [
@@ -719,7 +739,9 @@ class FrameworkValidationTest < Minitest::Test
             "artefacts" => [
               {"role" => "launcher", "source_path" => "baseline/scripts/run_codex.sh", "target_path" => "bin/codex"},
               {"role" => "prompt", "source_path" => "baseline/docs/AGENT_PROMPT.txt", "target_path" => "target/docs/AGENT_PROMPT.txt"},
-              {"role" => "telemetry", "source_path" => "baseline/scripts/agent_run_telemetry.sh", "target_path" => "bin/agent-run-telemetry"}
+              {"role" => "telemetry", "source_path" => "baseline/scripts/agent_run_telemetry.sh", "target_path" => "bin/agent-run-telemetry"},
+              {"role" => "usage", "source_path" => "baseline/scripts/agent_run_usage.sh", "target_path" => "bin/agent-run-usage"},
+              {"role" => "usage-collector", "source_path" => "baseline/scripts/agent_run_usage_collector.rb", "target_path" => "bin/agent-run-usage-collector"}
             ],
             "supported_platforms" => ["macos", "linux"],
             "required_executables" => [{"name" => "bash", "minimum_version" => "3.2"}, {"name" => "codex"}],

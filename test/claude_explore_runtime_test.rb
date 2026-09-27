@@ -19,11 +19,13 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_install_runtime_info_idempotence_and_uninstall
     stdout, stderr, status = @harness.install
     assert status.success?, stderr
-    assert_includes stdout, "claude-explore 2 install"
+    assert_includes stdout, "claude-explore 3 install"
     assert File.symlink?(@harness.installed_launcher)
     assert_equal 0o600, File.stat(@harness.metadata).mode & 0o777
     assert_equal 0o700, File.stat(@harness.current_runtime).mode & 0o777
     assert_equal 0o700, File.stat(File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")).mode & 0o777
+    assert_equal 0o600, File.stat(File.join(@harness.current_runtime, "lib/agent_run_usage.sh")).mode & 0o777
+    assert_equal 0o700, File.stat(File.join(@harness.current_runtime, "lib/agent_run_usage_collector.rb")).mode & 0o777
 
     _stdout, stderr, status = @harness.install
     assert status.success?, stderr
@@ -91,6 +93,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_installer_syntax_checks_each_staged_script_before_activation
     malformed_paths = %w[
       lib/agent_run_telemetry.sh
+      lib/agent_run_usage.sh
       lib/claude_explore_runtime.sh
       policy.sh
       bin/claude-explore
@@ -488,6 +491,8 @@ class ClaudeExploreRuntimeTest < Minitest::Test
       ["lib/claude_explore_guard.sh", 0o600, "installed runtime content is missing or unsafe"],
       ["lib/claude_explore_runtime.sh", 0o722, "installed runtime content is missing or unsafe"],
       ["lib/agent_run_outcomes.sh", 0o600, "installed runtime content is missing or unsafe"],
+      ["lib/agent_run_usage.sh", 0o622, "usage runtime content is missing or unsafe"],
+      ["lib/agent_run_usage_collector.rb", 0o600, "usage collector is missing or unsafe"],
       ["policy.sh", 0o700, "installed runtime content is missing or unsafe"]
     ].each do |relative, mode, diagnostic|
       @harness.cleanup
@@ -581,6 +586,77 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
     assert_equal 19, status.exitstatus
     assert_equal 1, stderr.scan("AGENT_OUTCOME_WARNING:").length
+  end
+
+  def test_claude_usage_collection_owns_only_logs_and_retains_failed_run_evidence
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    payload = {
+      "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+        claude_usage_record("session-a", "claude-a", 10, 3, 5, 2, 123),
+        claude_usage_record("session-b", "claude-b", 7, 2, 0, 1, 45)
+      ]}]}]
+    }
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {
+      "PATH" => trusted_claude_usage_ruby_path,
+      "OTEL_METRICS_EXPORTER" => "console",
+      "OTEL_TRACES_EXPORTER" => "console",
+      "OTEL_EXPORTER_OTLP_ENDPOINT" => "http://metrics.example.test:4318",
+      "FAKE_CLAUDE_OTLP_JSON" => JSON.generate(payload),
+      "FAKE_CLAUDE_EXIT" => "19"
+    })
+
+    assert_equal 19, status.exitstatus, stderr
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "complete", usage.dig("collection", "state")
+    assert_equal %w[session-a session-b], usage.fetch("provider_sessions")
+    assert_equal 2, usage.fetch("measurements").length
+    assert_equal 168, usage.dig("cost_summary", "observed_usd_micros")
+    assert_equal 0o600, File.stat(File.join(@harness.telemetry_run_directories.fetch(0), "usage.json")).mode & 0o777
+    environment = @harness.read(@harness.env.fetch("FAKE_ENV_LOG"))
+    assert_includes environment, "OTEL_METRICS_EXPORTER=console\n"
+    assert_includes environment, "OTEL_TRACES_EXPORTER=console\n"
+    assert_includes environment, "OTEL_EXPORTER_OTLP_ENDPOINT=http://metrics.example.test:4318\n"
+    assert_includes environment, "OTEL_LOG_USER_PROMPTS=0\n"
+    assert_includes environment, "OTEL_LOG_ASSISTANT_RESPONSES=0\n"
+    assert_includes environment, "OTEL_LOG_TOOL_DETAILS=0\n"
+    assert_includes environment, "OTEL_LOG_TOOL_CONTENT=0\n"
+    refute_includes environment, "OTEL_LOG_RAW_API_BODIES="
+  end
+
+  def test_claude_usage_opt_out_preserves_existing_log_exporter_and_records_disabled
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {
+      "AGENT_USAGE_TELEMETRY" => "0",
+      "OTEL_LOGS_EXPORTER" => "console",
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" => "http://user.example.test/logs"
+    })
+
+    assert status.success?, stderr
+    assert_equal "disabled", @harness.usage_records.fetch(0).dig("collection", "state")
+    environment = @harness.read(@harness.env.fetch("FAKE_ENV_LOG"))
+    assert_includes environment, "OTEL_LOGS_EXPORTER=console\n"
+    assert_includes environment, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://user.example.test/logs\n"
+  end
+
+  def test_claude_missing_trusted_ruby_makes_usage_unavailable_without_blocking_workload
+    @harness.cleanup
+    @harness = ClaudeExploreHarness.new(telemetry: true)
+    install!
+    path_without_ruby = @harness.protected_host_path_without("ruby")
+
+    _stdout, stderr, status = @harness.runtime(extra_env: {"PATH" => path_without_ruby, "FAKE_CLAUDE_EXIT" => "17"})
+
+    assert_equal 17, status.exitstatus, stderr
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "unavailable", usage.dig("collection", "state")
+    assert_equal "collector_unavailable", usage.dig("collection", "reason")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
   end
 
   def test_repository_controlled_outcome_tools_are_not_selected_for_host_reconciliation
@@ -740,24 +816,24 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     preserved_session = File.join(@harness.sessions_root, "claude-explore.active")
     FileUtils.mkdir_p(preserved_session)
     File.chmod(0o700, preserved_session)
-    source_v3 = @harness.copy_runtime_source(version: 3)
-    _stdout, stderr, status = @harness.install_from(File.join(source_v3, "install.sh"), "upgrade")
+    source_v4 = @harness.copy_runtime_source(version: 4)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v4, "install.sh"), "upgrade")
     assert status.success?, stderr
-    assert_match(%r{/versions/3\z}, File.realpath(File.join(@harness.data_root, "current")))
-    assert_match(%r{/versions/3/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
-    assert_includes @harness.read(@harness.metadata), "runtime_version=3"
+    assert_match(%r{/versions/4\z}, File.realpath(File.join(@harness.data_root, "current")))
+    assert_match(%r{/versions/4/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_includes @harness.read(@harness.metadata), "runtime_version=4"
     assert Dir.exist?(preserved_session), "upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
 
     active_before = File.realpath(File.join(@harness.data_root, "current"))
     metadata_before = @harness.read(@harness.metadata)
-    source_v4 = @harness.copy_runtime_source(version: 4, fail_metadata_activation: true)
-    _stdout, stderr, status = @harness.install_from(File.join(source_v4, "install.sh"), "upgrade")
+    source_v5 = @harness.copy_runtime_source(version: 5, fail_metadata_activation: true)
+    _stdout, stderr, status = @harness.install_from(File.join(source_v5, "install.sh"), "upgrade")
     refute status.success?
     assert_includes stderr, "injected metadata activation failure"
     assert_equal active_before, File.realpath(File.join(@harness.data_root, "current"))
     assert_equal metadata_before, @harness.read(@harness.metadata)
-    assert_match(%r{/versions/3/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_match(%r{/versions/4/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
     assert Dir.exist?(preserved_session), "failed upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
   end
@@ -966,6 +1042,34 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def install!
     _stdout, stderr, status = @harness.install
     assert status.success?, stderr
+  end
+
+  def trusted_claude_usage_ruby_path
+    tools = @harness.protected_host_directory("claude-usage-tools-")
+    ruby = File.join(tools, "ruby")
+    File.symlink(File.realpath(RbConfig.ruby), ruby)
+    [tools, @harness.env.fetch("PATH")].join(File::PATH_SEPARATOR)
+  end
+
+  def claude_usage_record(session, model, input, output, cache_read, cache_write, cost)
+    attributes = {
+      "session.id" => session,
+      "model" => model,
+      "input_tokens" => input,
+      "output_tokens" => output,
+      "cache_read_tokens" => cache_read,
+      "cache_creation_tokens" => cache_write,
+      "cost_usd_micros" => cost,
+      "query_source" => "repl_main_thread",
+      "speed" => "normal"
+    }
+    {
+      "body" => {"stringValue" => "claude_code.api_request"},
+      "attributes" => attributes.map do |key, value|
+        encoded = value.is_a?(Integer) ? {"intValue" => value.to_s} : {"stringValue" => value}
+        {"key" => key, "value" => encoded}
+      end
+    }
   end
 
   def assert_classification(argv, expected_status, expected_output)

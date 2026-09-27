@@ -20,8 +20,10 @@ class ClaudeExploreHarness
     FileUtils.mkdir_p([home, fake_bin])
     @claude_target = File.join(root, "claude-2.1.224")
     @claude_launcher = File.join(fake_bin, "claude")
+    @otel_sender = File.join(root, "otel-sender")
     @claude_version_env_log = File.join(root, "claude-version-environment.log")
     write_executable(claude_target, fake_claude("2.1.224"))
+    write_executable(@otel_sender, fake_otel_sender)
     File.symlink(claude_target, claude_launcher)
     %w[git psql].each { |name| write_executable(File.join(fake_bin, name), fake_delegate(name)) }
     @env = {
@@ -37,6 +39,7 @@ class ClaudeExploreHarness
       "FAKE_SETTINGS_COPY" => File.join(root, "settings.json"),
       "FAKE_MCP_COPY" => File.join(root, "mcp.json"),
       "FAKE_ENV_LOG" => File.join(root, "environment.log"),
+      "FAKE_OTEL_SENDER" => @otel_sender,
       "FAKE_VERSION_ENV_LOG" => claude_version_env_log,
       "FAKE_GIT_INJECTION_MARKER" => File.join(root, "git-injection"),
       "FAKE_PSQLRC_MARKER" => File.join(root, "psqlrc-ran"),
@@ -60,6 +63,27 @@ class ClaudeExploreHarness
     File.chmod(0o700, path)
     @protected_host_paths << path
     path
+  end
+
+  def protected_host_path_without(*excluded_names)
+    destination = protected_host_directory("claude-protected-path-")
+    source_directories = [*ENV.fetch("PATH", "").split(File::PATH_SEPARATOR), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].uniq
+    source_directories.each do |directory|
+      next unless File.directory?(directory)
+
+      Dir.children(directory).sort.each do |name|
+        next if excluded_names.include?(name)
+
+        source = File.join(directory, name)
+        target = File.join(destination, name)
+        next if File.exist?(target) || File.symlink?(target) || !File.file?(source) || !File.executable?(source)
+
+        File.symlink(File.realpath(source), target)
+      rescue Errno::ENOENT, Errno::EACCES
+        next
+      end
+    end
+    destination
   end
 
   def install(operation = "install", claude: claude_launcher, extra_env: {})
@@ -112,6 +136,13 @@ class ClaudeExploreHarness
   def telemetry_records
     telemetry_run_directories.filter_map do |directory|
       path = File.join(directory, "run.json")
+      JSON.parse(File.binread(path)) if File.file?(path)
+    end
+  end
+
+  def usage_records
+    telemetry_run_directories.filter_map do |directory|
+      path = File.join(directory, "usage.json")
       JSON.parse(File.binread(path)) if File.file?(path)
     end
   end
@@ -213,6 +244,9 @@ class ClaudeExploreHarness
         [ "$argument" = --mcp-config ] && previous=mcp
       done
       /usr/bin/env > "$FAKE_ENV_LOG"
+      if [ -n "${FAKE_CLAUDE_OTLP_JSON:-}" ]; then
+        "$FAKE_OTEL_SENDER" "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" "$OTEL_EXPORTER_OTLP_LOGS_HEADERS" "$FAKE_CLAUDE_OTLP_JSON" || exit 90
+      fi
       if [ -n "${FAKE_CREATE_OUTCOME_TOOL_DIR:-}" ]; then
         /bin/mkdir -p "$FAKE_CREATE_OUTCOME_TOOL_DIR"
         printf '#!/bin/sh\nexit 97\n' > "$FAKE_CREATE_OUTCOME_TOOL_DIR/gh"
@@ -268,5 +302,21 @@ class ClaudeExploreHarness
         "${PGHOST-unset}" "${GIT_CONFIG_COUNT-unset}" "${GIT_CONFIG_KEY_0-unset}" "${GIT_CONFIG_VALUE_0-unset}" "${PGPASSFILE-unset}" >> "$FAKE_DELEGATE_LOG"
       exit 0
     SH
+  end
+
+  def fake_otel_sender
+    <<~RUBY
+      #!#{RbConfig.ruby}
+      require "socket"
+      require "uri"
+      endpoint, header, body = ARGV
+      uri = URI(endpoint)
+      name, value = header.split("=", 2)
+      socket = TCPSocket.new(uri.host, uri.port)
+      socket.write("POST \#{uri.path} HTTP/1.1\r\nHost: \#{uri.host}\r\nContent-Type: application/json\r\nContent-Length: \#{body.bytesize}\r\n\#{name}: \#{value}\r\nConnection: close\r\n\r\n\#{body}")
+      response = socket.read
+      socket.close
+      exit(response.include?("200 OK") ? 0 : 1)
+    RUBY
   end
 end

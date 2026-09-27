@@ -51,7 +51,7 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_equal "codex-cli", record.dig("runtime", "client", "id")
     assert_equal({"evidence_kind" => "runtime_observed", "value" => "1.2.3"}, record.dig("runtime", "client", "version"))
     assert_equal "agent-development-framework/codex", record.dig("runtime", "harness", "id")
-    assert_equal 2, record.dig("runtime", "harness", "version")
+    assert_equal 3, record.dig("runtime", "harness", "version")
     expected_revision = "sha256:#{Digest::SHA256.file(@harness.launcher).hexdigest}"
     assert_equal expected_revision, record.dig("runtime", "harness", "revision")
     assert_equal "gpt-test", record.dig("configuration", "model", "requested", "value")
@@ -72,7 +72,7 @@ class CodexRunTelemetryTest < Minitest::Test
     assert_equal 0o600, File.stat(path).mode & 0o777
     refute File.exist?(File.join(File.dirname(directory), "runs.json"))
     refute File.exist?(File.join(File.dirname(directory), "runs.jsonl"))
-    assert_equal ["run.json"], Dir.children(directory)
+    assert_equal %w[run.json usage.json], Dir.children(directory).sort
 
     resumed = @harness.run("--resume", "session-123")
     assert resumed.status.success?, resumed.stderr
@@ -610,6 +610,7 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
     assert_equal "claude-code", fresh.dig("runtime", "client", "id")
     assert_equal "2.1.224", fresh.dig("runtime", "client", "version", "value")
     assert_equal "agent-development-framework/claude-explore", fresh.dig("runtime", "harness", "id")
+    assert_equal 3, fresh.dig("runtime", "harness", "version")
     assert_equal "sonnet", fresh.dig("configuration", "model", "requested", "value")
     assert_equal "high", fresh.dig("configuration", "reasoning_effort", "requested", "value")
     assert_unavailable fresh.dig("configuration", "model", "initial_effective")

@@ -6,6 +6,7 @@ Supported framework runtimes can opportunistically correlate immutable execution
 <telemetry-root>/<run_id>/
   run.json
   task.txt       # when captured by execution telemetry
+  usage.json     # terminal provider usage evidence for post-#56 runs
   outcome.json  # implementation-outcome evidence
 ```
 
