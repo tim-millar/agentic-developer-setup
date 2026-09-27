@@ -150,6 +150,18 @@ class AssessmentAssessorTest < Minitest::Test
     refute result["roadmap"].any? { |step| step["component"] == "agent_run_outcomes" }
   end
 
+  def test_missing_agent_run_usage_components_are_evaluated_with_telemetry_and_launcher
+    result = assess
+    recommendations = result["component_recommendations"].to_h { |item| [item["component"], item] }
+
+    %w[agent_run_usage agent_run_usage_collector].each do |component|
+      recommendation = recommendations.fetch(component)
+      assert_equal "evaluate_later", recommendation["state"]
+      assert_equal "Usage collection is coupled to execution telemetry and a supported framework launcher and should be evaluated with them rather than adopted independently.", recommendation["rationale"]
+      refute result["roadmap"].any? { |step| step["component"] == component }
+    end
+  end
+
   def test_detected_agent_run_telemetry_without_launcher_is_still_evaluated_later
     telemetry_source = File.join(AssessmentTestSupport::ROOT, "baseline/scripts/agent_run_telemetry.sh")
     scenarios = {

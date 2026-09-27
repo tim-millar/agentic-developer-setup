@@ -25,9 +25,11 @@ runs/
   <run-id>/
     run.json
     task.txt        # only when pre-run task-specific text is available
+    usage.json      # terminal provider usage evidence for post-#56 runs
+    outcome.json    # evolving implementation-outcome evidence when available
 ```
 
-Framework-created directories use mode `0700` and files use mode `0600`. Updates stage a sibling temporary file and atomically replace `run.json`; independently generated run directories avoid a shared append lock or mutable global index. A terminal v1 `run.json` is immutable. Implementation-lifecycle enrichment belongs in the per-run `outcome.json` sidecar documented in [`run-outcomes.md`](run-outcomes.md); it joins by `run_id` rather than rewriting the base record.
+Framework-created directories use mode `0700` and files use mode `0600`. Updates stage a sibling temporary file and atomically replace `run.json`; independently generated run directories avoid a shared append lock or mutable global index. A terminal v1 `run.json` is immutable. Provider model-usage evidence belongs in terminal [`usage.json`](run-usage.md), while implementation-lifecycle enrichment belongs in the evolving [`outcome.json`](run-outcomes.md). Both join by `run_id` rather than rewriting the base record.
 
 Records remain until the user removes them. The framework performs no automatic pruning, upload, synchronisation, or central ingestion.
 
@@ -101,4 +103,4 @@ Claude Explore records supported explicit model, effort, and resume/session argu
 
 This record is the machine-readable counterpart to the human-readable PR provenance introduced by #52, but telemetry does not select a primary implementation run or mutate pull requests. Provider usage and cost evidence from #56 and implementation-outcome evidence from #57 join to the immutable record by `run_id`; they do not add those fields to schema v1. Controlled evaluations from #6 retain their separate `evaluation_run_id` and may reference one or more ordinary run IDs.
 
-Issue #53 owns the canonical common execution `run_id`. Future non-interactive execution artefacts from #16 must reuse or reference that identity instead of creating a competing execution-run identifier. This implementation does not add provider accounting, outcome correlation, controlled evaluation, model routing, or non-interactive execution.
+Issue #53 owns the canonical common execution `run_id`. Future non-interactive execution artefacts from #16 must reuse or reference that identity instead of creating a competing execution-run identifier. Provider accounting now lives in the independent sidecar documented in [`run-usage.md`](run-usage.md); the execution schema still does not absorb provider accounting, outcome correlation, controlled evaluation, model routing, or non-interactive execution.

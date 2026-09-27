@@ -10,6 +10,8 @@ class LauncherHarness
   REPOSITORY_ROOT = File.expand_path("../..", __dir__)
   BASELINE_LAUNCHER = File.join(REPOSITORY_ROOT, "baseline", "scripts", "run_codex.sh")
   TELEMETRY_HELPER = File.join(REPOSITORY_ROOT, "baseline", "scripts", "agent_run_telemetry.sh")
+  USAGE_HELPER = File.join(REPOSITORY_ROOT, "baseline", "scripts", "agent_run_usage.sh")
+  USAGE_COLLECTOR = File.join(REPOSITORY_ROOT, "baseline", "scripts", "agent_run_usage_collector.rb")
   OWNER = "example-owner"
   REPOSITORY = "example-repository"
   APP_ID = "12345"
@@ -236,6 +238,13 @@ class LauncherHarness
   def telemetry_records
     telemetry_run_directories.filter_map do |directory|
       path = File.join(directory, "run.json")
+      JSON.parse(File.binread(path)) if File.file?(path)
+    end
+  end
+
+  def usage_records
+    telemetry_run_directories.filter_map do |directory|
+      path = File.join(directory, "usage.json")
       JSON.parse(File.binread(path)) if File.file?(path)
     end
   end
@@ -475,6 +484,27 @@ class LauncherHarness
     BASH
   end
 
+  def fail_telemetry_clock_from(name, failure_call:)
+    raise ArgumentError, "unsupported telemetry clock" unless %w[timestamp epoch].include?(name)
+
+    counter = "#{helper_clock_file}-#{name}"
+    success = if name == "timestamp"
+      "/usr/bin/printf '2026-09-13T12:00:%02d.000Z' \"$count\""
+    else
+      "/usr/bin/printf '%s' \"$((100 + count))\""
+    end
+    append_telemetry_helper(<<~BASH)
+      agent_telemetry_#{name}() {
+        local count=0
+        if [[ -f #{counter.dump} ]]; then count=$(/bin/cat #{counter.dump} 2>/dev/null || /usr/bin/printf '0'); fi
+        count=$((count + 1))
+        /usr/bin/printf '%s' "$count" > #{counter.dump}
+        [[ "$count" -lt #{Integer(failure_call)} ]] || return 1
+        #{success}
+      }
+    BASH
+  end
+
   def fail_telemetry_randomness
     append_telemetry_helper("agent_telemetry_random_hex() { return 1; }\n")
   end
@@ -621,6 +651,8 @@ class LauncherHarness
     @extra_prompt_file = File.join(repository, "docs", "EXTRA_PROMPT.txt")
     FileUtils.cp(BASELINE_LAUNCHER, launcher, preserve: true)
     FileUtils.cp(TELEMETRY_HELPER, File.join(repository, "scripts", "agent_run_telemetry.sh"), preserve: true)
+    FileUtils.cp(USAGE_HELPER, File.join(repository, "scripts", "agent_run_usage.sh"), preserve: true)
+    FileUtils.cp(USAGE_COLLECTOR, File.join(repository, "scripts", "agent_run_usage_collector.rb"), preserve: true)
     File.chmod(0o755, launcher)
     File.write(prompt_file, "Base prompt for launcher tests.\n")
 
@@ -706,6 +738,8 @@ class LauncherHarness
       #!#{RbConfig.ruby}
       require "fileutils"
       require "json"
+      require "socket"
+      require "uri"
 
       if ARGV == ["--version"]
         File.binwrite(#{@codex_version_env_log.dump}, JSON.generate(ENV.to_h))
@@ -764,6 +798,19 @@ class LauncherHarness
       record["stdin"] = STDIN.read if ENV["FAKE_CODEX_READ_STDIN"] == "1"
       File.open(ENV.fetch("FAKE_CODEX_LOG"), "a", 0o600) { |file| file.puts(JSON.generate(record)) }
       File.open(ENV.fetch("FAKE_EVENT_LOG"), "a", 0o600) { |file| file.puts("codex:start") }
+      if ENV["FAKE_CODEX_OTLP_JSON"]
+        exporter = ARGV.find { |argument| argument.include?("otel.exporter=") }
+        abort "missing launcher-owned Codex OTel exporter" unless exporter
+        endpoint = exporter[/endpoint = "([^"]+)"/, 1]
+        usage_token = exporter[/"x-agent-run-usage-token" = "([0-9a-f]+)"/, 1]
+        uri = URI(endpoint)
+        body = ENV.fetch("FAKE_CODEX_OTLP_JSON")
+        socket = TCPSocket.new(uri.host, uri.port)
+        socket.write("POST \#{uri.path} HTTP/1.1\r\nHost: \#{uri.host}\r\nContent-Type: application/json\r\nContent-Length: \#{body.bytesize}\r\nx-agent-run-usage-token: \#{usage_token}\r\nConnection: close\r\n\r\n\#{body}")
+        response = socket.read
+        socket.close
+        abort "Codex OTel fixture was rejected" unless response.include?("200 OK")
+      end
       case ENV["FAKE_CODEX_GIT_ACTION"]
       when "untracked"
         File.binwrite("child-untracked.txt", "created by fake Codex\n")

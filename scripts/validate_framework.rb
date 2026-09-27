@@ -13,7 +13,7 @@ class FrameworkValidator
   ACCESS_MODES = %w[disabled app].freeze
   ADAPTER_STATUSES = %w[supported planned].freeze
   RUNTIME_DISTRIBUTIONS = %w[repository global-user].freeze
-  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry outcomes].freeze
+  RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry usage usage-collector outcomes].freeze
   RUNTIME_PLATFORMS = %w[macos linux].freeze
 
   def initialize(root)
@@ -264,6 +264,8 @@ class FrameworkValidator
     role_values = roles.map(&:first)
     error(location, "supported runtime requires exactly one launcher artefact") unless role_values.count("launcher") == 1
     error(location, "supported runtime requires exactly one telemetry artefact") unless role_values.count("telemetry") == 1
+    error(location, "supported runtime requires exactly one usage artefact") unless role_values.count("usage") == 1
+    error(location, "supported runtime requires exactly one usage-collector artefact") unless role_values.count("usage-collector") == 1
     if configuration_type == "claude-explore"
       %w[installer policy].each do |role|
         error(location, "claude-explore requires exactly one #{role} artefact") unless role_values.count(role) == 1
@@ -491,7 +493,9 @@ class FrameworkValidator
         expected_category = {
           "launcher" => "agent-launcher",
           "prompt" => "agent-session-brief",
-          "telemetry" => "agent-telemetry-helper"
+          "telemetry" => "agent-telemetry-helper",
+          "usage" => "agent-usage-helper",
+          "usage-collector" => "agent-usage-collector"
         }[artefact["role"]]
         next unless expected_category
 
@@ -676,7 +680,7 @@ class FrameworkValidator
   end
 
   def validate_repository_structure
-    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_agent_run_outcome.rb schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
+    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
     required_directories = %w[docs scripts baseline prompts adapters]
     required_files.each { |path| validate_existing_source(path, "repository structure: #{path}", :file) }
     required_directories.each { |path| validate_existing_source(path, "repository structure: #{path}", :directory) }

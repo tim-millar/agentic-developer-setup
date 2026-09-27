@@ -2,6 +2,7 @@
 
 require "minitest/autorun"
 require "timeout"
+require_relative "../lib/agent_run_usage/validator"
 require_relative "support/launcher_harness"
 
 class LauncherTest < Minitest::Test
@@ -97,6 +98,8 @@ class LauncherTest < Minitest::Test
     launcher = File.join(outside, "run_codex.sh")
     FileUtils.cp(LauncherHarness::BASELINE_LAUNCHER, launcher, preserve: true)
     FileUtils.cp(LauncherHarness::TELEMETRY_HELPER, File.join(outside, "agent_run_telemetry.sh"), preserve: true)
+    FileUtils.cp(LauncherHarness::USAGE_HELPER, File.join(outside, "agent_run_usage.sh"), preserve: true)
+    FileUtils.cp(LauncherHarness::USAGE_COLLECTOR, File.join(outside, "agent_run_usage_collector.rb"), preserve: true)
 
     stdout, stderr, status = Open3.capture3(
       @harness.base_env,
@@ -446,6 +449,27 @@ class LauncherTest < Minitest::Test
     assert_equal @harness.expected_codex_args(*arguments, @harness.expected_prompt),
       @harness.invocation.fetch("args")
     assert_path_contract(@harness.inherited_path)
+  end
+
+  def test_active_usage_collection_rejects_all_supported_forwarded_otel_config_forms_before_codex
+    cases = [
+      ["-c", 'otel.exporter="user"'],
+      ["--config", "otel.log_user_prompt=true"],
+      ['--config=otel.exporter="user"'],
+      ['-c=otel.exporter="user"'],
+      ['-cotel="user"']
+    ]
+
+    cases.each do |arguments|
+      @harness.close
+      @harness = LauncherHarness.new(telemetry: true)
+      result = @harness.run(*arguments, env: {"PATH" => trusted_usage_ruby_path})
+
+      assert_equal 2, result.status.exitstatus, failure_message(arguments.join(" "), result)
+      assert_includes result.stderr, "cannot override launcher-owned usage telemetry routing"
+      assert_empty @harness.codex_invocations
+      assert_equal "complete", @harness.usage_records.fetch(0).dig("collection", "state")
+    end
   end
 
   def test_bootstrap_path_cannot_replace_codex_or_launcher_security_tools
@@ -1715,6 +1739,254 @@ class LauncherTest < Minitest::Test
     assert_equal @harness.expected_codex_args("resume", "abc"), @harness.invocation.fetch("args")
   end
 
+  def test_codex_usage_collection_is_automatic_request_level_and_preserves_failed_child_status
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    host_path = trusted_usage_ruby_path
+    payload = {
+      "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+        codex_usage_record("thread-a", "gpt-a", 100, 20, 60, 10, 8),
+        codex_usage_record("thread-b", "gpt-b", 40, 5, 5, 0, 2)
+      ]}]}]
+    }
+
+    result = @harness.run(env: {
+      "PATH" => host_path,
+      "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload),
+      "FAKE_CODEX_EXIT" => "23"
+    })
+
+    assert_equal 23, result.status.exitstatus, failure_message("Codex usage collection", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "complete", usage.dig("collection", "state")
+    assert_equal %w[thread-a thread-b], usage.fetch("provider_sessions")
+    assert_equal %w[gpt-a gpt-b], usage.fetch("measurements").map { |measurement| measurement.fetch("model") }
+    assert_equal 2, usage.dig("observed_totals", "measurement_count")
+    assert_equal "unavailable", usage.dig("cost_summary", "state")
+    assert_equal "source_does_not_report_cost", usage.dig("cost_summary", "reason")
+    assert_equal 0o600, File.stat(File.join(@harness.telemetry_run_directories.fetch(0), "usage.json")).mode & 0o777
+    assert_equal 23, @harness.telemetry_records.fetch(0).dig("termination", "child_exit_code")
+    args = @harness.invocation.fetch("args")
+    configs = args.each_index.filter_map { |index| args[index + 1] if args[index] == "-c" }
+    assert configs.any? { |config| config.start_with?("otel.exporter=") }
+    assert_includes configs, "otel.log_user_prompt=false"
+  end
+
+  def test_codex_usage_collector_receives_no_ambient_authority
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    collector_environment_log = File.join(@harness.root, "usage-collector-environment.jsonl")
+    host_path = trusted_usage_ruby_path(environment_log: collector_environment_log)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    outcome_log = File.join(@harness.root, "outcome.log")
+    payload = {
+      "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+        codex_usage_record("thread-minimal-env", "gpt-minimal-env", 12, 4, 2, 1, 1)
+      ]}]}]
+    }
+    secret_environment = {
+      "GITHUB_APP_ID" => LauncherHarness::APP_ID,
+      "GITHUB_APP_INSTALLATION_ID" => LauncherHarness::INSTALLATION_ID,
+      "GITHUB_APP_PRIVATE_KEY_PATH" => @harness.key_file,
+      "GH_TOKEN" => "synthetic-gh-token",
+      "GITHUB_TOKEN" => "synthetic-github-token",
+      "GITHUB_PAT" => "synthetic-github-pat",
+      "INSTALL_TOKEN" => "synthetic-install-token",
+      "AGENT_GITHUB_TOKEN_HELPER" => "/synthetic/token-helper",
+      "GIT_ASKPASS" => "/synthetic/askpass",
+      "SSH_AUTH_SOCK" => "/synthetic/ssh-agent.sock",
+      "AWS_SECRET_ACCESS_KEY" => "synthetic-cloud-secret",
+      "DATABASE_URL" => "postgres://synthetic-database-secret",
+      "SYNTHETIC_USAGE_COLLECTOR_SECRET" => "synthetic-arbitrary-secret"
+    }
+
+    result = @harness.run_app(env: secret_environment.merge(
+      "PATH" => host_path,
+      "FAKE_EXPECTED_LAUNCHER_PATH" => host_path,
+      "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload),
+      "FAKE_CODEX_EXIT" => "23",
+      "FAKE_OUTCOME_LOG" => outcome_log
+    ))
+
+    assert_equal 23, result.status.exitstatus, failure_message("minimal Codex collector environment", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "complete", usage.dig("collection", "state")
+    assert_equal "thread-minimal-env", usage.dig("measurements", 0, "provider_session_id")
+    %w[HOME PATH LANG LC_ALL LC_CTYPE TMPDIR].each do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    secret_environment.each_key do |name|
+      refute_includes collector_environment_names(collector_environment_log), name
+    end
+    secret_environment.each_value { |secret| refute_includes JSON.generate(usage), secret }
+
+    assert secret_fact("GH_TOKEN", "matches_installation_token")
+    assert secret_fact("GITHUB_TOKEN", "matches_installation_token")
+    assert secret_fact("INSTALL_TOKEN", "matches_installation_token")
+    assert_equal "set", env_fact("AGENT_GITHUB_TOKEN_HELPER", "state")
+    assert_equal "set", env_fact("GIT_ASKPASS", "state")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
+    assert_equal ["--automatic", @harness.telemetry_run_directories.fetch(0).then { |directory| "--run #{File.basename(directory)}" }],
+      File.readlines(outcome_log, chomp: true)
+  end
+
+  def test_sanitized_codex_collector_setup_failure_is_fail_open
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    host_path = trusted_usage_ruby_path(required_environment: "SYNTHETIC_USAGE_COLLECTOR_REQUIRED")
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    outcome_log = File.join(@harness.root, "outcome.log")
+
+    result = @harness.run(env: {
+      "PATH" => host_path,
+      "SYNTHETIC_USAGE_COLLECTOR_REQUIRED" => "present-only-in-parent",
+      "FAKE_CODEX_EXIT" => "17",
+      "FAKE_OUTCOME_LOG" => outcome_log
+    })
+
+    assert_equal 17, result.status.exitstatus, failure_message("sanitized collector setup failure", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "unavailable", usage.dig("collection", "state")
+    assert_equal "collector_setup_failed", usage.dig("collection", "reason")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
+    assert_equal 1, @harness.codex_invocations.length
+    assert_equal 2, File.readlines(outcome_log, chomp: true).length
+  end
+
+  def test_codex_usage_observed_before_a_signalled_child_is_retained
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    payload = {
+      "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+        codex_usage_record("thread-signal", "gpt-signal", 12, 4, 2, 0, 1)
+      ]}]}]
+    }
+    stdin, stdout, stderr, wait_thread = @harness.spawn(
+      env: {
+        "PATH" => trusted_usage_ruby_path,
+        "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload),
+        "FAKE_CODEX_WAIT" => "1"
+      }
+    )
+    stdin.close
+    wait_until { File.exist?(@harness.started_marker) }
+    Process.kill("TERM", wait_thread.pid)
+    status = Timeout.timeout(10) { wait_thread.value }
+    captured_stdout = stdout.read
+    captured_stderr = stderr.read
+    stdout.close
+    stderr.close
+
+    result = LauncherHarness::Result.new(stdout: captured_stdout, stderr: captured_stderr, status: status)
+    assert_equal 143, status.exitstatus, failure_message("signalled Codex usage", result)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "complete", usage.dig("collection", "state")
+    assert_equal 1, usage.dig("observed_totals", "measurement_count")
+    assert_equal "thread-signal", usage.dig("measurements", 0, "provider_session_id")
+    assert_equal 143, @harness.telemetry_records.fetch(0).dig("termination", "child_exit_code")
+  ensure
+    if wait_thread&.alive?
+      Process.kill("KILL", wait_thread.pid)
+      wait_thread.value
+    end
+  end
+
+  def test_codex_usage_opt_out_leaves_provider_otel_arguments_untouched_and_records_disabled
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    forwarded = '--config=otel.exporter="http://127.0.0.1:4318/v1/logs"'
+    result = @harness.run(forwarded, env: {"AGENT_USAGE_TELEMETRY" => "0"})
+
+    assert_success(result, "Codex usage opt-out")
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "disabled", usage.dig("collection", "state")
+    assert_includes @harness.invocation.fetch("args"), forwarded
+  end
+
+  def test_codex_usage_collector_unavailable_fails_open_and_keeps_run_telemetry
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    helper = @harness.write_repository_file("scripts/agent_run_outcomes.sh", <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$*" >> "$FAKE_OUTCOME_LOG"
+    SH
+    File.chmod(0o755, helper)
+    @harness.commit_all("Add synthetic outcome reconciler")
+    outcome_log = File.join(@harness.root, "outcome.log")
+    FileUtils.rm(File.join(@harness.repository, "scripts/agent_run_usage_collector.rb"))
+    forwarded = 'otel.exporter="http://127.0.0.1:4318/v1/logs"'
+    result = @harness.run("--allow-dirty", "-c", forwarded, env: {"FAKE_CODEX_EXIT" => "17", "FAKE_OUTCOME_LOG" => outcome_log})
+
+    assert_equal 17, result.status.exitstatus
+    assert_includes @harness.invocation.fetch("args"), forwarded
+    assert_equal "unavailable", @harness.usage_records.fetch(0).dig("collection", "state")
+    assert_equal "collector_unavailable", @harness.usage_records.fetch(0).dig("collection", "reason")
+    assert_nil @harness.usage_records.fetch(0).dig("observed_totals", "input_total")
+    assert_equal "runtime_failed", @harness.telemetry_records.fetch(0).fetch("state")
+    outcome_invocations = File.readlines(outcome_log, chomp: true)
+    assert_equal 2, outcome_invocations.length
+    assert_equal "--automatic", outcome_invocations.fetch(0)
+    assert_match(/\A--run run-/, outcome_invocations.fetch(1))
+  end
+
+  def test_codex_usage_survives_terminal_execution_telemetry_timestamp_failures
+    [
+      [3, "child finish timestamp"],
+      [4, "run finish timestamp"]
+    ].each do |failure_call, warning|
+      @harness.close
+      @harness = LauncherHarness.new(telemetry: true)
+      @harness.override_telemetry_clock("timestamp", fail_on: failure_call)
+      payload = {
+        "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
+          codex_usage_record("thread-retained", "gpt-retained", 3, 5, 1, 2, 2)
+        ]}]}]
+      }
+
+      result = @harness.run("--allow-dirty", env: {
+        "PATH" => trusted_usage_ruby_path,
+        "FAKE_CODEX_OTLP_JSON" => JSON.generate(payload)
+      })
+
+      assert_success(result, warning)
+      assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe #{warning}"
+      assert_equal "started", @harness.telemetry_records.fetch(0).fetch("state")
+      usage = @harness.usage_records.fetch(0)
+      assert_equal "complete", usage.dig("collection", "state")
+      assert_equal 2, usage.dig("measurements", 0, "tokens", "input_uncached")
+      validator = AgentRunUsage::Validator.new(usage)
+      assert validator.validate, validator.errors.join("\n")
+    end
+  end
+
+  def test_disabled_usage_fallback_uses_retained_run_start_when_terminal_clock_stays_unavailable
+    @harness.close
+    @harness = LauncherHarness.new(telemetry: true)
+    @harness.fail_telemetry_clock_from("timestamp", failure_call: 3)
+
+    result = @harness.run("--allow-dirty", env: {"AGENT_USAGE_TELEMETRY" => "0"})
+
+    assert_success(result, "persistent terminal timestamp failure")
+    assert_includes result.stderr, "AGENT_TELEMETRY_WARNING: could not observe child finish timestamp"
+    telemetry = @harness.telemetry_records.fetch(0)
+    usage = @harness.usage_records.fetch(0)
+    assert_equal "started", telemetry.fetch("state")
+    assert_equal "disabled", usage.dig("collection", "state")
+    assert_equal telemetry.dig("timing", "run_started_at"), usage.dig("collection", "finalized_at")
+    validator = AgentRunUsage::Validator.new(usage)
+    assert validator.validate, validator.errors.join("\n")
+  end
+
   def test_outcome_reconciler_is_snapshotted_before_child_and_reused_after_terminal_finalization
     @harness.close
     @harness = LauncherHarness.new(telemetry: true)
@@ -2242,6 +2514,46 @@ class LauncherTest < Minitest::Test
   def replace_harness
     @harness.close
     LauncherHarness.new
+  end
+
+  def trusted_usage_ruby_path(environment_log: nil, required_environment: nil)
+    tools = @harness.protected_host_directory("launcher-usage-tools-")
+    ruby = File.join(tools, "ruby")
+    File.write(ruby, <<~RUBY)
+      #!#{RbConfig.ruby}
+      if ARGV.any? { |argument| argument.end_with?(".usage.collector.rb") }
+        require "json"
+        #{environment_log ? "File.open(#{environment_log.dump}, \"a\", 0o600) { |file| file.puts(JSON.generate(ENV.keys.sort)) }" : "nil"}
+        #{required_environment ? "exit 86 unless ENV.key?(#{required_environment.dump})" : "nil"}
+      end
+      exec(#{RbConfig.ruby.dump}, *ARGV)
+    RUBY
+    File.chmod(0o700, ruby)
+    [tools, @harness.base_env.fetch("PATH")].join(File::PATH_SEPARATOR)
+  end
+
+  def collector_environment_names(path)
+    File.readlines(path, chomp: true).flat_map { |line| JSON.parse(line) }.uniq.sort
+  end
+
+  def codex_usage_record(session, model, input, output, cached, written, reasoning)
+    attributes = {
+      "event.kind" => "response.completed",
+      "conversation.id" => session,
+      "model" => model,
+      "input_token_count" => input,
+      "output_token_count" => output,
+      "cached_token_count" => cached,
+      "cache_write_token_count" => written,
+      "reasoning_token_count" => reasoning
+    }
+    {
+      "body" => {"stringValue" => "codex.sse_event"},
+      "attributes" => attributes.map do |key, value|
+        encoded = value.is_a?(Integer) ? {"intValue" => value.to_s} : {"stringValue" => value}
+        {"key" => key, "value" => encoded}
+      end
+    }
   end
 
   def prepare_extra

@@ -66,6 +66,8 @@ These include target-repository documents and automation such as:
 - `Makefile`
 - `lefthook.yml`
 - `scripts/run_codex.sh`
+- `scripts/agent_run_usage.sh`
+- `scripts/agent_run_usage_collector.rb`
 - `scripts/agent_run_outcomes.sh`
 - GitHub issue and PR templates
 - baseline CI workflow
@@ -331,6 +333,8 @@ The public runtimes are Codex and Claude Code Explore. Codex remains a repositor
 
 Normal workloads through either supported framework launcher automatically emit local, permission-restricted execution telemetry. Each fresh or resumed launcher invocation receives a distinct canonical run ID; arbitrary direct `codex` or `claude` invocation is outside this guarantee. See [`docs/run-telemetry.md`](docs/run-telemetry.md) for storage, opt-out, schema, lifecycle, privacy, and observability semantics.
 
+Each telemetry-bearing managed run also attempts local provider-native request-level usage collection through an invocation-local loopback OTLP HTTP/JSON collector. Terminal `usage.json` evidence retains model and normalized/native token dimensions plus runtime cost only where the provider reports it; it never persists conversation or tool content and fails open independently of the coding workload. Set `AGENT_USAGE_TELEMETRY=0` when a managed invocation must keep the user's own provider log exporter untouched. See [`docs/run-usage.md`](docs/run-usage.md).
+
 When its optional host prerequisites and GitHub evidence are available, each supported runtime also reconciles those immutable runs with objective PR lifecycle evidence in a per-run `outcome.json`. Collection is repository-scoped, eventually consistent, and fail-open; it does not alter coding workload results or interpret implementation quality. See [`docs/run-outcomes.md`](docs/run-outcomes.md).
 
 The launcher also requests preservation of the host command `PATH` used by Codex. An adopting repository may provide an optional non-symlink regular file at `scripts/agent_host_env.sh` to select already-installed host tools; without it, the inherited `PATH` is preserved explicitly. The hook runs in an isolated credential-sanitised Bash subprocess, returns only `PATH`, and does not alter the parent launcher's command resolution. Launcher sessions disable Codex login-shell startup and shell-profile environment reconstruction, and forwarded Codex configuration cannot override those settings or `shell_environment_policy`; unrelated forwarded configuration remains supported.
@@ -358,6 +362,7 @@ Run the focused offline Codex launcher suite with `make test-launcher`; see
 `docs/launcher-testing.md` for its black-box fixture and fake-command architecture.
 Run the focused offline Claude runtime suite with `make test-claude-runtime`.
 Run the focused offline outcome reconciliation suite with `make test-outcomes`.
+Run the focused offline usage collection and validation suite with `make test-usage`.
 
 ## Further Documentation
 
@@ -370,6 +375,7 @@ See also:
 - `docs/validation.md` for framework self-validation
 - [`docs/repository-assessment.md`](docs/repository-assessment.md) for the read-only adoption assessment workflow
 - [`docs/run-telemetry.md`](docs/run-telemetry.md) for automatic local execution evidence and the common run schema
+- [`docs/run-usage.md`](docs/run-usage.md) for provider request-level token and runtime-cost evidence, local OTel ownership, privacy, and fail-open semantics
 - [`docs/run-outcomes.md`](docs/run-outcomes.md) for optional run-to-PR correlation, lifecycle evidence, scheduling, authority, and proxy semantics
 - `docs/launcher-testing.md` for the offline baseline launcher test architecture
 - [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md) for installation, policy, diagnostics, limitations, and smoke testing

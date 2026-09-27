@@ -7,6 +7,7 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 unset PINNED_OUTCOME_RECONCILER PINNED_OUTCOME_TOKEN_HELPER PINNED_OUTCOME_HOST_GH_TOKEN
 unset PINNED_OUTCOME_TELEMETRY_DIR PINNED_OUTCOME_HOST_GH_CONFIG_DIR
 unset PINNED_OUTCOME_GH_BIN PINNED_OUTCOME_RUBY_BIN PINNED_OUTCOME_GIT_BIN
+unset PINNED_USAGE_RUBY_BIN
 
 runtime_error() {
   printf 'claude-explore: %s\n' "$1" >&2
@@ -195,12 +196,16 @@ initialize_runtime_source() {
     case "$path" in "$RUNTIME_ROOT"/*) ;; *) runtime_error "runtime content resolves outside installation"; return 1 ;; esac
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "telemetry runtime content is missing or unsafe"; return 1; }
+  safe_owned_file "$RUNTIME_ROOT/lib/agent_run_usage.sh" || { runtime_error "usage runtime content is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_usage_collector.rb" || { runtime_error "usage collector is missing or unsafe"; return 1; }
   safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "outcome runtime content is missing or unsafe"; return 1; }
   safe_owned_policy "$POLICY_FILE" || { runtime_error "policy is missing or unsafe"; return 1; }
   # shellcheck disable=SC1090 -- path is derived and validated above.
   . "$POLICY_FILE"
   # shellcheck disable=SC1091 -- path is derived and validated above.
   . "$RUNTIME_ROOT/lib/agent_run_telemetry.sh"
+  # shellcheck disable=SC1091 -- path is derived and validated above.
+  . "$RUNTIME_ROOT/lib/agent_run_usage.sh"
   [ "$CLAUDE_EXPLORE_RUNTIME_ID" = claude-explore ] || { runtime_error "policy runtime identifier mismatch"; return 1; }
   [ "$CLAUDE_EXPLORE_POLICY_SCHEMA_VERSION" = 1 ] || { runtime_error "unsupported policy schema"; return 1; }
   for path in "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE" \
@@ -519,6 +524,8 @@ validate_installed_runtime() {
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
+  safe_owned_file "$RUNTIME_ROOT/lib/agent_run_usage.sh" || { runtime_error "installed usage helper is missing or unsafe"; return 1; }
+  safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_usage_collector.rb" || { runtime_error "installed usage collector is missing or unsafe"; return 1; }
   safe_owned_executable "$RUNTIME_ROOT/lib/agent_run_outcomes.sh" || { runtime_error "installed outcome reconciler is missing or unsafe"; return 1; }
   safe_owned_policy "$RUNTIME_ROOT/policy.sh" || { runtime_error "installed policy is missing or unsafe"; return 1; }
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }
@@ -698,7 +705,7 @@ strip_environment() {
   local line name value
   scrub_named_environment "$CLAUDE_EXPLORE_ENV_UNSET"
   scrub_git_environment
-  unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR
+  unset AGENT_TELEMETRY AGENT_TELEMETRY_DIR AGENT_USAGE_TELEMETRY
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     name=${line%%=*}; value=${line#*=}
@@ -775,8 +782,10 @@ observe_claude_task() {
 
 runtime_exit_cleanup() {
   local status=$?
+  agent_usage_stop
   cleanup_session || true
   agent_telemetry_finalize_pending "$status" "${TELEMETRY_GIT_BIN:-}" "${TELEMETRY_REPO_ROOT:-}"
+  agent_usage_publish
   if [ -n "${AGENT_TELEMETRY_RUN_ID:-}" ]; then
     run_outcome_reconciler --run "$AGENT_TELEMETRY_RUN_ID" >/dev/null 2>&1 || \
       printf '%s\n' 'AGENT_OUTCOME_WARNING: current-run outcome reconciliation was unavailable' >&2
@@ -796,6 +805,7 @@ capture_outcome_authority() {
   PINNED_OUTCOME_GH_BIN=$(resolve_post_child_host_executable gh 2>/dev/null || true)
   PINNED_OUTCOME_RUBY_BIN=$(resolve_post_child_host_executable ruby 2>/dev/null || true)
   PINNED_OUTCOME_GIT_BIN=$(validate_post_child_host_executable "${TELEMETRY_GIT_TARGET:-}" 2>/dev/null || true)
+  PINNED_USAGE_RUBY_BIN=$PINNED_OUTCOME_RUBY_BIN
 }
 
 run_outcome_reconciler() {
@@ -840,12 +850,28 @@ run_session() {
     agent_telemetry_warning "could not observe repository identity"
   fi
   capture_outcome_authority
+  agent_usage_start anthropic claude_code_otel_api_request_v1 "$CLAUDE_VERSION" \
+    "$RUNTIME_ROOT/lib/agent_run_usage_collector.rb" "$PINNED_USAGE_RUBY_BIN"
   run_outcome_reconciler --automatic >/dev/null || true
   make_session || { cleanup_session; runtime_error "could not create private session state"; return 1; }
   CHILD_PID=""
   trap 'AGENT_TELEMETRY_SIGNAL=INT; [ -z "$CHILD_PID" ] || kill -INT "$CHILD_PID" 2>/dev/null || :' INT
   trap 'AGENT_TELEMETRY_SIGNAL=TERM; [ -z "$CHILD_PID" ] || kill -TERM "$CHILD_PID" 2>/dev/null || :' TERM
   strip_environment || { cleanup_session; runtime_error "could not apply environment policy"; return 1; }
+  if [ "$AGENT_USAGE_MODE" = active ]; then
+    launch_env+=(
+      -u OTEL_LOG_RAW_API_BODIES
+      "CLAUDE_CODE_ENABLE_TELEMETRY=1"
+      "OTEL_LOGS_EXPORTER=otlp"
+      "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/json"
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:$AGENT_USAGE_PORT/v1/logs"
+      "OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-agent-run-usage-token=$AGENT_USAGE_NONCE"
+      "OTEL_LOG_USER_PROMPTS=0"
+      "OTEL_LOG_ASSISTANT_RESPONSES=0"
+      "OTEL_LOG_TOOL_DETAILS=0"
+      "OTEL_LOG_TOOL_CONTENT=0"
+    )
+  fi
   injected_args=(--settings "$SETTINGS_FILE")
   [ "$CLAUDE_EXPLORE_STRICT_MCP_CONFIG" = true ] && injected_args+=(--strict-mcp-config --mcp-config "$MCP_FILE")
   [ "$CLAUDE_EXPLORE_CHROME_ENABLED" = false ] && injected_args+=(--no-chrome)
