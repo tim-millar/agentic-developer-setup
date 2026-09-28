@@ -225,6 +225,7 @@ module AgenticDeveloperSetup
         return true if relative_path.match?(%r{\Ascripts/(?:run_codex|agent_run_telemetry|agent_run_usage|agent_run_outcomes|mint_gh_app_token)\.sh\z}i)
         return true if relative_path.casecmp?("scripts/agent_run_usage_collector.rb")
         return true if relative_path.match?(%r{\A\.github/(?:workflows/[^/]+\.(?:yml|yaml)|ISSUE_TEMPLATE/[^/]+\.(?:md|yml|yaml)|PULL_REQUEST_TEMPLATE(?:/[^/]+)?\.md)\z}i)
+        return true if relative_path.casecmp?(".github/skills/code-review/SKILL.md")
         return true if relative_path.match?(%r{\Adocs/(?:adr|adrs)/.+\.(?:md|markdown|rst|txt)\z}i)
         return true if relative_path.start_with?("docs/") && basename.match?(/\A(?:README|AGENT_PROMPT|ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|SECURITY|DEPLOY|OPERATIONS|COMMITS|FRAMEWORK_ADOPTION|ADOPTION)[^\/]*\.(?:md|markdown|rst|txt)\z/i)
         known_root_file?(basename)

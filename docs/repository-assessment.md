@@ -209,8 +209,12 @@ The dimensions mean:
   runtime identity.
 
 `review_handoff` concerns the existence of a review evidence surface. The
-optional `review_policy` component is assessed separately through the generic
-component catalogue; it does not add or redefine a readiness dimension.
+optional `review_policy` and `code_review_skill` components are assessed
+separately through the generic component catalogue; neither adds or redefines a
+readiness dimension. The skill uses the canonical
+`.github/skills/code-review/SKILL.md` target path; alternate agent-skill paths
+are not repository-native equivalents for this component in the current
+metadata contract.
 
 Deterministic-validation readiness counts substantive local capabilities only:
 tests, linting, static type checking, build/compile checks, and explicit

@@ -415,6 +415,12 @@ The existence of `REVIEW.md` does not require an implementation agent to
 perform a separate review pass. It governs review tasks when such a review is
 requested or is otherwise part of the current workflow.
 
+When the host supports repository skills and
+`.github/skills/code-review/SKILL.md` exists, use that file as the independent
+implementation-review procedure. Keep `REVIEW.md` as the canonical review
+policy and treat the skill as the task procedure that applies it. This does not
+make implementation self-review mandatory.
+
 ## Out-of-scope discoveries
 
 During work, agents may discover:

@@ -119,6 +119,12 @@ baseline:
       target_path: REVIEW.md
       description: Repository-owned code-review policy defining priorities, substantive findings, low-value findings, context sources, and evidence expectations.
 
+    - name: code_review_skill
+      category: agent-skill
+      source_path: baseline/.github/skills/code-review/SKILL.md
+      target_path: .github/skills/code-review/SKILL.md
+      description: Task-specific agent skill for performing the independent implementation-review role using the target repository's REVIEW.md and available review evidence.
+
     - name: commit_metadata
       category: commit-metadata
       source_path: baseline/docs/COMMITS.md
