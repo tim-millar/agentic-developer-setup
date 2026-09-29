@@ -2,7 +2,13 @@
 
 This repository validates its own schema-v2 metadata and the framework source structure before those inputs are used for adoption, audit, or assessment work. Validation is deterministic and applies to this framework source repository, not to an instantiated downstream repository. Schema v1 is no longer accepted.
 
-The validation surface depends on the root self-hosted harness, usage/outcome evidence surfaces, and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-usage.md`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, both evidence validators and schemas, the usage semantic-validator library, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
+Review policy and review procedure remain separate: `REVIEW.md` is the
+canonical repository review policy, while
+`.github/skills/code-review/SKILL.md` is the optional independent
+implementation-review procedure. Review orchestration and approval decisions
+are outside both artefacts.
+
+The validation surface depends on the root self-hosted harness, usage/outcome evidence surfaces, and review handoff used by this repository. In particular, root `AGENTS.md`, `REVIEW.md`, `.github/skills/code-review/SKILL.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, `docs/run-usage.md`, `docs/run-outcomes.md`, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, both evidence validators and schemas, the usage semantic-validator library, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` must exist as repository-operational files.
 
 ## Requirements and commands
 
@@ -96,14 +102,20 @@ Only metadata fields explicitly defined as concrete paths are resolved. Descript
 
 The root self-hosted harness and the distributable baseline are separate layers:
 
-- root `AGENTS.md`, `REVIEW.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, the run-usage and outcome documentation/validators/schemas, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
-- `baseline/AGENTS.md`, `baseline/REVIEW.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
+- root `AGENTS.md`, `REVIEW.md`, `.github/skills/code-review/SKILL.md`, `.ruby-version`, `Gemfile`, `Gemfile.lock`, `lefthook.yml`, `docs/AGENT_PROMPT.txt`, the run-usage and outcome documentation/validators/schemas, `scripts/run_codex.sh`, `scripts/agent_run_outcomes.sh`, `scripts/agent_host_env.sh`, and `.github/PULL_REQUEST_TEMPLATE.md` operate this repository;
+- `baseline/AGENTS.md`, `baseline/REVIEW.md`, `baseline/.github/skills/code-review/SKILL.md`, `baseline/docs/AGENT_PROMPT.txt`, and `baseline/scripts/run_codex.sh` are reusable source artefacts declared by `framework.yml`;
 - `baseline/REVIEW.md -> REVIEW.md` is a recommended repository-owned review-policy component; the root `REVIEW.md` is this repository's self-hosted specialised policy;
+- `baseline/.github/skills/code-review/SKILL.md -> .github/skills/code-review/SKILL.md` is a separately recommended review-procedure component; the root and baseline skill are generic and must not replace repository-specific policy in `REVIEW.md`;
 - matching root target-like paths do not satisfy, shadow, or alter a declared baseline `source_path`.
 
 The root `scripts/agent_host_env.sh` hook validates before Codex starts that the inherited host `PATH` resolves the exact Ruby version declared by `.ruby-version`. It validates the environment only: it does not select or install Ruby, invoke a version manager, or modify `PATH`. Developers must prepare the host shell/toolchain before launching a self-hosted Codex session.
 
 The validator derives baseline, prompt, runtime, and issue-template artefact checks from `framework.yml`; it does not maintain a duplicate hard-coded inventory of distributable artefacts.
+
+The validator also checks the objective frontmatter structure of the
+self-hosted `code-review` skill. It does not attempt to validate whether an AI
+system follows the procedure, and alternate skill locations are not equivalent
+to the canonical framework target path.
 
 Planned adapter paths are canonical intended implementation locations, so their directories are not required to exist. Supported adapter paths must exist as directories. Supported runtime source artefacts must exist and every supported runtime has exactly one launcher, telemetry helper, usage helper, and usage collector. Claude Explore additionally has exactly one installer and policy; Codex retains its single prompt relationship. Planned runtimes declare identity and description only.
 

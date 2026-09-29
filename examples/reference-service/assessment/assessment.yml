@@ -739,6 +739,13 @@ component_recommendations:
   rationale: This optional runtime or hook component should be evaluated only if its
     access and workflow value is established.
   prerequisite_gap_ids: []
+- component: code_review_skill
+  state: adopt_now
+  confidence: low
+  evidence_ids: []
+  rationale: The capability is not currently detected; adopt it incrementally using
+    repository evidence and native conventions.
+  prerequisite_gap_ids: []
 - component: command_interface
   state: specialise_now
   confidence: medium
@@ -883,20 +890,28 @@ roadmap:
     it to repository evidence.
 - id: STEP-008
   phase: 2
+  title: Add independent agent code-review skill
+  component: code_review_skill
+  prerequisite_ids: []
+  gap_ids: []
+  rationale: The capability is not currently detected; adopt it incrementally using
+    repository evidence and native conventions.
+- id: STEP-009
+  phase: 2
   title: Align the CI validation workflow
   component: ci_workflow
   prerequisite_ids: []
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
-- id: STEP-009
+- id: STEP-010
   phase: 2
   title: Configure the issue-template chooser
   component: issue_template_config
   prerequisite_ids: []
   gap_ids: []
   rationale: Current framework content is present; retain it and review its applicability.
-- id: STEP-010
+- id: STEP-011
   phase: 2
   title: Establish repository review policy
   component: review_policy
@@ -904,7 +919,7 @@ roadmap:
   gap_ids: []
   rationale: The capability is not currently detected; adopt it incrementally using
     repository evidence and native conventions.
-- id: STEP-011
+- id: STEP-012
   phase: 2
   title: Establish the agent-ready task workflow
   component: agent_ready_issue_template
@@ -912,7 +927,7 @@ roadmap:
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
-- id: STEP-012
+- id: STEP-013
   phase: 2
   title: Establish the defect-report workflow
   component: bug_report_issue_template
@@ -920,7 +935,7 @@ roadmap:
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
-- id: STEP-013
+- id: STEP-014
   phase: 2
   title: Establish the discovery and shaping workflow
   component: discovery_or_shaping_issue_template
@@ -928,7 +943,7 @@ roadmap:
   gap_ids: []
   rationale: A framework-like artefact is present; confirm provenance and specialise
     it to repository evidence.
-- id: STEP-014
+- id: STEP-015
   phase: 2
   title: Establish the human review handoff
   component: pull_request_template

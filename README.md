@@ -52,11 +52,16 @@ In this source repository, baseline artefacts live under `baseline/`. When adopt
 
 The recommended `baseline/REVIEW.md -> REVIEW.md` component provides a
 reusable, repository-owned review contract that adopters can specialise.
+The recommended `baseline/.github/skills/code-review/SKILL.md ->
+.github/skills/code-review/SKILL.md` component is a thin, provider-neutral
+procedure for one independent implementation review. `REVIEW.md` remains the
+canonical review policy; future orchestration is separate.
 
 These include target-repository documents and automation such as:
 
 - `AGENTS.md`
 - `REVIEW.md`
+- `.github/skills/code-review/SKILL.md`
 - `docs/AGENT_PROMPT.txt`
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT.md`
@@ -273,6 +278,7 @@ This framework source repository uses a minimal self-hosted agent harness:
 
 - root `AGENTS.md` defines the operating contract for work on this repository
 - root `REVIEW.md` defines the canonical review policy for this repository
+- root `.github/skills/code-review/SKILL.md` defines the independent implementation-review procedure; it does not grant approval or merge readiness
 - root `.ruby-version` and `scripts/agent_host_env.sh` define and validate the required host Ruby
 - root `docs/AGENT_PROMPT.txt` provides the repository-specific session bootstrap
 - root `scripts/run_codex.sh` is the supported Codex entrypoint

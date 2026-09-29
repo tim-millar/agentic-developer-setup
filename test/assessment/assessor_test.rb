@@ -406,6 +406,39 @@ class AssessmentAssessorTest < Minitest::Test
     refute roadmap.any? { |item| item["title"].start_with?("Review and") }
   end
 
+  def test_code_review_skill_is_independently_recommendable_in_phase_two
+    result = assess
+    recommendation = result["component_recommendations"].find { |item| item["component"] == "code_review_skill" }
+    roadmap_item = result["roadmap"].find { |item| item["component"] == "code_review_skill" }
+
+    assert_equal "adopt_now", recommendation["state"]
+    assert_equal 2, roadmap_item["phase"]
+    assert_equal "Add independent agent code-review skill", roadmap_item["title"]
+    refute result["readiness"].key?("review_maturity")
+  end
+
+  def test_code_review_skill_uses_only_the_canonical_target_path
+    [
+      ".claude/skills/code-review/SKILL.md",
+      ".agents/skills/code-review/SKILL.md"
+    ].each do |path|
+      write(path, "# alternate skill location\n")
+      result = assess
+      components = result["framework_adoption"]["detected_components"].to_h { |item| [item["component"], item] }
+
+      refute components.key?("code_review_skill")
+      assert_equal "adopt_now", result["component_recommendations"].find { |item| item["component"] == "code_review_skill" }["state"]
+      FileUtils.rm_f(File.join(@target, path))
+    end
+
+    write(".github/skills/code-review/SKILL.md", "# canonical skill location\n")
+    result = assess
+    component = result["framework_adoption"]["detected_components"].find { |item| item["component"] == "code_review_skill" }
+
+    assert_equal "framework_like", component["state"]
+    assert_equal [".github/skills/code-review/SKILL.md"], component["paths"]
+  end
+
   def test_blocking_gaps_are_phase_zero
     result = assess
     blocking_gap_ids = result["gaps"].select { |gap| gap["severity"] == "blocking" }.map { |gap| gap["id"] }

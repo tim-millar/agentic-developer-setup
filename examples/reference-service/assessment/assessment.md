@@ -61,6 +61,7 @@ Alternative conditions:
 | `bug_report_issue_template` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `ci_workflow` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `claude_agent_entrypoint` | `evaluate_later` | `low` | This optional runtime or hook component should be evaluated only if its access and workflow value is established. |
+| `code_review_skill` | `adopt_now` | `low` | The capability is not currently detected; adopt it incrementally using repository evidence and native conventions. |
 | `command_interface` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
 | `commit_metadata` | `defer` | `low` | The current repository does not establish a need for this source-repository session artefact. |
 | `development_guide` | `specialise_now` | `medium` | A framework-like artefact is present; confirm provenance and specialise it to repository evidence. |
@@ -118,37 +119,42 @@ No adoption-specific risks were recorded from the inspected evidence.
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Align the CI validation workflow** (`STEP-008`, component `ci_workflow`)
-  - Gaps: none
-  - Prerequisites: none
-  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
-
-- **Phase 2 — Configure the issue-template chooser** (`STEP-009`, component `issue_template_config`)
-  - Gaps: none
-  - Prerequisites: none
-  - Current framework content is present; retain it and review its applicability.
-
-- **Phase 2 — Establish repository review policy** (`STEP-010`, component `review_policy`)
+- **Phase 2 — Add independent agent code-review skill** (`STEP-008`, component `code_review_skill`)
   - Gaps: none
   - Prerequisites: none
   - The capability is not currently detected; adopt it incrementally using repository evidence and native conventions.
 
-- **Phase 2 — Establish the agent-ready task workflow** (`STEP-011`, component `agent_ready_issue_template`)
+- **Phase 2 — Align the CI validation workflow** (`STEP-009`, component `ci_workflow`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the defect-report workflow** (`STEP-012`, component `bug_report_issue_template`)
+- **Phase 2 — Configure the issue-template chooser** (`STEP-010`, component `issue_template_config`)
+  - Gaps: none
+  - Prerequisites: none
+  - Current framework content is present; retain it and review its applicability.
+
+- **Phase 2 — Establish repository review policy** (`STEP-011`, component `review_policy`)
+  - Gaps: none
+  - Prerequisites: none
+  - The capability is not currently detected; adopt it incrementally using repository evidence and native conventions.
+
+- **Phase 2 — Establish the agent-ready task workflow** (`STEP-012`, component `agent_ready_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-013`, component `discovery_or_shaping_issue_template`)
+- **Phase 2 — Establish the defect-report workflow** (`STEP-013`, component `bug_report_issue_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
 
-- **Phase 2 — Establish the human review handoff** (`STEP-014`, component `pull_request_template`)
+- **Phase 2 — Establish the discovery and shaping workflow** (`STEP-014`, component `discovery_or_shaping_issue_template`)
+  - Gaps: none
+  - Prerequisites: none
+  - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.
+
+- **Phase 2 — Establish the human review handoff** (`STEP-015`, component `pull_request_template`)
   - Gaps: none
   - Prerequisites: none
   - A framework-like artefact is present; confirm provenance and specialise it to repository evidence.

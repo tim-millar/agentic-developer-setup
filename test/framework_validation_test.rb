@@ -29,12 +29,37 @@ class FrameworkValidationTest < Minitest::Test
     assert_empty stderr
   end
 
+  def test_code_review_skill_metadata_and_root_baseline_content_are_aligned
+    metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"), aliases: false)
+    skill = metadata.fetch("baseline").fetch("recommended").find { |entry| entry.fetch("name") == "code_review_skill" }
+
+    refute_nil skill
+    assert_equal "agent-skill", skill.fetch("category")
+    assert_equal "baseline/.github/skills/code-review/SKILL.md", skill.fetch("source_path")
+    assert_equal ".github/skills/code-review/SKILL.md", skill.fetch("target_path")
+    refute metadata.fetch("adoption_tiers").any? { |tier| tier.fetch("includes").include?(skill.fetch("target_path")) }
+    assert_includes metadata.fetch("adoption_tiers").fetch(0).fetch("includes"), "REVIEW.md"
+    assert_equal File.binread(File.join(REPOSITORY_ROOT, skill.fetch("source_path"))),
+      File.binread(File.join(REPOSITORY_ROOT, skill.fetch("target_path")))
+  end
+
+  def test_review_agent_contracts_keep_policy_and_procedure_separate
+    root_instructions = File.read(File.join(REPOSITORY_ROOT, "AGENTS.md"))
+    baseline_instructions = File.read(File.join(REPOSITORY_ROOT, "baseline/AGENTS.md"))
+
+    assert_includes root_instructions, "`.github/skills/code-review/SKILL.md` exists"
+    assert_includes root_instructions, "Keep `REVIEW.md` as the canonical review"
+    assert_includes root_instructions, "policy and treat the skill as the task procedure"
+    assert_includes baseline_instructions, "When the target repository contains `.github/skills/code-review/SKILL.md`"
+    assert_includes baseline_instructions, "Its absence is conditional"
+  end
+
   def test_valid_isolated_repository_passes_validation_from_another_directory
     assert_passes("valid isolated repository")
   end
 
   def test_root_harness_satisfies_minimum_structure
-    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md].each do |path|
+    %w[AGENTS.md REVIEW.md .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md .github/skills/code-review/SKILL.md].each do |path|
       assert File.file?(File.join(@fixture_root, path)), "expected fixture root harness file #{path}"
     end
     assert_passes("root harness structure")
@@ -523,6 +548,48 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("baseline.recommended[review_policy].source_path", "file does not exist")
   end
 
+  def test_missing_root_code_review_skill_fails
+    FileUtils.rm(File.join(@fixture_root, ".github/skills/code-review/SKILL.md"))
+
+    assert_fails("repository structure: .github/skills/code-review/SKILL.md", "file does not exist")
+  end
+
+  def test_missing_baseline_code_review_skill_fails
+    FileUtils.rm(File.join(@fixture_root, "baseline/.github/skills/code-review/SKILL.md"))
+
+    assert_fails("baseline.recommended[code_review_skill].source_path", "file does not exist")
+  end
+
+  def test_code_review_skill_frontmatter_name_is_exact
+    write_file(".github/skills/code-review/SKILL.md", skill_contents.sub("name: code-review", "name: repository-review"))
+
+    assert_fails("repository structure: .github/skills/code-review/SKILL.md.name: expected: code-review")
+  end
+
+  def test_code_review_skill_mapping_is_canonical
+    mutate do |metadata|
+      skill = metadata["baseline"]["recommended"].find { |entry| entry["name"] == "code_review_skill" }
+      skill["target_path"] = ".claude/skills/code-review/SKILL.md"
+    end
+
+    assert_fails("framework.yml: baseline[code_review_skill].target_path: expected: .github/skills/code-review/SKILL.md")
+  end
+
+  def test_code_review_skill_category_is_fixed
+    mutate do |metadata|
+      skill = metadata["baseline"]["recommended"].find { |entry| entry["name"] == "code_review_skill" }
+      skill["category"] = "review-policy"
+    end
+
+    assert_fails("framework.yml: baseline[code_review_skill].category: expected: agent-skill")
+  end
+
+  def test_malformed_baseline_metadata_fails_through_schema_validation
+    mutate { |metadata| metadata["baseline"] = [] }
+
+    assert_fails("framework.yml: baseline: expected a mapping, got: sequence")
+  end
+
   def test_missing_root_prompt_file_fails
     FileUtils.rm(File.join(@fixture_root, "docs/AGENT_PROMPT.txt"))
 
@@ -673,7 +740,7 @@ class FrameworkValidationTest < Minitest::Test
   private
 
   def build_fixture
-    %w[docs scripts schemas lib/agent_run_usage .github baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
+    %w[docs scripts schemas lib/agent_run_usage .github/skills/code-review baseline/.github/skills/code-review baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
@@ -685,6 +752,8 @@ class FrameworkValidationTest < Minitest::Test
       baseline/scripts/agent_run_usage_collector.rb baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
+    write_file(".github/skills/code-review/SKILL.md", skill_contents)
+    write_file("baseline/.github/skills/code-review/SKILL.md", skill_contents)
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))
     write_metadata(valid_metadata)
   end
@@ -723,7 +792,8 @@ class FrameworkValidationTest < Minitest::Test
           baseline_entry("issue_template", "issue-template", "baseline/issues/implementation.md", "target/issues/implementation.md")
         ],
         "recommended" => [
-          baseline_entry("review_policy", "review-policy", "baseline/REVIEW.md", "REVIEW.md")
+          baseline_entry("review_policy", "review-policy", "baseline/REVIEW.md", "REVIEW.md"),
+          baseline_entry("code_review_skill", "agent-skill", "baseline/.github/skills/code-review/SKILL.md", ".github/skills/code-review/SKILL.md")
         ]
       },
       "agent_runtimes" => {
@@ -805,6 +875,18 @@ class FrameworkValidationTest < Minitest::Test
         }
       }
     }
+  end
+
+  def skill_contents
+    <<~MARKDOWN
+      ---
+      name: code-review
+      description: >
+        Perform an independent implementation review.
+      ---
+
+      # Code review
+    MARKDOWN
   end
 
   def baseline_entry(name, category, source_path, target_path)

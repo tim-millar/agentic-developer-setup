@@ -39,6 +39,11 @@ review and within the current task or issue scope.
 The recommended `REVIEW.md` component is conditional: its absence does not
 prevent other framework work or make the document mandatory for every adopter.
 
+When the target repository contains `.github/skills/code-review/SKILL.md` and
+the current host supports repository skills, use it as the independent
+implementation-review procedure. Its absence is conditional and does not make
+repository skills or implementation self-review mandatory.
+
 ## Required Workflow
 
 Agents performing implementation must follow this workflow unless explicitly instructed otherwise:

@@ -15,6 +15,8 @@ class FrameworkValidator
   RUNTIME_DISTRIBUTIONS = %w[repository global-user].freeze
   RUNTIME_ARTEFACT_ROLES = %w[launcher prompt installer policy telemetry usage usage-collector outcomes].freeze
   RUNTIME_PLATFORMS = %w[macos linux].freeze
+  CODE_REVIEW_SKILL_SOURCE = "baseline/.github/skills/code-review/SKILL.md"
+  CODE_REVIEW_SKILL_TARGET = ".github/skills/code-review/SKILL.md"
 
   def initialize(root)
     @root = Pathname.new(root).expand_path
@@ -478,6 +480,7 @@ class FrameworkValidator
     validate_issue_template_references(metadata, baseline)
     validate_adoption_references(metadata, baseline)
     validate_adapter_references(metadata)
+    validate_code_review_skill(metadata, baseline)
   end
 
   def validate_runtime_references(metadata, baseline)
@@ -589,6 +592,52 @@ class FrameworkValidator
     end
   end
 
+  def validate_code_review_skill(metadata, baseline)
+    baseline_metadata = metadata["baseline"]
+    return unless baseline_metadata.is_a?(Hash)
+
+    recommended = baseline_metadata["recommended"]
+    return unless recommended.is_a?(Array)
+
+    matches = recommended.select { |entry| entry.is_a?(Hash) && entry["name"] == "code_review_skill" }
+    if matches.empty?
+      error("framework.yml: baseline.recommended", "must declare code_review_skill component")
+      return
+    end
+    return if matches.length > 1
+
+    entry = matches.first
+    location = "framework.yml: baseline[code_review_skill]"
+    error("#{location}.category", "expected: agent-skill") unless entry["category"] == "agent-skill"
+    error("#{location}.source_path", "expected: #{CODE_REVIEW_SKILL_SOURCE}") unless entry["source_path"] == CODE_REVIEW_SKILL_SOURCE
+    error("#{location}.target_path", "expected: #{CODE_REVIEW_SKILL_TARGET}") unless entry["target_path"] == CODE_REVIEW_SKILL_TARGET
+    validate_skill_frontmatter(CODE_REVIEW_SKILL_SOURCE, "#{location}.source_path")
+    validate_skill_frontmatter(CODE_REVIEW_SKILL_TARGET, "repository structure: #{CODE_REVIEW_SKILL_TARGET}")
+  end
+
+  def validate_skill_frontmatter(path, location)
+    file = @root.join(path)
+    return unless file.file?
+
+    match = file.read.match(/\A---\s*\n(.*?)\n---\s*(?:\n|\z)/m)
+    unless match
+      error(location, "skill must start with YAML frontmatter")
+      return
+    end
+
+    frontmatter = YAML.safe_load(match[1], permitted_classes: [], permitted_symbols: [], aliases: false)
+    unless frontmatter.is_a?(Hash)
+      error(location, "skill frontmatter must be a mapping")
+      return
+    end
+    error("#{location}.name", "expected: code-review") unless frontmatter["name"] == "code-review"
+    string(frontmatter["description"], "#{location}.description")
+  rescue Psych::Exception => e
+    error(location, "could not parse skill frontmatter: #{e.message.lines.first.strip}")
+  rescue SystemCallError => e
+    error(location, "could not read skill: #{e.message}")
+  end
+
   # Filesystem checks are role-specific; descriptive path fields are never resolved.
   def validate_metadata_paths(metadata)
     return unless metadata.is_a?(Hash)
@@ -680,7 +729,7 @@ class FrameworkValidator
   end
 
   def validate_repository_structure
-    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md]
+    required_files = %w[AGENTS.md README.md REVIEW.md framework.yml .ruby-version Gemfile Gemfile.lock lefthook.yml docs/AGENT_PROMPT.txt docs/run-usage.md docs/run-outcomes.md scripts/run_codex.sh scripts/agent_run_outcomes.sh scripts/validate_run_usage.rb scripts/validate_agent_run_outcome.rb lib/agent_run_usage/validator.rb schemas/agent-run-usage-v1.schema.json schemas/agent-run-outcome-v1.schema.json scripts/agent_host_env.sh .github/PULL_REQUEST_TEMPLATE.md .github/skills/code-review/SKILL.md]
     required_directories = %w[docs scripts baseline prompts adapters]
     required_files.each { |path| validate_existing_source(path, "repository structure: #{path}", :file) }
     required_directories.each { |path| validate_existing_source(path, "repository structure: #{path}", :directory) }
