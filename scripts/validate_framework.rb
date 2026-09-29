@@ -593,8 +593,13 @@ class FrameworkValidator
   end
 
   def validate_code_review_skill(metadata, baseline)
-    recommended = metadata.dig("baseline", "recommended")
-    matches = recommended.is_a?(Array) ? recommended.select { |entry| entry.is_a?(Hash) && entry["name"] == "code_review_skill" } : []
+    baseline_metadata = metadata["baseline"]
+    return unless baseline_metadata.is_a?(Hash)
+
+    recommended = baseline_metadata["recommended"]
+    return unless recommended.is_a?(Array)
+
+    matches = recommended.select { |entry| entry.is_a?(Hash) && entry["name"] == "code_review_skill" }
     if matches.empty?
       error("framework.yml: baseline.recommended", "must declare code_review_skill component")
       return
@@ -603,6 +608,7 @@ class FrameworkValidator
 
     entry = matches.first
     location = "framework.yml: baseline[code_review_skill]"
+    error("#{location}.category", "expected: agent-skill") unless entry["category"] == "agent-skill"
     error("#{location}.source_path", "expected: #{CODE_REVIEW_SKILL_SOURCE}") unless entry["source_path"] == CODE_REVIEW_SKILL_SOURCE
     error("#{location}.target_path", "expected: #{CODE_REVIEW_SKILL_TARGET}") unless entry["target_path"] == CODE_REVIEW_SKILL_TARGET
     validate_skill_frontmatter(CODE_REVIEW_SKILL_SOURCE, "#{location}.source_path")

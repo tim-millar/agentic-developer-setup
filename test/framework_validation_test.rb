@@ -575,6 +575,21 @@ class FrameworkValidationTest < Minitest::Test
     assert_fails("framework.yml: baseline[code_review_skill].target_path: expected: .github/skills/code-review/SKILL.md")
   end
 
+  def test_code_review_skill_category_is_fixed
+    mutate do |metadata|
+      skill = metadata["baseline"]["recommended"].find { |entry| entry["name"] == "code_review_skill" }
+      skill["category"] = "review-policy"
+    end
+
+    assert_fails("framework.yml: baseline[code_review_skill].category: expected: agent-skill")
+  end
+
+  def test_malformed_baseline_metadata_fails_through_schema_validation
+    mutate { |metadata| metadata["baseline"] = [] }
+
+    assert_fails("framework.yml: baseline: expected a mapping, got: sequence")
+  end
+
   def test_missing_root_prompt_file_fails
     FileUtils.rm(File.join(@fixture_root, "docs/AGENT_PROMPT.txt"))
 

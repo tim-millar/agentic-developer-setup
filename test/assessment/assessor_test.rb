@@ -418,12 +418,14 @@ class AssessmentAssessorTest < Minitest::Test
   end
 
   def test_code_review_skill_uses_only_the_canonical_target_path
-    write(".claude/skills/code-review/SKILL.md", "# alternate skill location\n")
-    result = assess
-    components = result["framework_adoption"]["detected_components"].to_h { |item| [item["component"], item] }
+    %w[.claude .agents].each do |directory|
+      write("#{directory}/skills/code-review/SKILL.md", "# alternate skill location\n")
+      result = assess
+      components = result["framework_adoption"]["detected_components"].to_h { |item| [item["component"], item] }
 
-    refute components.key?("code_review_skill")
-    assert_equal "adopt_now", result["component_recommendations"].find { |item| item["component"] == "code_review_skill" }["state"]
+      refute components.key?("code_review_skill")
+      assert_equal "adopt_now", result["component_recommendations"].find { |item| item["component"] == "code_review_skill" }["state"]
+    end
 
     write(".github/skills/code-review/SKILL.md", "# canonical skill location\n")
     result = assess
