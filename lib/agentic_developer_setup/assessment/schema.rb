@@ -80,7 +80,7 @@ module AgenticDeveloperSetup
         extra = @result.keys - TOP_LEVEL
         @errors << "missing top-level fields: #{missing.sort.join(", ")}" unless missing.empty?
         @errors << "unknown top-level fields: #{extra.sort.join(", ")}" unless extra.empty?
-        @errors << "schema_version must be 1" unless @result["schema_version"] == 1
+        @errors << "schema_version must be 2" unless @result["schema_version"] == 2
         TOP_LEVEL.each { |key| @errors << "#{key} must be present" unless @result.key?(key) }
       end
 
@@ -264,12 +264,31 @@ module AgenticDeveloperSetup
 
       def validate_framework_adoption
         adoption = @result["framework_adoption"]
-        return unless object(adoption, "framework_adoption", required: %w[metadata detected_components])
+        return unless object(adoption, "framework_adoption", required: %w[metadata framework ownership_summary pinned_components deferred_components repository_owned_components inconsistent_components undeclared_framework_like_components inspection_confidence detected_components])
 
         metadata = adoption["metadata"]
-        if object(metadata, "framework_adoption.metadata", required: ["status"])
-          value(metadata["status"], "framework_adoption.metadata.status", ["unsupported_in_schema_v1"])
+        if object(metadata, "framework_adoption.metadata", required: %w[status path schema_version])
+          value(metadata["status"], "framework_adoption.metadata.status", %w[absent valid invalid])
+          string(metadata["path"], "framework_adoption.metadata.path")
+          relative_path(metadata["path"], "framework_adoption.metadata.path")
+          if metadata["schema_version"]
+            integer(metadata["schema_version"], "framework_adoption.metadata.schema_version")
+            @errors << "framework_adoption.metadata.schema_version must be 1" unless metadata["schema_version"] == 1
+          end
         end
+        framework = adoption["framework"]
+        if object(framework, "framework_adoption.framework", required: %w[version revision])
+          string(framework["version"], "framework_adoption.framework.version") if framework["version"]
+          string(framework["revision"], "framework_adoption.framework.revision") if framework["revision"]
+        end
+        summary = adoption["ownership_summary"]
+        if object(summary, "framework_adoption.ownership_summary", required: %w[inherited specialised repository_owned])
+          %w[inherited specialised repository_owned].each { |key| integer(summary[key], "framework_adoption.ownership_summary.#{key}") }
+        end
+        %w[pinned_components deferred_components repository_owned_components inconsistent_components undeclared_framework_like_components].each do |field|
+          string_array(adoption[field], "framework_adoption.#{field}")
+        end
+        value(adoption["inspection_confidence"], "framework_adoption.inspection_confidence", CONFIDENCES)
         detected = adoption["detected_components"]
         return unless array(detected, "framework_adoption.detected_components")
 

@@ -19,6 +19,7 @@ module AgenticDeveloperSetup
         sections << ecosystem_profile
         sections << readiness
         sections << tier
+        sections << adoption
         sections << components
         sections << gaps
         sections << risks
@@ -91,6 +92,12 @@ module AgenticDeveloperSetup
         @result["component_recommendations"].each do |item|
           lines << "| `#{item["component"]}` | `#{item["state"]}` | `#{item["confidence"]}` | #{item["rationale"]} |"
         end
+        lines.join("\n")
+      end
+
+      def adoption
+        adoption = @result["framework_adoption"]
+        lines = ["## Framework adoption", "", "- Metadata: `#{adoption.dig("metadata", "status")}` at `#{adoption.dig("metadata", "path")}`", "- Inspection confidence: `#{adoption["inspection_confidence"]}`", "- Ownership: inherited #{adoption.dig("ownership_summary", "inherited")}, specialised #{adoption.dig("ownership_summary", "specialised")}, repository-owned #{adoption.dig("ownership_summary", "repository_owned")}", "- Pinned: #{inline_list(adoption["pinned_components"])}", "- Deferred: #{inline_list(adoption["deferred_components"])}", "- Inconsistent: #{inline_list(adoption["inconsistent_components"])}"]
         lines.join("\n")
       end
 

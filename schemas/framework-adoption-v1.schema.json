@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/framework-adoption-v1.schema.json",
+  "title": "Framework adoption metadata schema v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "framework", "scope", "components"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "framework": {"$ref": "#/$defs/framework"},
+    "scope": {"$ref": "#/$defs/scope"},
+    "components": {"type": "array", "items": {"$ref": "#/$defs/component"}}
+  },
+  "$defs": {
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.($|/))(?!.*(^|/)\\.\\.($|/)).+$"},
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "version", "revision", "adopted_at", "updated_at"],
+      "properties": {
+        "source": {"const": "https://github.com/tim-millar/agentic-developer-setup"},
+        "version": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/revision"},
+        "adopted_at": {"$ref": "#/$defs/date"},
+        "updated_at": {"$ref": "#/$defs/date"}
+      }
+    },
+    "scope": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "path"], "properties": {"type": {"const": "repository"}, "path": {"const": "."}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "path"], "properties": {"type": {"const": "workspace"}, "path": {"$ref": "#/$defs/path"}}}
+      ]
+    },
+    "non_empty_strings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "equivalent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"paths": {"$ref": "#/$defs/non_empty_strings"}, "commands": {"$ref": "#/$defs/non_empty_strings"}},
+      "minProperties": 1
+    },
+    "base_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "status": {"enum": ["active", "deferred", "declined", "removed", "blocked"]},
+        "ownership": {"enum": ["inherited", "specialised", "repository_owned"]},
+        "update_policy": {"enum": ["review_required", "manual_merge", "pinned", "repository_managed"]},
+        "source_path": {"$ref": "#/$defs/path"},
+        "target_path": {"$ref": "#/$defs/path"},
+        "adopted_revision": {"$ref": "#/$defs/revision"},
+        "adopted_source_digest": {"$ref": "#/$defs/digest"},
+        "rationale": {"type": "string", "minLength": 1},
+        "local_ownership": {"$ref": "#/$defs/non_empty_strings"},
+        "equivalent": {"$ref": "#/$defs/equivalent"}
+      }
+    },
+    "inherited": {
+      "allOf": [
+        {"$ref": "#/$defs/base_component"},
+        {"required": ["ownership", "update_policy", "source_path", "target_path", "adopted_revision", "adopted_source_digest"], "properties": {"status": {"const": "active"}, "ownership": {"const": "inherited"}, "update_policy": {"enum": ["review_required", "pinned"]}}, "not": {"anyOf": [{"required": ["local_ownership"]}, {"required": ["equivalent"]}]}}
+      ]
+    },
+    "specialised": {
+      "allOf": [
+        {"$ref": "#/$defs/base_component"},
+        {"required": ["ownership", "update_policy", "source_path", "target_path", "adopted_revision", "adopted_source_digest", "local_ownership"], "properties": {"status": {"const": "active"}, "ownership": {"const": "specialised"}, "update_policy": {"enum": ["manual_merge", "pinned"]}}, "not": {"required": ["equivalent"]}}
+      ]
+    },
+    "repository_owned": {
+      "allOf": [
+        {"$ref": "#/$defs/base_component"},
+        {"required": ["ownership", "update_policy", "equivalent", "rationale"], "properties": {"status": {"const": "active"}, "ownership": {"const": "repository_owned"}, "update_policy": {"const": "repository_managed"}}, "not": {"anyOf": [{"required": ["source_path"]}, {"required": ["target_path"]}, {"required": ["adopted_revision"]}, {"required": ["adopted_source_digest"]}, {"required": ["local_ownership"]}]}}
+      ]
+    },
+    "inactive": {
+      "allOf": [
+        {"$ref": "#/$defs/base_component"},
+        {"required": ["rationale"], "properties": {"status": {"enum": ["deferred", "declined", "removed", "blocked"]}}, "not": {"anyOf": [{"required": ["ownership"]}, {"required": ["update_policy"]}, {"required": ["source_path"]}, {"required": ["target_path"]}, {"required": ["adopted_revision"]}, {"required": ["adopted_source_digest"]}, {"required": ["local_ownership"]}, {"required": ["equivalent"]}]}}
+      ]
+    },
+    "component": {"oneOf": [{"$ref": "#/$defs/inherited"}, {"$ref": "#/$defs/specialised"}, {"$ref": "#/$defs/repository_owned"}, {"$ref": "#/$defs/inactive"}]}
+  }
+}

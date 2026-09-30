@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "json"
 require "yaml"
 
 class FrameworkValidator
@@ -17,6 +18,7 @@ class FrameworkValidator
   RUNTIME_PLATFORMS = %w[macos linux].freeze
   CODE_REVIEW_SKILL_SOURCE = "baseline/.github/skills/code-review/SKILL.md"
   CODE_REVIEW_SKILL_TARGET = ".github/skills/code-review/SKILL.md"
+  COMPONENT_ID = /\A[a-z][a-z0-9_]*\z/
 
   def initialize(root)
     @root = Pathname.new(root).expand_path
@@ -34,6 +36,7 @@ class FrameworkValidator
     validate_schema(metadata)
     validate_semantics(metadata)
     validate_metadata_paths(metadata)
+    validate_adoption_contract
     validate_repository_structure
     errors.empty?
   end
@@ -169,6 +172,9 @@ class FrameworkValidator
 
         %w[name category source_path target_path description].each do |field|
           string(entry[field], "framework.yml: #{item_location}.#{field}")
+        end
+        if entry["name"].is_a?(String) && !entry["name"].match?(COMPONENT_ID)
+          error("framework.yml: #{item_location}.name", "component ID must match [a-z][a-z0-9_]*")
         end
         identities << [entry["name"], "framework.yml: #{item_location}.name"]
         targets << [entry["target_path"], "framework.yml: #{item_location}.target_path"]
@@ -636,6 +642,33 @@ class FrameworkValidator
     error(location, "could not parse skill frontmatter: #{e.message.lines.first.strip}")
   rescue SystemCallError => e
     error(location, "could not read skill: #{e.message}")
+  end
+
+  def validate_adoption_contract
+    schema = @root.join("schemas/framework-adoption-v1.schema.json")
+    return unless schema.file?
+
+    begin
+      JSON.parse(schema.read)
+    rescue JSON::ParserError, SystemCallError => e
+      error("schemas/framework-adoption-v1.schema.json", "could not parse adoption schema: #{e.message.lines.first.strip}")
+    end
+
+    metadata_path = @root.join("examples/reference-service/.agent-framework/adoption.yml")
+    return unless metadata_path.file?
+
+    require_relative "../lib/agentic_developer_setup/adoption"
+    loaded = AgenticDeveloperSetup::Adoption::Metadata.load(@root.join("examples/reference-service"))
+    loaded.diagnostics.each { |item| error("#{metadata_path}: #{item.code}", item.message) }
+    return unless loaded.status == "loaded"
+
+    validator = AgenticDeveloperSetup::Adoption::Validator.new(
+      root: @root.join("examples/reference-service"),
+      framework_root: @root
+    )
+    validator.validate(loaded.document).each { |item| error("#{metadata_path}: #{item.code}", item.message) }
+  rescue AgenticDeveloperSetup::Assessment::Error => e
+    error(metadata_path.to_s, e.message)
   end
 
   # Filesystem checks are role-specific; descriptive path fields are never resolved.
