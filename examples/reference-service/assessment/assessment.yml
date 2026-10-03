@@ -1,5 +1,5 @@
 ---
-schema_version: 1
+schema_version: 2
 framework:
   metadata_schema_version: 2
   version: 0.1.0
@@ -362,7 +362,23 @@ documentation:
     evidence_ids: []
 framework_adoption:
   metadata:
-    status: unsupported_in_schema_v1
+    status: valid
+    path: ".agent-framework/adoption.yml"
+    schema_version: 1
+  framework:
+    version: 0.1.0
+    revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+  ownership_summary:
+    inherited: 1
+    specialised: 11
+    repository_owned: 0
+  pinned_components: []
+  deferred_components:
+  - review_policy
+  repository_owned_components: []
+  inconsistent_components: []
+  undeclared_framework_like_components: []
+  inspection_confidence: high
   detected_components:
   - component: agent_instructions
     state: framework_like

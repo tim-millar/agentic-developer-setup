@@ -74,7 +74,31 @@ validation tools. Make wraps them to provide the framework's stable shared
 command surface. `make setup` performs dependency bootstrap; post-setup
 commands use locked uv execution with offline mode enabled.
 
-## 7. Deliberate omissions
+## 7. Formal adoption metadata
+
+The fixture's durable framework relationship is recorded at
+`.agent-framework/adoption.yml`. It is a schema-versioned, read-only contract
+describing the framework source, component IDs, ownership, lifecycle decisions,
+adopted revisions, and exact source digests.
+
+The `issue_template_config` component is inherited: its target is expected to
+remain byte-identical to the recorded framework source. The other recorded
+fixture components are specialised because they retain fixture-specific
+tooling, task-registry language, or repository operating constraints. The
+metadata records those local ownership categories without claiming semantic
+equivalence to the framework baseline.
+
+`review_policy` is deliberately deferred. The fixture does not manufacture a
+repository-owned equivalent merely to demonstrate that state; repository-owned
+records are reserved for a real repository-native capability. The metadata
+therefore proves recorded provenance and declared ownership decisions, not that
+specialised content is semantically compatible or that an update is safe.
+
+Inspection is offline and read-only. Issue #10 remains responsible for any
+future adoption planning, update comparison workflow, mutation, or
+reconciliation.
+
+## 8. Deliberate omissions
 
 The fixture intentionally omits the following optional or later-stage concerns:
 
@@ -84,27 +108,26 @@ The fixture intentionally omits the following optional or later-stage concerns:
 - `docs/COMMITS.md`, because commit-guidance adoption is unnecessary for this compact example.
 - `lefthook.yml`, because hooks would add a host prerequisite without materially improving this fixture.
 - GitHub App runtime/helper artefacts, because this example requires no repository credentials or agent runtime access.
-- formal adoption metadata, component digests, or framework ownership/version metadata; no such schema is created here.
 - adoption plans or result records, because safe adoption/update mutation belongs to later repository-adoption work.
 - automatic update metadata or adoption/update tooling, because safe automated adoption belongs to later repository-adoption work.
 - evaluation/run metadata, because evaluation telemetry is outside this reference application.
 
 The committed `assessment/assessment.yml` and `assessment/assessment.md` are
-read-only outputs of Issue #8's assessor. They describe this fixture and its
-deliberate optional runtime and hook omissions; they are not adopted-repository
-ownership metadata and are not used to authorise changes.
+read-only outputs of the assessor. They describe this fixture and its
+deliberate optional runtime and hook omissions; they interpret adoption
+metadata but do not authorise changes.
 
 The remaining omissions are deliberate and are not defects in the selected
 adoption.
 
-## 8. Greenfield decisions
+## 9. Greenfield decisions
 
 Because this example is greenfield, it can choose Python 3.14, uv, a packaged
 `src/` layout, Make, a single verification job, and the architecture document
 locations directly. There is no existing workflow or native tool to preserve
 at those boundaries.
 
-## 9. Existing-repository differences
+## 10. Existing-repository differences
 
 A real established repository should generally preserve useful native
 equivalents rather than replacing them merely to match this fixture. Its
@@ -113,21 +136,20 @@ package manager, or architecture conventions may be more appropriate. An
 adoption should specialise the framework around those facts and use the
 smallest safe change.
 
-## 10. Relationship to #8–#10
+## 11. Relationship to #8–#10
 
-Issue #8 assesses this fixture and commits a normalised example result. Future
-work may add reviewed formal ownership and version relationships for adopted
-components and exercise safe plan/apply/update workflows. Those are the
-subjects of issues #9 and #10. This fixture does not create ownership/version
-metadata, adoption plans, or automatic update behaviour.
+Issue #8 assessed this fixture and committed a normalised example result. Issue
+#9 records the formal ownership/provenance contract and read-only inspection.
+Issue #10 remains responsible for safe plan/apply/update workflows. This fixture
+does not create adoption plans or automatic update behaviour.
 
-## 11. Limitations
+## 12. Limitations
 
 The fixture does not demonstrate production deployment, distributed execution,
 authentication, authorisation, external persistence, HTTP or API design,
 frontend development, model integration, retrieval, embeddings, RAG,
 autonomous agent operation, framework assessment, automatic adoption, framework
-update behaviour, component ownership/version metadata, agent evaluation,
+update behaviour, semantic validation of specialisations, agent evaluation,
 measured productivity improvement, production security, or suitability as a
 universal application template.
 

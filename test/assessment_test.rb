@@ -27,7 +27,7 @@ class AssessmentTest < Minitest::Test
   def test_reference_fixture_produces_supported_profile_and_tier_two
     result = assess(FIXTURE)
 
-    assert_equal 1, result["schema_version"]
+    assert_equal 2, result["schema_version"]
     assert_equal 2, result.dig("framework", "metadata_schema_version")
     assert_equal "0.1.0", result.dig("framework", "version")
     assert_equal "python", result.dig("ecosystem", 0, "name")

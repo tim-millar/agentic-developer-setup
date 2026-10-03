@@ -60,6 +60,11 @@ assess:
 	@test -n "$(REPO)" || { echo "REPO is required" >&2; exit 2; }
 	bundle exec ruby scripts/assess_repository.rb "$(REPO)"
 
+.PHONY: adoption-inspect
+adoption-inspect:
+	@test -n "$(REPO)" || { echo "REPO is required" >&2; exit 2; }
+	@if test -n "$(FRAMEWORK_SOURCE)"; then bundle exec ruby scripts/inspect_adoption.rb "$(REPO)" --framework-source "$(FRAMEWORK_SOURCE)"; else bundle exec ruby scripts/inspect_adoption.rb "$(REPO)"; fi
+
 .PHONY: check-reference-service
 check-reference-service:
 	$(MAKE) -C examples/reference-service setup

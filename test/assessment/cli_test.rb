@@ -35,6 +35,6 @@ class AssessmentCLITest < Minitest::Test
     )
 
     assert status.success?, stderr
-    assert_includes stdout, "schema_version: 1"
+    assert_includes stdout, "schema_version: 2"
   end
 end

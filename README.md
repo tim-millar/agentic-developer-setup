@@ -155,6 +155,8 @@ signals and falls back gracefully for unsupported ecosystems. Read
 [`docs/repository-assessment.md`](docs/repository-assessment.md) for the
 schema, confidence and readiness semantics, safety boundary, tier algorithm,
 context file, and Issue #9/#10 boundaries.
+Read [`docs/framework-adoption.md`](docs/framework-adoption.md) for the
+schema-versioned ownership, provenance, and read-only inspection contract.
 
 ### 3. Legacy repo safe enablement
 
