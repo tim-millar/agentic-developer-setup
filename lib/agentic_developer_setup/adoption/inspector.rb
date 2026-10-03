@@ -60,6 +60,7 @@ module AgenticDeveloperSetup
           "id" => id,
           "status" => status,
           "ownership" => ownership,
+          "update_policy" => component["update_policy"],
           "target_path" => %w[inherited specialised].include?(ownership) ? component["target_path"] : nil,
           "local_state" => local_state(component, validator, diagnostics),
           "update_state" => update_state(component, candidate, diagnostics)
@@ -128,18 +129,24 @@ module AgenticDeveloperSetup
 
       def load_candidate(path)
         return {status: "not_checked", diagnostics: [], catalogue: [], root: nil, version: nil, revision: nil} unless path
-        candidate_root = Pathname.new(path).expand_path
+        candidate_root = Pathname.new(path).expand_path.realpath
         unless candidate_root.directory?
           return invalid_candidate("candidate_source_invalid", "candidate framework source is not a directory")
         end
-        catalogue = YAML.safe_load(candidate_root.join("framework.yml").read, permitted_classes: [], permitted_symbols: [], aliases: false)
+        catalogue_path = PathSafety.existing(candidate_root, "framework.yml")
+        return invalid_candidate("candidate_source_unsafe_path", "candidate framework catalogue path is unsafe") unless catalogue_path&.is_a?(Pathname) && catalogue_path.lstat.file?
+        catalogue = YAML.safe_load(catalogue_path.read, permitted_classes: [], permitted_symbols: [], aliases: false)
         unless catalogue.is_a?(Hash) && catalogue["schema_version"] == 2 && catalogue.dig("baseline", "required").is_a?(Array) && catalogue.dig("baseline", "recommended").is_a?(Array)
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source does not contain a valid framework catalogue")
         end
         entries = catalogue["baseline"].values_at("required", "recommended").flatten
-        unless entries.all? { |entry| entry.is_a?(Hash) && entry["name"].is_a?(String) && entry["source_path"].is_a?(String) }
+        unless entries.all? { |entry| entry.is_a?(Hash) && entry["name"].is_a?(String) && entry["name"].match?(ID_PATTERN) && entry["source_path"].is_a?(String) && PathSafety.safe_relative?(entry["source_path"]) }
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains malformed baseline components")
         end
+        names = entries.map { |entry| entry["name"] }
+        return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains duplicate component IDs") unless names.uniq.length == names.length
+        unsafe_source = entries.find { |entry| PathSafety.existing(candidate_root, entry["source_path"]) == :unsafe }
+        return invalid_candidate("candidate_source_unsafe_path", "candidate framework source contains an unsafe component source path") if unsafe_source
         revision = capture_revision(candidate_root)
         {
           status: "available",
@@ -159,13 +166,9 @@ module AgenticDeveloperSetup
 
       def candidate_source(root, path)
         return nil unless root && path.is_a?(String)
-        return nil if path.start_with?("/") || path.include?("\\") || path.split("/").any? { |part| part.empty? || part == "." || part == ".." }
-        current = root
-        path.split("/").each do |part|
-          current = current.join(part)
-          return nil unless current.exist? && !current.symlink?
-        end
-        current
+
+        source = PathSafety.existing(root, path)
+        source unless source == :unsafe || source.nil?
       end
 
       def framework_identity(document)

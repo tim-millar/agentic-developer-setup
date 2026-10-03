@@ -55,6 +55,38 @@ class AdoptionTest < Minitest::Test
     refute result["diagnostics"].any? { |item| item["code"] == "inherited_digest_mismatch" }
   end
 
+  def test_metadata_parent_symlink_is_rejected_without_reading_external_content
+    external = File.join(@temporary_root, "external")
+    FileUtils.mkdir_p(external)
+    File.write(File.join(external, "adoption.yml"), YAML.dump(base_metadata.merge("framework" => {"version" => "must not be read"})))
+    FileUtils.rm_rf(File.join(@target, ".agent-framework"))
+    File.symlink(external, File.join(@target, ".agent-framework"))
+
+    result = inspect
+
+    assert_equal "invalid", result.dig("metadata", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "unsafe_metadata_path"
+    assert_nil result.dig("framework", "version")
+  end
+
+  def test_metadata_file_symlink_is_rejected
+    external = File.join(@temporary_root, "external-adoption.yml")
+    File.write(external, YAML.dump(base_metadata.merge("components" => [])))
+    File.symlink(external, File.join(@target, ".agent-framework/adoption.yml"))
+
+    result = inspect
+
+    assert_equal "invalid", result.dig("metadata", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "unsafe_metadata_path"
+  end
+
+  def test_missing_metadata_file_remains_distinguishable_from_unsafe_metadata
+    result = inspect
+
+    assert_equal "missing", result.dig("metadata", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "metadata_missing"
+  end
+
   def test_repository_owned_command_is_not_executed
     write_metadata(
       "id" => "ci_workflow",
@@ -84,6 +116,91 @@ class AdoptionTest < Minitest::Test
     assert_equal "available", result.dig("candidate", "status")
     assert_equal "candidate_available", result.dig("components", 0, "update_state")
     assert_equal 1, result.dig("summary", "review_required_count")
+  end
+
+  def test_valid_git_checkout_candidate_is_available_and_unchanged
+    write_metadata(inherited_component)
+
+    result = inspect(framework_source: ROOT)
+
+    assert_equal "available", result.dig("candidate", "status")
+    assert_equal "unchanged", result.dig("components", 0, "update_state")
+  end
+
+  def test_invalid_candidate_catalogue_is_not_available
+    write_metadata(inherited_component)
+    candidate = candidate_source
+    catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+    catalogue["baseline"]["recommended"] << catalogue["baseline"]["required"].first.merge("source_path" => "baseline/other")
+    File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+    result = inspect(framework_source: candidate)
+
+    assert_equal "invalid", result.dig("candidate", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid"
+  end
+
+  def test_candidate_catalogue_rejects_invalid_id_and_unsafe_source_path
+    write_metadata(inherited_component)
+    candidate = candidate_source
+    catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+    catalogue["baseline"]["required"].first["name"] = "Invalid-ID"
+    catalogue["baseline"]["required"].first["source_path"] = "../outside"
+    File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+    result = inspect(framework_source: candidate)
+
+    assert_equal "invalid", result.dig("candidate", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid"
+  end
+
+  def test_candidate_catalogue_rejects_malformed_component_entry
+    write_metadata(inherited_component)
+    candidate = candidate_source
+    catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+    catalogue["baseline"]["required"][0] = "not a component mapping"
+    File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+    result = inspect(framework_source: candidate)
+
+    assert_equal "invalid", result.dig("candidate", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid"
+  end
+
+  def test_duplicate_managed_targets_are_order_independent
+    first = specialised_component("agent_instructions", "AGENTS.md")
+    second = specialised_component("review_policy", "AGENTS.md")
+    File.write(File.join(@target, "AGENTS.md"), "local\n")
+
+    [[first, second], [second, first]].each do |components|
+      write_components(*components)
+      result = inspect
+      assert_includes result["diagnostics"].map { |item| item["code"] }, "duplicate_target_ownership"
+    end
+  end
+
+  def test_repository_owned_equivalent_does_not_claim_managed_target
+    managed = specialised_component("agent_instructions", "AGENTS.md")
+    native = {
+      "id" => "ci_workflow", "status" => "active", "ownership" => "repository_owned",
+      "update_policy" => "repository_managed", "equivalent" => {"paths" => ["AGENTS.md"]},
+      "rationale" => "Native capability is authoritative."
+    }
+    File.write(File.join(@target, "AGENTS.md"), "local\n")
+
+    [[managed, native], [native, managed]].each do |components|
+      write_components(*components)
+      result = inspect
+      refute_includes result["diagnostics"].map { |item| item["code"] }, "duplicate_target_ownership"
+    end
+  end
+
+  def test_schema_validation_is_used_for_structural_errors
+    write_metadata(inherited_component.merge("unexpected" => true))
+
+    result = inspect
+
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "schema_violation"
   end
 
   def test_missing_metadata_is_bounded
@@ -138,8 +255,33 @@ class AdoptionTest < Minitest::Test
   end
 
   def write_metadata(component)
-    metadata = base_metadata.merge("components" => [component])
+    write_components(component)
+  end
+
+  def write_components(*components)
+    metadata = base_metadata.merge("components" => components)
     File.write(File.join(@target, ".agent-framework/adoption.yml"), YAML.dump(metadata))
+  end
+
+  def candidate_source
+    candidate = File.join(@temporary_root, "candidate")
+    FileUtils.mkdir_p(candidate)
+    FileUtils.cp(File.join(ROOT, "framework.yml"), File.join(candidate, "framework.yml"))
+    candidate
+  end
+
+  def specialised_component(id, target_path)
+    {
+      "id" => id,
+      "status" => "active",
+      "ownership" => "specialised",
+      "update_policy" => "manual_merge",
+      "source_path" => "baseline/AGENTS.md",
+      "target_path" => target_path,
+      "adopted_revision" => "0" * 40,
+      "adopted_source_digest" => "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "local_ownership" => ["repository-specific content"]
+    }
   end
 
   def inspect(framework_source: nil)

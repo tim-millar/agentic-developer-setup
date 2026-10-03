@@ -17,6 +17,7 @@ module AgenticDeveloperSetup
         @root = Pathname.new(root).expand_path.realpath
         @framework_root = Pathname.new(framework_root).expand_path.realpath
         @diagnostics = []
+        @schema = Schema.load(@framework_root.join("schemas/framework-adoption-v1.schema.json"))
         @catalogue = load_catalogue
       rescue Errno::ENOENT, Errno::EACCES => e
         raise Assessment::InvocationError, "adoption root is not readable: #{e.message}"
@@ -26,6 +27,9 @@ module AgenticDeveloperSetup
         @diagnostics = []
         return sorted unless mapping(document, "document")
 
+        @schema.validate(document).each do |message|
+          error("schema_violation", nil, schema_location(message), message)
+        end
         validate_top_level(document)
         return sorted unless document["schema_version"] == 1
 
@@ -54,11 +58,16 @@ module AgenticDeveloperSetup
           permitted_symbols: [],
           aliases: false
         )
-        unless data.is_a?(Hash) && data["schema_version"] == 2 && data.dig("baseline", "required").is_a?(Array) && data.dig("baseline", "recommended").is_a?(Array)
+        baseline = data.is_a?(Hash) ? data["baseline"] : nil
+        unless data.is_a?(Hash) && data["schema_version"] == 2 && baseline.is_a?(Hash) && baseline["required"].is_a?(Array) && baseline["recommended"].is_a?(Array)
           raise Assessment::SchemaError, "framework metadata must be schema version 2 with a baseline catalogue"
         end
-        data["baseline"].values_at("required", "recommended").flatten.sort_by { |item| item.fetch("name") }
-      rescue Psych::Exception, SystemCallError, KeyError => e
+        entries = data["baseline"].values_at("required", "recommended").flatten
+        unless entries.all? { |item| item.is_a?(Hash) && item["name"].is_a?(String) && item["source_path"].is_a?(String) }
+          raise Assessment::SchemaError, "framework metadata contains malformed baseline components"
+        end
+        entries.sort_by { |item| item.fetch("name") }
+      rescue Psych::Exception, SystemCallError, KeyError, TypeError => e
         raise Assessment::SchemaError, "framework catalogue could not be loaded: #{e.message.lines.first.strip}"
       end
 
@@ -190,7 +199,13 @@ module AgenticDeveloperSetup
         return unless components.is_a?(Array)
 
         ids = component_ids
-        targets = {}
+        managed_targets = Hash.new { |hash, key| hash[key] = [] }
+        components.each do |component|
+          next unless component.is_a?(Hash) && component["status"] == "active" && %w[inherited specialised].include?(component["ownership"])
+          target_path = component["target_path"]
+          managed_targets[target_path] << component["id"] if target_path.is_a?(String)
+        end
+        duplicate_targets = managed_targets.select { |_path, owners| owners.length > 1 }.keys
         components.each do |component|
           next unless component.is_a?(Hash)
           id = component["id"]
@@ -211,14 +226,12 @@ module AgenticDeveloperSetup
                 error("path_outside_scope", id, target_path, "target path is outside the declared scope")
               end
               if target_path.is_a?(String)
-                prior = targets[target_path]
-                error("duplicate_target_ownership", id, target_path, "target path is already owned by #{prior}") if prior
-                targets[target_path] = id
+                error("duplicate_target_ownership", id, target_path, "target path is claimed by multiple framework-managed components") if duplicate_targets.include?(target_path)
                 inspect_target(component, scope)
               end
               validate_catalogue_identity(component, ids.fetch(id), id, source_path)
             elsif ownership == "repository_owned"
-              validate_equivalent_paths(component, scope, targets)
+              validate_equivalent_paths(component, scope)
             end
           end
         end
@@ -254,13 +267,12 @@ module AgenticDeveloperSetup
         end
       end
 
-      def validate_equivalent_paths(component, scope, targets)
+      def validate_equivalent_paths(component, scope)
         equivalent = component["equivalent"]
         Array(equivalent.is_a?(Hash) ? equivalent["paths"] : nil).each do |path|
           unless inside_scope?(path, scope["path"])
             error("path_outside_scope", component["id"], path, "repository-owned equivalent path is outside the declared scope")
           end
-          error("duplicate_target_ownership", component["id"], path, "repository-owned equivalent path is claimed by a framework-managed target") if targets.key?(path)
           existing = safe_existing(@root, path)
           if existing == :unsafe
             error("unsafe_equivalent_path", component["id"], path, "equivalent path is unsafe")
@@ -292,24 +304,7 @@ module AgenticDeveloperSetup
       end
 
       def safe_existing(base, relative)
-        return :unsafe unless safe_path_value?(relative, allow_dot: relative == ".")
-        current = Pathname.new(base)
-        relative.to_s.split("/").reject(&:empty?).each do |part|
-          next if part == "."
-          current = current.join(part)
-          begin
-            stat = current.lstat
-          rescue Errno::ENOENT
-            return nil
-          end
-          return :unsafe if stat.symlink?
-        end
-        begin
-          current.lstat
-          current
-        rescue Errno::ENOENT
-          nil
-        end
+        PathSafety.existing(base, relative, allow_dot: relative == ".")
       end
 
       def inside_scope?(path, scope_path)
@@ -416,6 +411,13 @@ module AgenticDeveloperSetup
 
       def sorted
         @diagnostics.sort_by { |item| [item.path.to_s, item.code.to_s, item.component_id.to_s, item.message] }
+      end
+
+      def schema_location(message)
+        location = message[/\A(\$[^:]*):/, 1]
+        return nil unless location
+
+        location.delete_prefix("$").gsub(/\[\d+\]/) { |index| index }.delete_prefix(".")
       end
 
       def digest_for(path)

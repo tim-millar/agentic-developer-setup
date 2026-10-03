@@ -65,6 +65,18 @@ class FrameworkValidationTest < Minitest::Test
     assert_passes("root harness structure")
   end
 
+  def test_missing_adoption_schema_fails_validation
+    FileUtils.rm(File.join(@fixture_root, "schemas/framework-adoption-v1.schema.json"))
+
+    assert_fails("schemas/framework-adoption-v1.schema.json", "file does not exist")
+  end
+
+  def test_missing_reference_adoption_metadata_fails_validation
+    FileUtils.rm(File.join(@fixture_root, "examples/reference-service/.agent-framework/adoption.yml"))
+
+    assert_fails("examples/reference-service/.agent-framework/adoption.yml", "file does not exist")
+  end
+
   def test_root_codex_wrapper_does_not_grant_ambient_outcome_source_authority
     wrapper = File.read(File.join(REPOSITORY_ROOT, "scripts", "run_codex.sh"))
     launcher = File.read(File.join(REPOSITORY_ROOT, "baseline", "scripts", "run_codex.sh"))
@@ -740,7 +752,7 @@ class FrameworkValidationTest < Minitest::Test
   private
 
   def build_fixture
-    %w[docs scripts schemas lib/agent_run_usage .github/skills/code-review baseline/.github/skills/code-review baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems].each do |directory|
+    %w[docs scripts schemas lib/agent_run_usage .github/skills/code-review baseline/.github/skills/code-review baseline/scripts baseline/docs baseline/issues prompts adapters/ecosystems examples/reference-service/.agent-framework].each do |directory|
       FileUtils.mkdir_p(File.join(@fixture_root, directory))
     end
     %w[
@@ -752,6 +764,9 @@ class FrameworkValidationTest < Minitest::Test
       baseline/scripts/agent_run_usage_collector.rb baseline/docs/AGENT_PROMPT.txt
       baseline/issues/implementation.md baseline/REVIEW.md prompts/bootstrap.md
     ].each { |path| write_file(path) }
+    FileUtils.cp(File.join(REPOSITORY_ROOT, "schemas/framework-adoption-v1.schema.json"), File.join(@fixture_root, "schemas/framework-adoption-v1.schema.json"))
+    FileUtils.cp_r(File.join(REPOSITORY_ROOT, "lib/agentic_developer_setup"), File.join(@fixture_root, "lib"))
+    write_file("examples/reference-service/.agent-framework/adoption.yml", YAML.dump(valid_adoption_metadata))
     write_file(".github/skills/code-review/SKILL.md", skill_contents)
     write_file("baseline/.github/skills/code-review/SKILL.md", skill_contents)
     FileUtils.cp(VALIDATOR, File.join(@fixture_root, "scripts/validate_framework.rb"))
@@ -896,6 +911,21 @@ class FrameworkValidationTest < Minitest::Test
       "source_path" => source_path,
       "target_path" => target_path,
       "description" => "Fixture baseline artefact."
+    }
+  end
+
+  def valid_adoption_metadata
+    {
+      "schema_version" => 1,
+      "framework" => {
+        "source" => "https://github.com/tim-millar/agentic-developer-setup",
+        "version" => "0.1.0",
+        "revision" => "a" * 40,
+        "adopted_at" => "2026-09-30",
+        "updated_at" => "2026-09-30"
+      },
+      "scope" => {"type" => "repository", "path" => "."},
+      "components" => []
     }
   end
 

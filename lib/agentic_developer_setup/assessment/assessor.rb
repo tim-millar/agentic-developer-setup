@@ -560,14 +560,14 @@ module AgenticDeveloperSetup
         {
           "status" => status,
           "path" => inspection.dig("metadata", "path"),
-          "schema_version" => inspection.dig("metadata", "schema_version")
+          "schema_version" => (status == "valid") ? inspection.dig("metadata", "schema_version") : nil
         }
       end
 
       def adoption_framework_summary(inspection)
         {
-          "version" => inspection.dig("framework", "version"),
-          "revision" => inspection.dig("framework", "revision")
+          "version" => (inspection.dig("metadata", "status") == "valid") ? inspection.dig("framework", "version") : nil,
+          "revision" => (inspection.dig("metadata", "status") == "valid") ? inspection.dig("framework", "revision") : nil
         }
       end
 
@@ -586,7 +586,7 @@ module AgenticDeveloperSetup
         return [] unless inspection.dig("metadata", "status") == "valid"
 
         inspection["components"].filter_map do |component|
-          component["id"] if (value == "pinned" && component["update_state"] == "pinned") || component["status"] == value || component["ownership"] == value
+          component["id"] if (value == "pinned" && component["status"] == "active" && component["update_policy"] == "pinned") || component["status"] == value || component["ownership"] == value
         end.sort
       end
 
@@ -598,7 +598,7 @@ module AgenticDeveloperSetup
 
       def adoption_undeclared_components(states, inspection)
         declared = if inspection.dig("metadata", "status") == "valid"
-          inspection["components"].map { |component| component["id"] }
+          inspection["components"].filter_map { |component| component["id"] if component["status"] == "active" }
         else
           []
         end
@@ -607,8 +607,8 @@ module AgenticDeveloperSetup
 
       def adoption_confidence(inspection)
         status = inspection.dig("metadata", "status")
-        return "low" if status == "invalid" || inspection.dig("summary", "error_count").to_i.positive?
         return "medium" if status == "missing" || status == "absent"
+        return "low" if status == "invalid" || inspection.dig("summary", "error_count").to_i.positive?
         return "medium" if inspection.dig("summary", "review_required_count").to_i.positive?
 
         "high"

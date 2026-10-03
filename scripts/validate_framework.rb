@@ -646,18 +646,17 @@ class FrameworkValidator
 
   def validate_adoption_contract
     schema = @root.join("schemas/framework-adoption-v1.schema.json")
-    return unless schema.file?
-
-    begin
-      JSON.parse(schema.read)
-    rescue JSON::ParserError, SystemCallError => e
-      error("schemas/framework-adoption-v1.schema.json", "could not parse adoption schema: #{e.message.lines.first.strip}")
-    end
-
     metadata_path = @root.join("examples/reference-service/.agent-framework/adoption.yml")
-    return unless metadata_path.file?
-
     require_relative "../lib/agentic_developer_setup/adoption"
+
+    unless schema.file?
+      error("schemas/framework-adoption-v1.schema.json", "file does not exist: schemas/framework-adoption-v1.schema.json")
+    end
+    unless metadata_path.file?
+      error("examples/reference-service/.agent-framework/adoption.yml", "file does not exist: examples/reference-service/.agent-framework/adoption.yml")
+    end
+    return unless schema.file? && metadata_path.file?
+
     loaded = AgenticDeveloperSetup::Adoption::Metadata.load(@root.join("examples/reference-service"))
     loaded.diagnostics.each { |item| error("#{metadata_path}: #{item.code}", item.message) }
     return unless loaded.status == "loaded"

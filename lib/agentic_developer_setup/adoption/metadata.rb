@@ -18,6 +18,41 @@ module AgenticDeveloperSetup
     DIGEST_PATTERN = /\Asha256:[0-9a-f]{64}\z/
     DATE_PATTERN = /\A\d{4}-\d{2}-\d{2}\z/
 
+    module PathSafety
+      module_function
+
+      def safe_relative?(value, allow_dot: false)
+        return false unless value.is_a?(String) && !value.empty?
+        return true if allow_dot && value == "."
+        return false if value == "." || value.start_with?("/") || value.include?("\\") || value.include?("\0") || value.match?(/\A[A-Za-z]:/)
+
+        parts = value.split("/")
+        !parts.any? { |part| part.empty? || part == "." || part == ".." || part == ".git" }
+      end
+
+      # Walk an already-rooted path with lstat. No component is followed.
+      # :unsafe means a symlink or an invalid relative path; nil means a
+      # missing component; a Pathname means the existing final entry.
+      def existing(root, relative, allow_dot: false)
+        return :unsafe unless safe_relative?(relative, allow_dot: allow_dot)
+
+        current = Pathname.new(root)
+        parts = (relative == ".") ? [] : relative.split("/")
+        parts.each do |part|
+          current = current.join(part)
+          begin
+            stat = current.lstat
+          rescue Errno::ENOENT
+            return nil
+          rescue SystemCallError
+            return :unsafe
+          end
+          return :unsafe if stat.symlink?
+        end
+        current
+      end
+    end
+
     # standard:disable Style/RedundantStructKeywordInit
     Diagnostic = Struct.new(:severity, :code, :component_id, :path, :message, keyword_init: true) do
       def to_h
@@ -42,11 +77,24 @@ module AgenticDeveloperSetup
       end
 
       def self.load(root)
-        path = Pathname.new(root).expand_path.join(METADATA_PATH)
-        unless path.file? && !path.symlink?
+        root_path = Pathname.new(root).expand_path.realpath
+        path = PathSafety.existing(root_path, METADATA_PATH)
+        if path.nil?
           return new(
             status: "missing",
             diagnostics: [Diagnostic.new(severity: "error", code: "metadata_missing", path: METADATA_PATH, message: "adoption metadata is missing")]
+          )
+        end
+        if path == :unsafe
+          return new(
+            status: "invalid",
+            diagnostics: [Diagnostic.new(severity: "error", code: "unsafe_metadata_path", path: METADATA_PATH, message: "adoption metadata path contains an unsafe or symlinked component")]
+          )
+        end
+        unless path.lstat.file?
+          return new(
+            status: "invalid",
+            diagnostics: [Diagnostic.new(severity: "error", code: "metadata_not_regular_file", path: METADATA_PATH, message: "adoption metadata must be a regular file")]
           )
         end
 

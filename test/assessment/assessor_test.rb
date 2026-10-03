@@ -5,6 +5,101 @@ require_relative "../assessment_test_helper"
 class AssessmentAssessorTest < Minitest::Test
   include AssessmentTestSupport
 
+  def test_absent_adoption_metadata_has_medium_confidence
+    result = assess
+
+    assert_equal "absent", result.dig("framework_adoption", "metadata", "status")
+    assert_equal "medium", result.dig("framework_adoption", "inspection_confidence")
+    assert_schema(result)
+  end
+
+  def test_invalid_adoption_metadata_is_surfaced_without_breaking_assessment_schema
+    documents = [
+      "schema_version: 2\n",
+      "schema_version: 1\nframework:\n  version: 123\n",
+      "schema_version: [\n",
+      "schema_version: 1\nframework: {}\n"
+    ]
+
+    documents.each do |document|
+      write(".agent-framework/adoption.yml", document)
+      result = assess
+
+      assert_equal "invalid", result.dig("framework_adoption", "metadata", "status")
+      assert_equal "low", result.dig("framework_adoption", "inspection_confidence")
+      assert_nil result.dig("framework_adoption", "metadata", "schema_version")
+      assert_nil result.dig("framework_adoption", "framework", "version")
+      assert_nil result.dig("framework_adoption", "framework", "revision")
+      assert_schema(result)
+    end
+  end
+
+  def test_pinned_inherited_and_specialised_components_are_reported_without_candidate_comparison
+    FileUtils.mkdir_p(File.join(@target, ".github/ISSUE_TEMPLATE"))
+    FileUtils.cp(File.join(AssessmentTestSupport::ROOT, "baseline/.github/ISSUE_TEMPLATE/config.yml"), File.join(@target, ".github/ISSUE_TEMPLATE/config.yml"))
+    write("AGENTS.md", "repository-specific instructions\n")
+    write(".agent-framework/adoption.yml", YAML.dump(adoption_metadata([
+      {
+        "id" => "issue_template_config", "status" => "active", "ownership" => "inherited", "update_policy" => "pinned",
+        "source_path" => "baseline/.github/ISSUE_TEMPLATE/config.yml", "target_path" => ".github/ISSUE_TEMPLATE/config.yml",
+        "adopted_revision" => "0" * 40, "adopted_source_digest" => "sha256:e71bea835ed1158881306294d96968f125b0b0c5eff66cd94df559336bd0b210",
+        "rationale" => "Pinned pending review."
+      },
+      {
+        "id" => "agent_instructions", "status" => "active", "ownership" => "specialised", "update_policy" => "pinned",
+        "source_path" => "baseline/AGENTS.md", "target_path" => "AGENTS.md",
+        "adopted_revision" => "0" * 40, "adopted_source_digest" => "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "local_ownership" => ["repository-specific instructions"], "rationale" => "Pinned pending policy review."
+      }
+    ])))
+
+    result = assess
+
+    assert_equal %w[agent_instructions issue_template_config], result.dig("framework_adoption", "pinned_components")
+    assert_schema(result)
+  end
+
+  def test_inactive_declaration_does_not_suppress_undeclared_framework_like_detection
+    write("REVIEW.md", "Repository-specific review policy.\n")
+    write(".agent-framework/adoption.yml", YAML.dump(adoption_metadata([
+      {"id" => "review_policy", "status" => "deferred", "rationale" => "Review policy is intentionally deferred."}
+    ])))
+
+    result = assess
+
+    assert_includes result.dig("framework_adoption", "undeclared_framework_like_components"), "review_policy"
+    assert_schema(result)
+  end
+
+  def test_active_declaration_suppresses_undeclared_framework_like_detection
+    write("REVIEW.md", "Repository-specific review policy.\n")
+    write(".agent-framework/adoption.yml", YAML.dump(adoption_metadata([
+      {
+        "id" => "review_policy", "status" => "active", "ownership" => "specialised", "update_policy" => "manual_merge",
+        "source_path" => "baseline/REVIEW.md", "target_path" => "REVIEW.md", "adopted_revision" => "0" * 40,
+        "adopted_source_digest" => "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "local_ownership" => ["repository-specific review policy"]
+      }
+    ])))
+
+    result = assess
+
+    refute_includes result.dig("framework_adoption", "undeclared_framework_like_components"), "review_policy"
+    assert_schema(result)
+  end
+
+  def adoption_metadata(components)
+    {
+      "schema_version" => 1,
+      "framework" => {
+        "source" => AgenticDeveloperSetup::Adoption::SOURCE, "version" => "0.1.0",
+        "revision" => "0" * 40, "adopted_at" => "2026-09-30", "updated_at" => "2026-09-30"
+      },
+      "scope" => {"type" => "repository", "path" => "."},
+      "components" => components
+    }
+  end
+
   def test_sensitive_path_without_specific_guidance_is_missing_and_blocks_tier
     write("AGENTS.md", "# Repository instructions\nUse normal review.\n")
     context = context_file(sensitive_paths: ["config/production"])
