@@ -4,6 +4,8 @@ require "digest"
 require "date"
 require "pathname"
 
+require_relative "../git_command"
+
 module AgenticDeveloperSetup
   module Adoption
     class Validator
@@ -425,11 +427,8 @@ module AgenticDeveloperSetup
       end
 
       def capture_revision(root)
-        require "open3"
-        stdout, _stderr, status = Open3.capture3({"GIT_OPTIONAL_LOCKS" => "0"}, "git", "-C", root.to_s, "rev-parse", "--verify", "HEAD^{commit}")
-        status.success? ? stdout.strip : "unknown"
-      rescue SystemCallError
-        "unknown"
+        result = GitCommand.capture(root, "rev-parse", "--verify", "HEAD^{commit}")
+        (result.success? && !result.stdout.strip.empty?) ? result.stdout.strip : "unknown"
       end
     end
   end

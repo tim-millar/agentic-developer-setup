@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "minitest/autorun"
+require "open3"
 require "tmpdir"
 require "yaml"
 
@@ -127,6 +128,42 @@ class AdoptionTest < Minitest::Test
     assert_equal "unchanged", result.dig("components", 0, "update_state")
   end
 
+  def test_validator_revision_lookup_ignores_ambient_git_repository_selection
+    framework = git_framework_source
+    decoy = git_repository("decoy", "decoy")
+    framework_revision = git_revision(framework)
+    component = inherited_component.merge(
+      "adopted_revision" => framework_revision,
+      "adopted_source_digest" => "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    )
+    write_metadata(component)
+
+    with_hostile_git_environment(decoy) do
+      validator = AgenticDeveloperSetup::Adoption::Validator.new(root: @target, framework_root: framework)
+
+      assert_equal framework_revision, validator.send(:catalogue_revision)
+      assert_includes validator.validate(base_metadata.merge("components" => [component])).map(&:code), "source_digest_mismatch"
+    end
+  end
+
+  def test_candidate_revision_lookup_ignores_ambient_git_repository_selection
+    candidate = candidate_source
+    Open3.capture3("git", "-C", candidate, "init", "--quiet")
+    Open3.capture3("git", "-C", candidate, "config", "user.name", "Adoption Test")
+    Open3.capture3("git", "-C", candidate, "config", "user.email", "adoption@example.invalid")
+    Open3.capture3("git", "-C", candidate, "add", "framework.yml")
+    Open3.capture3("git", "-C", candidate, "commit", "--quiet", "-m", "candidate")
+    candidate_revision = git_revision(candidate)
+    decoy = git_repository("decoy", "different")
+
+    with_hostile_git_environment(decoy) do
+      result = inspect(framework_source: candidate)
+
+      assert_equal "available", result.dig("candidate", "status")
+      assert_equal candidate_revision, result.dig("candidate", "revision")
+    end
+  end
+
   def test_invalid_candidate_catalogue_is_not_available
     write_metadata(inherited_component)
     candidate = candidate_source
@@ -165,6 +202,29 @@ class AdoptionTest < Minitest::Test
 
     assert_equal "invalid", result.dig("candidate", "status")
     assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid"
+  end
+
+  def test_malformed_candidate_catalogue_container_shapes_are_bounded
+    cases = [
+      ["top-level sequence", ["not", "a", "mapping"]],
+      ["baseline scalar", {"schema_version" => 2, "baseline" => "broken"}],
+      ["baseline sequence", {"schema_version" => 2, "baseline" => []}],
+      ["missing baseline collections", {"schema_version" => 2, "baseline" => {}}],
+      ["missing recommended", {"schema_version" => 2, "baseline" => {"required" => []}}],
+      ["wrong required type", {"schema_version" => 2, "baseline" => {"required" => {}, "recommended" => []}}],
+      ["wrong recommended type", {"schema_version" => 2, "baseline" => {"required" => [], "recommended" => {}}}],
+      ["malformed framework identity", {"schema_version" => 2, "framework" => "broken", "baseline" => {"required" => [], "recommended" => []}}]
+    ]
+
+    cases.each do |label, catalogue|
+      candidate = candidate_source
+      File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+      result = inspect(framework_source: candidate)
+
+      assert_equal "invalid", result.dig("candidate", "status"), label
+      assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid", label
+    end
   end
 
   def test_duplicate_managed_targets_are_order_independent
@@ -268,6 +328,42 @@ class AdoptionTest < Minitest::Test
     FileUtils.mkdir_p(candidate)
     FileUtils.cp(File.join(ROOT, "framework.yml"), File.join(candidate, "framework.yml"))
     candidate
+  end
+
+  def git_framework_source
+    framework = File.join(@temporary_root, "framework")
+    FileUtils.mkdir_p(File.join(framework, "baseline/.github/ISSUE_TEMPLATE"))
+    FileUtils.mkdir_p(File.join(framework, "schemas"))
+    FileUtils.cp(File.join(ROOT, "framework.yml"), File.join(framework, "framework.yml"))
+    FileUtils.cp(File.join(ROOT, "schemas/framework-adoption-v1.schema.json"), File.join(framework, "schemas/framework-adoption-v1.schema.json"))
+    FileUtils.cp(File.join(ROOT, "baseline/.github/ISSUE_TEMPLATE/config.yml"), File.join(framework, "baseline/.github/ISSUE_TEMPLATE/config.yml"))
+    git_repository(framework, "framework")
+  end
+
+  def git_repository(name, content)
+    repository = name.start_with?(File::SEPARATOR) ? name : File.join(@temporary_root, name)
+    FileUtils.mkdir_p(repository)
+    File.write(File.join(repository, "README.md"), content)
+    Open3.capture3("git", "-C", repository, "init", "--quiet")
+    Open3.capture3("git", "-C", repository, "config", "user.name", "Adoption Test")
+    Open3.capture3("git", "-C", repository, "config", "user.email", "adoption@example.invalid")
+    Open3.capture3("git", "-C", repository, "add", "README.md")
+    Open3.capture3("git", "-C", repository, "commit", "--quiet", "-m", "repository")
+    repository
+  end
+
+  def git_revision(repository)
+    Open3.capture3("git", "-C", repository, "rev-parse", "--verify", "HEAD^{commit}").first.strip
+  end
+
+  def with_hostile_git_environment(decoy)
+    names = %w[GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR]
+    original = names.to_h { |name| [name, ENV[name]] }
+    names.each { |name| ENV[name] = File.join(decoy, (name == "GIT_WORK_TREE") ? "" : ".git") }
+    ENV["GIT_INDEX_FILE"] = File.join(decoy, ".git", "index")
+    yield
+  ensure
+    original&.each { |name, value| value.nil? ? ENV.delete(name) : ENV[name] = value }
   end
 
   def specialised_component(id, target_path)

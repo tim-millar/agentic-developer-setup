@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "assessment/errors"
+require_relative "git_command"
 require_relative "assessment/evidence"
 require_relative "assessment/git_inspector"
 require_relative "assessment/inventory"

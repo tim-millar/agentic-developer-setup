@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require "digest"
-require "open3"
 require "pathname"
+
+require_relative "../git_command"
 
 module AgenticDeveloperSetup
   module Adoption
@@ -136,10 +137,27 @@ module AgenticDeveloperSetup
         catalogue_path = PathSafety.existing(candidate_root, "framework.yml")
         return invalid_candidate("candidate_source_unsafe_path", "candidate framework catalogue path is unsafe") unless catalogue_path&.is_a?(Pathname) && catalogue_path.lstat.file?
         catalogue = YAML.safe_load(catalogue_path.read, permitted_classes: [], permitted_symbols: [], aliases: false)
-        unless catalogue.is_a?(Hash) && catalogue["schema_version"] == 2 && catalogue.dig("baseline", "required").is_a?(Array) && catalogue.dig("baseline", "recommended").is_a?(Array)
+        unless catalogue.is_a?(Hash)
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source does not contain a valid framework catalogue")
         end
-        entries = catalogue["baseline"].values_at("required", "recommended").flatten
+        return invalid_candidate("candidate_catalogue_invalid", "candidate framework source does not contain schema version 2") unless catalogue["schema_version"] == 2
+
+        baseline = catalogue["baseline"]
+        unless baseline.is_a?(Hash)
+          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source baseline must be a mapping")
+        end
+        required = baseline["required"]
+        recommended = baseline["recommended"]
+        unless required.is_a?(Array) && recommended.is_a?(Array)
+          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source baseline collections must be arrays")
+        end
+
+        framework = catalogue["framework"]
+        unless framework.is_a?(Hash) && framework["framework_version"].is_a?(String) && !framework["framework_version"].empty?
+          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source framework identity is malformed")
+        end
+
+        entries = required + recommended
         unless entries.all? { |entry| entry.is_a?(Hash) && entry["name"].is_a?(String) && entry["name"].match?(ID_PATTERN) && entry["source_path"].is_a?(String) && PathSafety.safe_relative?(entry["source_path"]) }
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains malformed baseline components")
         end
@@ -153,7 +171,7 @@ module AgenticDeveloperSetup
           diagnostics: (revision == "unknown") ? [diagnostic("warning", "candidate_revision_unavailable", nil, nil, "candidate source has no usable Git revision; digest comparison remains available")] : [],
           catalogue: entries.sort_by { |entry| entry["name"] },
           root: candidate_root,
-          version: catalogue.dig("framework", "framework_version"),
+          version: framework["framework_version"],
           revision: (revision == "unknown") ? nil : revision
         }
       rescue Psych::Exception, SystemCallError => e
@@ -211,10 +229,8 @@ module AgenticDeveloperSetup
       end
 
       def capture_revision(root)
-        stdout, _stderr, status = Open3.capture3({"GIT_OPTIONAL_LOCKS" => "0"}, "git", "-C", root.to_s, "rev-parse", "--verify", "HEAD^{commit}")
-        status.success? ? stdout.strip : "unknown"
-      rescue SystemCallError
-        "unknown"
+        result = GitCommand.capture(root, "rev-parse", "--verify", "HEAD^{commit}")
+        (result.success? && !result.stdout.strip.empty?) ? result.stdout.strip : "unknown"
       end
     end
   end
