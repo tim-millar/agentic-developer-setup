@@ -427,8 +427,7 @@ module AgenticDeveloperSetup
       end
 
       def capture_revision(root)
-        result = GitCommand.capture(root, "rev-parse", "--verify", "HEAD^{commit}")
-        (result.success? && !result.stdout.strip.empty?) ? result.stdout.strip : "unknown"
+        GitCommand.revision(root) || "unknown"
       end
     end
   end

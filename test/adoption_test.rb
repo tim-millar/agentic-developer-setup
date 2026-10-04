@@ -125,7 +125,68 @@ class AdoptionTest < Minitest::Test
     result = inspect(framework_source: ROOT)
 
     assert_equal "available", result.dig("candidate", "status")
+    assert_equal git_revision(ROOT), result.dig("candidate", "revision")
     assert_equal "unchanged", result.dig("components", 0, "update_state")
+  end
+
+  def test_nested_extracted_candidate_does_not_report_enclosing_git_revision
+    write_metadata(inherited_component)
+    candidate = nested_extracted_framework_source
+
+    result = inspect(framework_source: candidate)
+
+    assert_equal "available", result.dig("candidate", "status")
+    assert_nil result.dig("candidate", "revision")
+    assert_equal "unchanged", result.dig("components", 0, "update_state")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_revision_unavailable"
+  end
+
+  def test_nested_extracted_framework_root_does_not_borrow_enclosing_revision
+    framework = nested_extracted_framework_source
+
+    validator = AgenticDeveloperSetup::Adoption::Validator.new(root: @target, framework_root: framework)
+
+    assert_nil validator.send(:catalogue_revision)
+  end
+
+  def test_markdown_renderer_escapes_pipe_in_target_path_and_preserves_table_shape
+    target_path = "docs/a|b.md"
+    FileUtils.mkdir_p(File.join(@target, "docs"))
+    File.write(File.join(@target, target_path), "specialised\n")
+    write_metadata(specialised_component("agent_instructions", target_path))
+
+    result = inspect
+    result["diagnostics"] << {
+      "severity" => "warning",
+      "code" => "value|with`syntax",
+      "component_id" => "agent_instructions",
+      "path" => target_path,
+      "message" => "message with | pipe, ` backtick, and * emphasis"
+    }
+    diagnostics = result["diagnostics"].dup
+    report = AgenticDeveloperSetup::Adoption::Renderer.render(result)
+    row = report.lines.find { |line| line.start_with?("| `agent_instructions`") }
+
+    refute_nil row
+    assert_equal 7, row.scan(/(?<!\\)\|/).length
+    assert_includes row, "docs/a\\|b.md"
+    assert_includes report, "value|with"
+    assert_includes report, "message with \\| pipe, \\` backtick, and \\* emphasis"
+    assert_equal diagnostics, result["diagnostics"]
+  end
+
+  def test_markdown_renderer_uses_safe_code_fence_for_backtick_in_target_path
+    target_path = "docs/a`b.md"
+    FileUtils.mkdir_p(File.join(@target, "docs"))
+    File.write(File.join(@target, target_path), "specialised\n")
+    write_metadata(specialised_component("agent_instructions", target_path))
+
+    report = AgenticDeveloperSetup::Adoption::Renderer.render(inspect)
+    row = report.lines.find { |line| line.start_with?("| `agent_instructions`") }
+
+    refute_nil row
+    assert_equal 7, row.scan(/(?<!\\)\|/).length
+    assert_includes row, "``docs/a`b.md``"
   end
 
   def test_candidate_path_movement_with_identical_source_bytes_remains_unchanged
@@ -404,6 +465,18 @@ class AdoptionTest < Minitest::Test
     FileUtils.cp(File.join(ROOT, "schemas/framework-adoption-v1.schema.json"), File.join(framework, "schemas/framework-adoption-v1.schema.json"))
     FileUtils.cp(File.join(ROOT, "baseline/.github/ISSUE_TEMPLATE/config.yml"), File.join(framework, "baseline/.github/ISSUE_TEMPLATE/config.yml"))
     git_repository(framework, "framework")
+  end
+
+  def nested_extracted_framework_source
+    outer = File.join(@temporary_root, "outer")
+    framework = File.join(outer, "candidate")
+    FileUtils.mkdir_p(File.join(framework, "baseline/.github/ISSUE_TEMPLATE"))
+    FileUtils.mkdir_p(File.join(framework, "schemas"))
+    FileUtils.cp(File.join(ROOT, "framework.yml"), File.join(framework, "framework.yml"))
+    FileUtils.cp(File.join(ROOT, "schemas/framework-adoption-v1.schema.json"), File.join(framework, "schemas/framework-adoption-v1.schema.json"))
+    FileUtils.cp(File.join(ROOT, "baseline/.github/ISSUE_TEMPLATE/config.yml"), File.join(framework, "baseline/.github/ISSUE_TEMPLATE/config.yml"))
+    git_repository(outer, "outer")
+    framework
   end
 
   def git_repository(name, content)
