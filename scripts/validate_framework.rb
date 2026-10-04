@@ -32,12 +32,18 @@ class FrameworkValidator
 
   attr_reader :errors
 
+  def validate_catalogue_document(metadata)
+    @errors = []
+    validate_schema(metadata)
+    validate_semantics(metadata)
+    errors.sort
+  end
+
   def validate
     metadata = load_metadata
     return false if metadata.equal?(LOAD_FAILED)
 
-    validate_schema(metadata)
-    validate_semantics(metadata)
+    @errors.concat(AgenticDeveloperSetup::FrameworkCatalogue.document_errors(@root, metadata))
     validate_metadata_paths(metadata)
     validate_adoption_contract
     validate_repository_structure

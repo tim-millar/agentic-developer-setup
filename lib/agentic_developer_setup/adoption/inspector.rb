@@ -141,22 +141,15 @@ module AgenticDeveloperSetup
         unless catalogue.is_a?(Hash)
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source does not contain a valid framework catalogue")
         end
-        return invalid_candidate("candidate_catalogue_invalid", "candidate framework source does not contain schema version 2") unless catalogue["schema_version"] == 2
-
-        baseline = catalogue["baseline"]
-        unless baseline.is_a?(Hash)
-          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source baseline must be a mapping")
-        end
-        required = baseline["required"]
-        recommended = baseline["recommended"]
-        unless required.is_a?(Array) && recommended.is_a?(Array)
-          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source baseline collections must be arrays")
+        catalogue_errors = FrameworkCatalogue.document_errors(candidate_root, catalogue)
+        unless catalogue_errors.empty?
+          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains an invalid framework catalogue document")
         end
 
-        framework = catalogue["framework"]
-        unless framework.is_a?(Hash) && framework["framework_version"].is_a?(String) && !framework["framework_version"].empty?
-          return invalid_candidate("candidate_catalogue_invalid", "candidate framework source framework identity is malformed")
-        end
+        baseline = catalogue.fetch("baseline")
+        required = baseline.fetch("required")
+        recommended = baseline.fetch("recommended")
+        framework = catalogue.fetch("framework")
 
         entries = required + recommended
         unless entries.all? { |entry| valid_candidate_baseline_entry?(entry) }

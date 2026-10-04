@@ -335,6 +335,30 @@ class AdoptionTest < Minitest::Test
     end
   end
 
+  def test_candidate_catalogue_requires_the_complete_framework_document
+    cases = [
+      ["unknown top-level field", ->(catalogue) { catalogue["surprise"] = true }],
+      ["missing prompts", ->(catalogue) { catalogue.delete("prompts") }],
+      ["malformed prompts", ->(catalogue) { catalogue["prompts"] = {} }],
+      ["malformed usage mode entry", ->(catalogue) { catalogue["usage_modes"].first["surprise"] = true }],
+      ["invalid issue-template reference", ->(catalogue) { catalogue["issue_templates"]["primary"]["source_path"] = "baseline/missing.md" }]
+    ]
+
+    cases.each do |label, mutation|
+      write_metadata(inherited_component)
+      candidate = candidate_source
+      catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+      mutation.call(catalogue)
+      File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+      result = inspect(framework_source: candidate)
+
+      assert_equal "invalid", result.dig("candidate", "status"), label
+      assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid", label
+      refute result["components"].any? { |component| %w[unchanged candidate_available manual_review pinned].include?(component["update_state"]) }, label
+    end
+  end
+
   def test_mixed_type_unknown_keys_are_bounded_at_top_level
     metadata = base_metadata.merge("components" => [], "unexpected" => "foo", 123 => "bar")
     File.write(File.join(@target, ".agent-framework/adoption.yml"), YAML.dump(metadata))

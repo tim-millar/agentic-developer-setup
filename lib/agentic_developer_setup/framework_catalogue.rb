@@ -7,6 +7,16 @@ module AgenticDeveloperSetup
 
     module_function
 
+    def document_errors(root, document)
+      require_relative "../../scripts/validate_framework" unless defined?(::FrameworkValidator)
+
+      validator = ::FrameworkValidator.new(root)
+      validator.validate_catalogue_document(document)
+      validator.errors
+    rescue => e
+      ["ERROR: framework.yml: catalogue validation failed: #{e.message.lines.first.strip}"]
+    end
+
     def baseline_entry_shape_valid?(entry)
       return false unless entry.is_a?(Hash)
       return false unless entry.keys.all? { |key| key.is_a?(String) && BASELINE_ENTRY_FIELDS.include?(key) }
