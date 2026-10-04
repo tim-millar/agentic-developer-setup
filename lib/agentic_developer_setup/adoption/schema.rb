@@ -68,7 +68,8 @@ module AgenticDeveloperSetup
           @errors << "#{location}: has too few properties" if schema["minProperties"] && value.length < schema["minProperties"]
           properties = schema.fetch("properties", {})
           if schema["additionalProperties"] == false
-            (value.keys - properties.keys).sort.each { |key| @errors << "#{location}.#{key}: is not allowed" }
+            unknown_keys = value.keys.reject { |key| properties.key?(key) }
+            unknown_keys.sort_by { |key| [key.class.name, key.inspect] }.each { |key| @errors << "#{location}.#{key}: is not allowed" }
           end
           value.each { |key, item| validate_value(item, properties[key], "#{location}.#{key}") if properties[key] }
         end

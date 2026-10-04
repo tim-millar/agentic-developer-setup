@@ -128,6 +128,27 @@ class AdoptionTest < Minitest::Test
     assert_equal "unchanged", result.dig("components", 0, "update_state")
   end
 
+  def test_candidate_path_movement_with_identical_source_bytes_remains_unchanged
+    write_metadata(inherited_component)
+    candidate = candidate_source
+    catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+    entry = catalogue["baseline"].values_at("required", "recommended").flatten.find { |item| item["name"] == "issue_template_config" }
+    moved_source = "baseline/moved/config.yml"
+    original_source = File.join(candidate, entry["source_path"])
+    FileUtils.mkdir_p(File.dirname(original_source))
+    FileUtils.cp(File.join(ROOT, entry["source_path"]), original_source)
+    FileUtils.mkdir_p(File.join(candidate, "baseline/moved"))
+    FileUtils.cp(original_source, File.join(candidate, moved_source))
+    entry["source_path"] = moved_source
+    entry["target_path"] = ".github/moved/config.yml"
+    File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+    result = inspect(framework_source: candidate)
+
+    assert_equal "available", result.dig("candidate", "status")
+    assert_equal "unchanged", result.dig("components", 0, "update_state")
+  end
+
   def test_validator_revision_lookup_ignores_ambient_git_repository_selection
     framework = git_framework_source
     decoy = git_repository("decoy", "decoy")
@@ -225,6 +246,51 @@ class AdoptionTest < Minitest::Test
       assert_equal "invalid", result.dig("candidate", "status"), label
       assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid", label
     end
+  end
+
+  def test_candidate_catalogue_requires_complete_baseline_entry_shape
+    cases = [
+      ["missing category", ->(entry) { entry.delete("category") }],
+      ["missing target path", ->(entry) { entry.delete("target_path") }],
+      ["missing description", ->(entry) { entry.delete("description") }],
+      ["category has wrong type", ->(entry) { entry["category"] = ["invalid"] }],
+      ["target path has wrong type", ->(entry) { entry["target_path"] = 123 }],
+      ["description has wrong type", ->(entry) { entry["description"] = false }],
+      ["unknown field", ->(entry) { entry["extra"] = "unexpected" }],
+      ["empty description", ->(entry) { entry["description"] = "" }]
+    ]
+
+    cases.each do |label, mutation|
+      write_metadata(inherited_component)
+      candidate = candidate_source
+      catalogue = YAML.safe_load_file(File.join(candidate, "framework.yml"), aliases: false)
+      mutation.call(catalogue["baseline"]["required"].first)
+      File.write(File.join(candidate, "framework.yml"), YAML.dump(catalogue))
+
+      result = inspect(framework_source: candidate)
+
+      assert_equal "invalid", result.dig("candidate", "status"), label
+      assert_includes result["diagnostics"].map { |item| item["code"] }, "candidate_catalogue_invalid", label
+    end
+  end
+
+  def test_mixed_type_unknown_keys_are_bounded_at_top_level
+    metadata = base_metadata.merge("components" => [], "unexpected" => "foo", 123 => "bar")
+    File.write(File.join(@target, ".agent-framework/adoption.yml"), YAML.dump(metadata))
+
+    result = inspect
+
+    assert_equal "invalid", result.dig("metadata", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "schema_violation"
+  end
+
+  def test_mixed_type_unknown_keys_are_bounded_in_nested_component
+    write_components(inherited_component.merge("unexpected" => "foo", 42 => "bad"))
+
+    result = inspect
+
+    assert_equal "invalid", result.dig("metadata", "status")
+    assert_includes result["diagnostics"].map { |item| item["code"] }, "schema_violation"
   end
 
   def test_duplicate_managed_targets_are_order_independent

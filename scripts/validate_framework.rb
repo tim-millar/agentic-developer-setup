@@ -5,6 +5,8 @@ require "pathname"
 require "json"
 require "yaml"
 
+require_relative "../lib/agentic_developer_setup/framework_catalogue"
+
 class FrameworkValidator
   LOAD_FAILED = Object.new.freeze
   TOP_LEVEL_KEYS = %w[
@@ -18,7 +20,8 @@ class FrameworkValidator
   RUNTIME_PLATFORMS = %w[macos linux].freeze
   CODE_REVIEW_SKILL_SOURCE = "baseline/.github/skills/code-review/SKILL.md"
   CODE_REVIEW_SKILL_TARGET = ".github/skills/code-review/SKILL.md"
-  COMPONENT_ID = /\A[a-z][a-z0-9_]*\z/
+  COMPONENT_ID = AgenticDeveloperSetup::FrameworkCatalogue::COMPONENT_ID_PATTERN
+  BASELINE_ENTRY_FIELDS = AgenticDeveloperSetup::FrameworkCatalogue::BASELINE_ENTRY_FIELDS
 
   def initialize(root)
     @root = Pathname.new(root).expand_path
@@ -168,9 +171,9 @@ class FrameworkValidator
 
       entries.each_with_index do |entry, index|
         item_location = baseline_location(collection, entry, index)
-        next unless controlled_mapping(entry, "framework.yml: #{item_location}", %w[name category source_path target_path description])
+        next unless controlled_mapping(entry, "framework.yml: #{item_location}", BASELINE_ENTRY_FIELDS)
 
-        %w[name category source_path target_path description].each do |field|
+        BASELINE_ENTRY_FIELDS.each do |field|
           string(entry[field], "framework.yml: #{item_location}.#{field}")
         end
         if entry["name"].is_a?(String) && !entry["name"].match?(COMPONENT_ID)

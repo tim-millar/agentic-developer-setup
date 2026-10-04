@@ -34,6 +34,18 @@ class AssessmentAssessorTest < Minitest::Test
     end
   end
 
+  def test_mixed_type_adoption_keys_are_bounded_in_assessment
+    document = adoption_metadata([]).merge("unexpected" => "foo", 123 => "bar")
+    write(".agent-framework/adoption.yml", YAML.dump(document))
+
+    result = assess
+
+    assert_equal 2, result["schema_version"]
+    assert_equal "invalid", result.dig("framework_adoption", "metadata", "status")
+    assert_equal "low", result.dig("framework_adoption", "inspection_confidence")
+    assert_schema(result)
+  end
+
   def test_pinned_inherited_and_specialised_components_are_reported_without_candidate_comparison
     FileUtils.mkdir_p(File.join(@target, ".github/ISSUE_TEMPLATE"))
     FileUtils.cp(File.join(AssessmentTestSupport::ROOT, "baseline/.github/ISSUE_TEMPLATE/config.yml"), File.join(@target, ".github/ISSUE_TEMPLATE/config.yml"))

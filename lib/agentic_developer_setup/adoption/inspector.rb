@@ -4,6 +4,7 @@ require "digest"
 require "pathname"
 
 require_relative "../git_command"
+require_relative "../framework_catalogue"
 
 module AgenticDeveloperSetup
   module Adoption
@@ -158,11 +159,13 @@ module AgenticDeveloperSetup
         end
 
         entries = required + recommended
-        unless entries.all? { |entry| entry.is_a?(Hash) && entry["name"].is_a?(String) && entry["name"].match?(ID_PATTERN) && entry["source_path"].is_a?(String) && PathSafety.safe_relative?(entry["source_path"]) }
+        unless entries.all? { |entry| valid_candidate_baseline_entry?(entry) }
           return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains malformed baseline components")
         end
         names = entries.map { |entry| entry["name"] }
         return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains duplicate component IDs") unless names.uniq.length == names.length
+        targets = entries.map { |entry| entry["target_path"] }
+        return invalid_candidate("candidate_catalogue_invalid", "candidate framework source contains duplicate target paths") unless targets.uniq.length == targets.length
         unsafe_source = entries.find { |entry| PathSafety.existing(candidate_root, entry["source_path"]) == :unsafe }
         return invalid_candidate("candidate_source_unsafe_path", "candidate framework source contains an unsafe component source path") if unsafe_source
         revision = capture_revision(candidate_root)
@@ -180,6 +183,13 @@ module AgenticDeveloperSetup
 
       def invalid_candidate(code, message)
         {status: "invalid", diagnostics: [diagnostic("error", code, nil, nil, message)], catalogue: [], root: nil, version: nil, revision: nil}
+      end
+
+      def valid_candidate_baseline_entry?(entry)
+        FrameworkCatalogue.baseline_entry_shape_valid?(entry) &&
+          entry["name"].match?(FrameworkCatalogue::COMPONENT_ID_PATTERN) &&
+          PathSafety.safe_relative?(entry["source_path"]) &&
+          PathSafety.safe_relative?(entry["target_path"])
       end
 
       def candidate_source(root, path)
