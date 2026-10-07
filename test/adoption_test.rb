@@ -149,6 +149,36 @@ class AdoptionTest < Minitest::Test
     assert_nil validator.send(:catalogue_revision)
   end
 
+  def test_invalid_current_catalogue_duplicate_component_id_fails_closed
+    framework = framework_root_with_catalogue do |catalogue|
+      catalogue["baseline"]["recommended"] << catalogue["baseline"]["required"].first.dup
+    end
+
+    assert_raises(AgenticDeveloperSetup::Assessment::SchemaError) do
+      inspect(framework_root: framework)
+    end
+  end
+
+  def test_invalid_current_catalogue_component_id_fails_closed
+    framework = framework_root_with_catalogue do |catalogue|
+      catalogue["baseline"]["required"].first["name"] = "Invalid-ID"
+    end
+
+    assert_raises(AgenticDeveloperSetup::Assessment::SchemaError) do
+      inspect(framework_root: framework)
+    end
+  end
+
+  def test_invalid_current_catalogue_shape_fails_closed
+    framework = framework_root_with_catalogue do |catalogue|
+      catalogue["surprise"] = true
+    end
+
+    assert_raises(AgenticDeveloperSetup::Assessment::SchemaError) do
+      inspect(framework_root: framework)
+    end
+  end
+
   def test_markdown_renderer_escapes_pipe_in_target_path_and_preserves_table_shape
     target_path = "docs/a|b.md"
     FileUtils.mkdir_p(File.join(@target, "docs"))
@@ -481,6 +511,16 @@ class AdoptionTest < Minitest::Test
     candidate
   end
 
+  def framework_root_with_catalogue
+    framework = File.join(@temporary_root, "framework-root")
+    FileUtils.mkdir_p(File.join(framework, "schemas"))
+    FileUtils.cp(File.join(ROOT, "schemas/framework-adoption-v1.schema.json"), File.join(framework, "schemas/framework-adoption-v1.schema.json"))
+    catalogue = YAML.safe_load_file(File.join(ROOT, "framework.yml"), aliases: false)
+    yield catalogue
+    File.write(File.join(framework, "framework.yml"), YAML.dump(catalogue))
+    framework
+  end
+
   def git_framework_source
     framework = File.join(@temporary_root, "framework")
     FileUtils.mkdir_p(File.join(framework, "baseline/.github/ISSUE_TEMPLATE"))
@@ -543,7 +583,7 @@ class AdoptionTest < Minitest::Test
     }
   end
 
-  def inspect(framework_source: nil)
-    AgenticDeveloperSetup::Adoption::Inspector.new(@target, framework_root: ROOT).inspect(framework_source: framework_source)
+  def inspect(framework_source: nil, framework_root: ROOT)
+    AgenticDeveloperSetup::Adoption::Inspector.new(@target, framework_root: framework_root).inspect(framework_source: framework_source)
   end
 end

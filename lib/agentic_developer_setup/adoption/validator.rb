@@ -5,6 +5,7 @@ require "date"
 require "pathname"
 
 require_relative "../git_command"
+require_relative "../framework_catalogue"
 
 module AgenticDeveloperSetup
   module Adoption
@@ -60,14 +61,11 @@ module AgenticDeveloperSetup
           permitted_symbols: [],
           aliases: false
         )
-        baseline = data.is_a?(Hash) ? data["baseline"] : nil
-        unless data.is_a?(Hash) && data["schema_version"] == 2 && baseline.is_a?(Hash) && baseline["required"].is_a?(Array) && baseline["recommended"].is_a?(Array)
-          raise Assessment::SchemaError, "framework metadata must be schema version 2 with a baseline catalogue"
+        unless FrameworkCatalogue.document_errors(@framework_root, data).empty?
+          raise Assessment::SchemaError, "framework catalogue is invalid"
         end
-        entries = data["baseline"].values_at("required", "recommended").flatten
-        unless entries.all? { |item| item.is_a?(Hash) && item["name"].is_a?(String) && item["source_path"].is_a?(String) }
-          raise Assessment::SchemaError, "framework metadata contains malformed baseline components"
-        end
+
+        entries = data.fetch("baseline").values_at("required", "recommended").flatten
         entries.sort_by { |item| item.fetch("name") }
       rescue Psych::Exception, SystemCallError, KeyError, TypeError => e
         raise Assessment::SchemaError, "framework catalogue could not be loaded: #{e.message.lines.first.strip}"

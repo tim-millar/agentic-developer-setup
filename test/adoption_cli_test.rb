@@ -28,7 +28,7 @@ class AdoptionCLITest < Minitest::Test
   end
 
   def test_missing_repo_is_rejected
-    _stdout, stderr, status = Open3.capture3("make", "adoption-inspect", chdir: ROOT)
+    _stdout, stderr, status = capture_make("adoption-inspect")
 
     refute status.success?
     assert_includes stderr, "REPO is required"
@@ -64,7 +64,16 @@ class AdoptionCLITest < Minitest::Test
   private
 
   def run_make(*variables)
-    Open3.capture3("make", "adoption-inspect", "REPO=#{@target}", *variables, chdir: ROOT)
+    capture_make("adoption-inspect", "REPO=#{@target}", *variables)
+  end
+
+  def capture_make(*arguments)
+    Open3.capture3(
+      {"MAKELEVEL" => nil, "MAKEFLAGS" => nil, "MFLAGS" => nil},
+      "make",
+      *arguments,
+      chdir: ROOT
+    )
   end
 
   def metadata
