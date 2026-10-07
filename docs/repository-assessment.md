@@ -136,9 +136,9 @@ Conflicting repository and context evidence remains visible and cannot yield a
 high-confidence affected conclusion. Absence is represented as `unknown` when
 static inspection cannot safely establish a negative fact.
 
-## YAML schema version 1
+## YAML schema version 2
 
-The canonical result is a versioned YAML document. `schema_version: 1` is the
+The canonical result is a versioned YAML document. `schema_version: 2` is the
 assessment result schema. `framework.metadata_schema_version: 2` is the
 schema of the framework catalogue being consumed. `framework.version` is the
 framework release. `framework.source_revision` identifies the local source
@@ -147,7 +147,7 @@ revision when available. These are separate identities.
 The stable top-level shape is:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 framework: {metadata_schema_version: 2, version: 0.1.0, source_revision: ...}
 assessment: {generated_at: ...}
 repository: {root: ..., git: {...}}
@@ -156,7 +156,17 @@ ecosystem: []
 tooling: {}
 validation: {}
 documentation: {}
-framework_adoption: {}
+framework_adoption:
+  metadata: {status: absent, path: .agent-framework/adoption.yml, schema_version: null}
+  framework: {version: null, revision: null}
+  ownership_summary: {inherited: 0, specialised: 0, repository_owned: 0}
+  pinned_components: []
+  deferred_components: []
+  repository_owned_components: []
+  inconsistent_components: []
+  undeclared_framework_like_components: []
+  inspection_confidence: medium
+  detected_components: []
 readiness: {}
 tier_recommendation: {}
 component_recommendations: []
@@ -169,7 +179,7 @@ unknowns: []
 evidence: []
 ```
 
-The Ruby schema validator checks the complete emitted v1 structures: ecosystem
+The Ruby schema validator checks the complete emitted v2 structures: ecosystem
 entries; all tooling sections and nested command entries; validation
 capabilities, command collections, and CI alignment; every documentation
 category; and the adoption, readiness, recommendation, gap, risk, roadmap,
@@ -252,8 +262,9 @@ independent of tier membership.
 
 ## Components, gaps, risks, and roadmap
 
-Assessment component references use the current catalogue names in
-`framework.yml`. They are not the durable ownership IDs planned for Issue #9.
+Assessment component references use the stable catalogue names in
+`framework.yml`; those names are also the durable ownership IDs in
+`.agent-framework/adoption.yml`.
 The detected component state distinguishes:
 
 * `framework_exact`: exact content or explicit safe metadata proves current
@@ -330,19 +341,21 @@ and the Markdown projection exactly.
 
 ## Current framework metadata boundary
 
-Schema v1 reserves:
+Schema v2 integrates adoption metadata:
 
 ```yaml
 framework_adoption:
   metadata:
-    status: unsupported_in_schema_v1
+    status: absent
 ```
 
-This assessor does not invent adopted component ownership, digests, revisions,
-drift semantics, or `.agent-framework.yml`. Issue #9 will define the formal
-metadata contract. Issue #10 will define safe adoption/update planning and
-mutation. The current assessment is a read-only input to those later workflows,
-not an installer or general `framework` executable.
+When metadata is valid, the assessor consumes the shared adoption library for
+ownership summaries, deferred/pinned state, inconsistencies, and undeclared
+framework-like artefacts. When it is absent or invalid, it continues with
+heuristic detection without inventing ownership. Assessment does not compare a
+candidate framework source. Issue #10 will define safe adoption/update
+planning and mutation. Assessment remains a read-only input to those later
+workflows, not an installer or general `framework` executable.
 
 ## Review expectations
 

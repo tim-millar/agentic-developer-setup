@@ -2,7 +2,10 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "json"
 require "yaml"
+
+require_relative "../lib/agentic_developer_setup/framework_catalogue"
 
 class FrameworkValidator
   LOAD_FAILED = Object.new.freeze
@@ -17,6 +20,8 @@ class FrameworkValidator
   RUNTIME_PLATFORMS = %w[macos linux].freeze
   CODE_REVIEW_SKILL_SOURCE = "baseline/.github/skills/code-review/SKILL.md"
   CODE_REVIEW_SKILL_TARGET = ".github/skills/code-review/SKILL.md"
+  COMPONENT_ID = AgenticDeveloperSetup::FrameworkCatalogue::COMPONENT_ID_PATTERN
+  BASELINE_ENTRY_FIELDS = AgenticDeveloperSetup::FrameworkCatalogue::BASELINE_ENTRY_FIELDS
 
   def initialize(root)
     @root = Pathname.new(root).expand_path
@@ -27,13 +32,20 @@ class FrameworkValidator
 
   attr_reader :errors
 
+  def validate_catalogue_document(metadata)
+    @errors = []
+    validate_schema(metadata)
+    validate_semantics(metadata)
+    errors.sort
+  end
+
   def validate
     metadata = load_metadata
     return false if metadata.equal?(LOAD_FAILED)
 
-    validate_schema(metadata)
-    validate_semantics(metadata)
+    @errors.concat(AgenticDeveloperSetup::FrameworkCatalogue.document_errors(@root, metadata))
     validate_metadata_paths(metadata)
+    validate_adoption_contract
     validate_repository_structure
     errors.empty?
   end
@@ -165,10 +177,13 @@ class FrameworkValidator
 
       entries.each_with_index do |entry, index|
         item_location = baseline_location(collection, entry, index)
-        next unless controlled_mapping(entry, "framework.yml: #{item_location}", %w[name category source_path target_path description])
+        next unless controlled_mapping(entry, "framework.yml: #{item_location}", BASELINE_ENTRY_FIELDS)
 
-        %w[name category source_path target_path description].each do |field|
+        BASELINE_ENTRY_FIELDS.each do |field|
           string(entry[field], "framework.yml: #{item_location}.#{field}")
+        end
+        if entry["name"].is_a?(String) && !entry["name"].match?(COMPONENT_ID)
+          error("framework.yml: #{item_location}.name", "component ID must match [a-z][a-z0-9_]*")
         end
         identities << [entry["name"], "framework.yml: #{item_location}.name"]
         targets << [entry["target_path"], "framework.yml: #{item_location}.target_path"]
@@ -636,6 +651,32 @@ class FrameworkValidator
     error(location, "could not parse skill frontmatter: #{e.message.lines.first.strip}")
   rescue SystemCallError => e
     error(location, "could not read skill: #{e.message}")
+  end
+
+  def validate_adoption_contract
+    schema = @root.join("schemas/framework-adoption-v1.schema.json")
+    metadata_path = @root.join("examples/reference-service/.agent-framework/adoption.yml")
+    require_relative "../lib/agentic_developer_setup/adoption"
+
+    unless schema.file?
+      error("schemas/framework-adoption-v1.schema.json", "file does not exist: schemas/framework-adoption-v1.schema.json")
+    end
+    unless metadata_path.file?
+      error("examples/reference-service/.agent-framework/adoption.yml", "file does not exist: examples/reference-service/.agent-framework/adoption.yml")
+    end
+    return unless schema.file? && metadata_path.file?
+
+    loaded = AgenticDeveloperSetup::Adoption::Metadata.load(@root.join("examples/reference-service"))
+    loaded.diagnostics.each { |item| error("#{metadata_path}: #{item.code}", item.message) }
+    return unless loaded.status == "loaded"
+
+    validator = AgenticDeveloperSetup::Adoption::Validator.new(
+      root: @root.join("examples/reference-service"),
+      framework_root: @root
+    )
+    validator.validate(loaded.document).each { |item| error("#{metadata_path}: #{item.code}", item.message) }
+  rescue AgenticDeveloperSetup::Assessment::Error => e
+    error(metadata_path.to_s, e.message)
   end
 
   # Filesystem checks are role-specific; descriptive path fields are never resolved.

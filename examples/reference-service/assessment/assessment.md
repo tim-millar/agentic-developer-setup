@@ -45,6 +45,15 @@ Blocking gaps: none
 Alternative conditions:
 - Tier 3 requires discoverable architecture, domain, testing, and repository conventions that can be specialised without invention.
 
+## Framework adoption
+
+- Metadata: `valid` at `.agent-framework/adoption.yml`
+- Inspection confidence: `high`
+- Ownership: inherited 1, specialised 11, repository-owned 0
+- Pinned: none
+- Deferred: `review_policy`
+- Inconsistent: none
+
 ## Component recommendations
 
 | Component | State | Confidence | Rationale |

@@ -87,11 +87,12 @@ module AgenticDeveloperSetup
         gaps, gap_ids = materialize_gaps(gap_specs)
         risks = materialize_risks(risk_specs(analysis, context, context_conflicts))
         framework_states = framework_states(analysis)
+        adoption_inspection = Adoption::Inspector.new(@root, framework_root: @framework_root).inspect
         tier = tier_recommendation(analysis, readiness, gaps, context, context_conflicts)
         component_recommendations = component_recommendations(framework_states, analysis, gap_ids, tier)
         roadmap = roadmap(component_recommendations, gaps, gap_ids)
         result = {
-          "schema_version" => 1,
+          "schema_version" => 2,
           "framework" => {
             "metadata_schema_version" => @catalogue.metadata_schema_version,
             "version" => @catalogue.framework_version,
@@ -108,7 +109,15 @@ module AgenticDeveloperSetup
           "validation" => analysis[:validation],
           "documentation" => analysis[:documentation],
           "framework_adoption" => {
-            "metadata" => {"status" => "unsupported_in_schema_v1"},
+            "metadata" => adoption_metadata_summary(adoption_inspection),
+            "framework" => adoption_framework_summary(adoption_inspection),
+            "ownership_summary" => adoption_ownership_summary(adoption_inspection),
+            "pinned_components" => adoption_component_ids(adoption_inspection, "pinned"),
+            "deferred_components" => adoption_component_ids(adoption_inspection, "deferred"),
+            "repository_owned_components" => adoption_component_ids(adoption_inspection, "repository_owned"),
+            "inconsistent_components" => adoption_inconsistent_components(adoption_inspection),
+            "undeclared_framework_like_components" => adoption_undeclared_components(framework_states, adoption_inspection),
+            "inspection_confidence" => adoption_confidence(adoption_inspection),
             "detected_components" => framework_states
           },
           "readiness" => readiness,
@@ -543,6 +552,66 @@ module AgenticDeveloperSetup
             "rationale" => state_rationale(state)
           }
         end.sort_by { |item| item["component"] }
+      end
+
+      def adoption_metadata_summary(inspection)
+        status = inspection.dig("metadata", "status")
+        status = "absent" if status == "missing"
+        {
+          "status" => status,
+          "path" => inspection.dig("metadata", "path"),
+          "schema_version" => (status == "valid") ? inspection.dig("metadata", "schema_version") : nil
+        }
+      end
+
+      def adoption_framework_summary(inspection)
+        {
+          "version" => (inspection.dig("metadata", "status") == "valid") ? inspection.dig("framework", "version") : nil,
+          "revision" => (inspection.dig("metadata", "status") == "valid") ? inspection.dig("framework", "revision") : nil
+        }
+      end
+
+      def adoption_ownership_summary(inspection)
+        counts = {"inherited" => 0, "specialised" => 0, "repository_owned" => 0}
+        return counts unless inspection.dig("metadata", "status") == "valid"
+
+        inspection["components"].each do |component|
+          ownership = component["ownership"]
+          counts[ownership] += 1 if counts.key?(ownership)
+        end
+        counts
+      end
+
+      def adoption_component_ids(inspection, value)
+        return [] unless inspection.dig("metadata", "status") == "valid"
+
+        inspection["components"].filter_map do |component|
+          component["id"] if (value == "pinned" && component["status"] == "active" && component["update_policy"] == "pinned") || component["status"] == value || component["ownership"] == value
+        end.sort
+      end
+
+      def adoption_inconsistent_components(inspection)
+        inspection["components"].filter_map do |component|
+          component["id"] if %w[metadata_inconsistent missing locally_modified].include?(component["local_state"])
+        end.sort
+      end
+
+      def adoption_undeclared_components(states, inspection)
+        declared = if inspection.dig("metadata", "status") == "valid"
+          inspection["components"].filter_map { |component| component["id"] if component["status"] == "active" }
+        else
+          []
+        end
+        states.filter_map { |component| component["component"] if component["state"] == "framework_like" && !declared.include?(component["component"]) }.sort
+      end
+
+      def adoption_confidence(inspection)
+        status = inspection.dig("metadata", "status")
+        return "medium" if status == "missing" || status == "absent"
+        return "low" if status == "invalid" || inspection.dig("summary", "error_count").to_i.positive?
+        return "medium" if inspection.dig("summary", "review_required_count").to_i.positive?
+
+        "high"
       end
 
       def native_paths_for(name, analysis)

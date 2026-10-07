@@ -1,0 +1,146 @@
+schema_version: 1
+
+framework:
+  source: https://github.com/tim-millar/agentic-developer-setup
+  version: 0.1.0
+  revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+  adopted_at: "2026-09-30"
+  updated_at: "2026-09-30"
+
+scope:
+  type: repository
+  path: .
+
+components:
+  - id: agent_instructions
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/AGENTS.md
+    target_path: AGENTS.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:5048f022ba7b394ef963f42be91272cd6c516d7e4997404cd87e547b04699f17
+    local_ownership:
+      - repository-specific operating constraints
+      - validation commands
+  - id: agent_ready_issue_template
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/.github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    target_path: .github/ISSUE_TEMPLATE/agent-ready-implementation.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:26bb815ca64160aefdc92eef75c78b3f54d2eb56a1a7216a3a2d6ad5a3de3239
+    local_ownership:
+      - task-registry scope
+      - fixture validation workflow
+  - id: architecture_scaffold
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/docs/ARCHITECTURE.md
+    target_path: docs/ARCHITECTURE.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:75045bbd8abc0d4643b3f5fed1508ff3dcd0d6ae3b4ef496fd4193c87aec86bc
+    local_ownership:
+      - module boundaries
+      - in-memory persistence choice
+  - id: bug_report_issue_template
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/.github/ISSUE_TEMPLATE/bug-report.md
+    target_path: .github/ISSUE_TEMPLATE/bug-report.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:02025acbfd2e3cc2038084a751e9b62163fca2c6c04e675b8388d9d5831c7c1b
+    local_ownership:
+      - task-registry defect context
+      - fixture reproduction details
+  - id: ci_workflow
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/.github/workflows/ci.yml
+    target_path: .github/workflows/ci.yml
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:3a8e007eb4033b7c4fa5634b79fce19fef29630222656b171bbae6b42a0d5d8c
+    local_ownership:
+      - Python toolchain
+      - fixture verification command
+  - id: command_interface
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/Makefile
+    target_path: Makefile
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:c81289422bff7a1ab744c6932d432cc61e206fd44028c645877842be31d99902
+    local_ownership:
+      - Python and uv commands
+      - offline verification
+  - id: development_guide
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/docs/DEVELOPMENT.md
+    target_path: docs/DEVELOPMENT.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:93edbd01fdc8de0a2b2df65a7a2b846757acf9aef08dcba38872568d4af0d6ce
+    local_ownership:
+      - Python 3.14 toolchain
+      - uv lockfile workflow
+  - id: discovery_or_shaping_issue_template
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/.github/ISSUE_TEMPLATE/discovery-or-shaping.md
+    target_path: .github/ISSUE_TEMPLATE/discovery-or-shaping.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:9ca231aab8d2184164c119be11b57ac132139316eeb7dd6fd4dca3730f6144dc
+    local_ownership:
+      - task-registry discovery scope
+      - fixture design constraints
+  - id: domain_context
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/docs/DOMAIN.md
+    target_path: docs/DOMAIN.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:03a9b1bf5966c64348a76adedec3ce71b23ee77e60c631d16cc9720eb5f93655
+    local_ownership:
+      - task registry invariants
+      - fixture domain vocabulary
+  - id: issue_template_config
+    status: active
+    ownership: inherited
+    update_policy: review_required
+    source_path: baseline/.github/ISSUE_TEMPLATE/config.yml
+    target_path: .github/ISSUE_TEMPLATE/config.yml
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:e71bea835ed1158881306294d96968f125b0b0c5eff66cd94df559336bd0b210
+  - id: pull_request_template
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/.github/PULL_REQUEST_TEMPLATE.md
+    target_path: .github/PULL_REQUEST_TEMPLATE.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:1a5ae12c449cbcee60f9ffa767410ca4a0d9b641cab3752f57c04ea76be2bf1a
+    local_ownership:
+      - fixture review handoff
+      - validation evidence
+  - id: review_policy
+    status: deferred
+    rationale: The compact reference fixture deliberately omits a separate review policy.
+  - id: testing_strategy
+    status: active
+    ownership: specialised
+    update_policy: manual_merge
+    source_path: baseline/docs/TESTING.md
+    target_path: docs/TESTING.md
+    adopted_revision: cc9e7943d6d0758cb34d53e257ff44cc72347281
+    adopted_source_digest: sha256:f573fc336b9b71acc215712246034089823f24cc7c262a6efc8f0e3a84153732
+    local_ownership:
+      - pytest responsibilities
+      - offline validation rules

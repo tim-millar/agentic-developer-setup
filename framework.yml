@@ -58,7 +58,7 @@ path_conventions:
     path: Path inside this framework source repository.
 
 baseline:
-  description: Baseline artefacts that can be copied or adapted into a target repository.
+  description: Baseline artefacts that can be copied or adapted into a target repository. Each name is a stable machine component ID; it is not a display label and must not be renamed as a prose-only refactor.
   path_semantics:
     source_path: Path inside this framework source repository.
     target_path: Intended path inside an instantiated target repository.
