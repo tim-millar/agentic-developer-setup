@@ -157,6 +157,8 @@ schema, confidence and readiness semantics, safety boundary, tier algorithm,
 context file, and Issue #9/#10 boundaries.
 Read [`docs/framework-adoption.md`](docs/framework-adoption.md) for the
 schema-versioned ownership, provenance, and read-only inspection contract.
+Use [`docs/adoption-workflow.md`](docs/adoption-workflow.md) for the explicit
+plan, preview, approval, apply, update and separate validation CLI.
 
 ### 3. Legacy repo safe enablement
 

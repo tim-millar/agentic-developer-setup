@@ -69,3 +69,12 @@ adoption-inspect:
 check-reference-service:
 	$(MAKE) -C examples/reference-service setup
 	UV_OFFLINE=1 $(MAKE) -C examples/reference-service verify
+
+.PHONY: test-adoption
+test-adoption:
+	bundle exec ruby -Ilib -Itest test/manage_adoption_test.rb
+
+.PHONY: demo-adoption
+demo-adoption:
+	bundle exec ruby scripts/examples/initial_adoption.rb
+	bundle exec ruby scripts/examples/update_inherited.rb

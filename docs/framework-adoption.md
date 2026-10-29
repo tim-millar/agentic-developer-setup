@@ -35,5 +35,13 @@ for application. Declared repository-owned commands are never executed.
 
 Repository assessment emits schema version 2 and consumes the same metadata
 library for ownership summaries and confidence. Assessment does not perform
-candidate comparison. Planning, mutation, update, and reconciliation remain
-out of scope for Issue #9 and belong to Issue #10.
+candidate comparison. The separate [adoption transaction CLI](adoption-workflow.md)
+consumes these contracts for explicitly selected planning, application, inherited
+updates and limited reconciliation; assessment and inspection remain read-only.
+
+The mutation workflow preserves this schema-v1 contract: metadata-only native or
+inactive decisions need a valid catalogue identity but do not consume component
+source bytes. Limited inherited reconciliation proves the selected mismatch is
+committed by comparing HEAD, index, raw blob bytes and supported file mode; it
+retains the original adopted source path, revision and digest. These transaction
+preconditions do not redefine the read-only inspector's local/candidate states.

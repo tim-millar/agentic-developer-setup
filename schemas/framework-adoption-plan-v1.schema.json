@@ -1,0 +1,1010 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/framework-adoption-plan-v1.schema.json",
+  "title": "Framework adoption transaction plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "operation",
+    "created_at",
+    "effective_date",
+    "target",
+    "source",
+    "inputs",
+    "selection",
+    "actions",
+    "proposed_metadata",
+    "validation_commands",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "operation": {
+      "$ref": "#/$defs/operation"
+    },
+    "created_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "effective_date": {
+      "$ref": "#/$defs/date"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadata",
+        "decisions",
+        "assessment",
+        "validation_spec"
+      ],
+      "properties": {
+        "metadata": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "digest"
+              ],
+              "properties": {
+                "status": {
+                  "const": "absent"
+                },
+                "digest": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "digest"
+              ],
+              "properties": {
+                "status": {
+                  "const": "present"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "decisions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assessment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validation_spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_components",
+        "requested_tier",
+        "excluded_components",
+        "resolved_components"
+      ],
+      "properties": {
+        "requested_components": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "requested_tier": {
+          "anyOf": [
+            {
+              "enum": [
+                "tier-1",
+                "tier-2",
+                "tier-3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "excluded_components": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "resolved_components": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component_id",
+          "action",
+          "rationale",
+          "before",
+          "after",
+          "source_file",
+          "target_file",
+          "reviewed_content",
+          "metadata_record"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "action": {
+            "$ref": "#/$defs/action_name"
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "before": {
+            "$ref": "#/$defs/state"
+          },
+          "after": {
+            "$ref": "#/$defs/state"
+          },
+          "source_file": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/file"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_file": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/target_file"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewed_content": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/file"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata_record": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/component"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "proposed_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document",
+        "digest"
+      ],
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/metadata"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "validation_commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/command"
+      },
+      "minItems": 0
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      },
+      "minItems": 0
+    }
+  },
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.($|/))(?!.*(^|/)\\.\\.($|/)).+$"
+    },
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "version",
+        "revision",
+        "adopted_at",
+        "updated_at"
+      ],
+      "properties": {
+        "source": {
+          "const": "https://github.com/tim-millar/agentic-developer-setup"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "adopted_at": {
+          "$ref": "#/$defs/date"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "repository"
+            },
+            "path": {
+              "const": "."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "workspace"
+            },
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      ]
+    },
+    "non_empty_strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "equivalent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "commands": {
+          "$ref": "#/$defs/non_empty_strings"
+        }
+      },
+      "minProperties": 1
+    },
+    "base_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "deferred",
+            "declined",
+            "removed",
+            "blocked"
+          ]
+        },
+        "ownership": {
+          "enum": [
+            "inherited",
+            "specialised",
+            "repository_owned"
+          ]
+        },
+        "update_policy": {
+          "enum": [
+            "review_required",
+            "manual_merge",
+            "pinned",
+            "repository_managed"
+          ]
+        },
+        "source_path": {
+          "$ref": "#/$defs/path"
+        },
+        "target_path": {
+          "$ref": "#/$defs/path"
+        },
+        "adopted_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "adopted_source_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "local_ownership": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "equivalent": {
+          "$ref": "#/$defs/equivalent"
+        }
+      }
+    },
+    "inherited": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "source_path",
+            "target_path",
+            "adopted_revision",
+            "adopted_source_digest"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "inherited"
+            },
+            "update_policy": {
+              "enum": [
+                "review_required",
+                "pinned"
+              ]
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              },
+              {
+                "required": [
+                  "equivalent"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "specialised": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "source_path",
+            "target_path",
+            "adopted_revision",
+            "adopted_source_digest",
+            "local_ownership"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "specialised"
+            },
+            "update_policy": {
+              "enum": [
+                "manual_merge",
+                "pinned"
+              ]
+            }
+          },
+          "not": {
+            "required": [
+              "equivalent"
+            ]
+          }
+        }
+      ]
+    },
+    "repository_owned": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "equivalent",
+            "rationale"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "repository_owned"
+            },
+            "update_policy": {
+              "const": "repository_managed"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "source_path"
+                ]
+              },
+              {
+                "required": [
+                  "target_path"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_revision"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_source_digest"
+                ]
+              },
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "inactive": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "rationale"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "deferred",
+                "declined",
+                "removed",
+                "blocked"
+              ]
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "ownership"
+                ]
+              },
+              {
+                "required": [
+                  "update_policy"
+                ]
+              },
+              {
+                "required": [
+                  "source_path"
+                ]
+              },
+              {
+                "required": [
+                  "target_path"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_revision"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_source_digest"
+                ]
+              },
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              },
+              {
+                "required": [
+                  "equivalent"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "component": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/inherited"
+        },
+        {
+          "$ref": "#/$defs/specialised"
+        },
+        {
+          "$ref": "#/$defs/repository_owned"
+        },
+        {
+          "$ref": "#/$defs/inactive"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "framework",
+        "scope",
+        "components"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "framework": {
+          "$ref": "#/$defs/framework"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "digest",
+        "mode"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "mode": {
+          "enum": [
+            "0644",
+            "0755"
+          ]
+        }
+      }
+    },
+    "target_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "expected_type",
+        "expected_digest",
+        "expected_mode",
+        "result_digest",
+        "result_mode"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_type": {
+          "enum": [
+            "absent",
+            "regular"
+          ]
+        },
+        "expected_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_mode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-7]{4}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "result_mode": {
+          "type": "string",
+          "pattern": "^[0-7]{4}$"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record",
+        "content",
+        "size",
+        "metadata_content"
+      ],
+      "properties": {
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/component"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "head",
+        "scope"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head": {
+          "$ref": "#/$defs/revision"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "revision",
+        "version",
+        "catalogue_digest"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "catalogue_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "digest"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "code",
+        "component_id",
+        "path",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "component_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "argv",
+        "cwd",
+        "env",
+        "expected_exit_code"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "cwd": {
+          "enum": [
+            "repository",
+            "scope"
+          ]
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "expected_exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "action_name": {
+      "enum": [
+        "create_inherited",
+        "create_specialised",
+        "record_repository_owned",
+        "record_inactive",
+        "update_inherited",
+        "convert_to_specialised",
+        "no_change"
+      ]
+    },
+    "operation": {
+      "enum": [
+        "initial_adoption",
+        "add_components",
+        "update_inherited",
+        "reconcile_inherited"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}

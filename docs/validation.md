@@ -153,3 +153,16 @@ Schema version 2 deliberately does not validate these incidental or future relat
 ## Offline boundary
 
 After `make setup` has completed, `make lint`, `make test`, `make validate`, the focused launcher/runtime/usage/outcome targets, and all stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions uses normal checkout and Ruby setup with Bundler caching before it runs the same `make check` command used locally.
+
+## Adoption transactions
+
+`make test` (and therefore `make check`) includes actual adoption CLI subprocess
+coverage in `test/manage_adoption_test.rb`. Run it alone with `make test-adoption`.
+The suite uses clean disposable local Git sources/targets and covers schema
+closure, all four operations, stale inputs, path/mode safety, failure injection,
+metadata-last journaling, separate approved validation and both public examples.
+`make demo-adoption` runs the two offline demonstrations directly. These fixtures
+never edit the maintained reference service. The CLI's schema engine is shared
+with metadata validation; the v1 metadata schema and inspection states remain
+unchanged. See [adoption-workflow.md](adoption-workflow.md) for the validation-code
+execution trust boundary and recovery guarantees.
