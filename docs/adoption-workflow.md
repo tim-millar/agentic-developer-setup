@@ -37,9 +37,13 @@ and optional locks. No remote URL establishes source authenticity or approval.
 
 The source is always explicit; the running CLI checkout is never an implicit
 candidate. A completely validated `framework.yml` supplies stable baseline `name`
-IDs and source/target mappings. Selected source files must be regular tracked
-files whose exact bytes and executable mode agree with Git. Supported installed
-file modes are `0644` and `0755`. No chronological ordering is inferred from
+IDs and source/target mappings. Actions that create inherited or specialised
+files, or compare/update inherited candidates, require regular tracked source
+files whose exact bytes and executable mode agree with Git. Repository-owned,
+deferred and declined decisions require a valid catalogue entry but do not read
+its source bytes; their plan `source_file` is `null`. Reconciliation also uses
+`source_file: null` and preserves the recorded historical source provenance.
+Supported installed file modes are `0644` and `0755`. No chronological ordering is inferred from
 revision identity or version labels.
 
 All plans, decisions, assessment inputs, reviewed content, validation specs and
@@ -47,7 +51,13 @@ results must be external to both worktrees. Existing parent directories are
 required. Unsafe symlinks, hard-link aliases, input/output collisions and paths
 resolving inside either worktree are rejected. A safe explicitly chosen plan
 output may be replaced. Application and validation results require new paths.
-The tool never creates external parent directories.
+The tool never creates external parent directories. Generated plans, every
+application-journal replacement and completed validation results explicitly use
+mode `0600`, including their temporary files, independently of the process umask.
+Replacing a more permissive plan makes the new file private. Managed repository
+files retain their approved `0644`/`0755` modes. Protect destination directories
+appropriately and handle artefact contents responsibly: plans embed repository
+content, and results can contain operational data or command output.
 
 An optional `--assessment` must be schema v2 and match the same canonical target,
 HEAD and clean Git state. Its observations remain advisory and grant no selection,
@@ -103,6 +113,15 @@ components:
     local_ownership: [repository-specific issue policy]
     rationale: Existing committed changes are intentional specialisation.
 ```
+
+Reconciliation requires the selected target to be a regular file in the target
+HEAD tree, with an identical stage-zero index entry. Its exact working-tree bytes
+must equal the committed blob and its mode must equal the supported committed
+mode; the committed bytes must differ from the adopted source digest. Planning,
+check, dry-run and apply preflight repeat these checks. Ignored/untracked targets
+and uncommitted changes hidden by assume-unchanged, skip-worktree or ignored mode
+changes cannot become specialised ownership. The CLI never changes index flags
+or commits content to satisfy this requirement.
 
 Unknown fields, duplicate IDs, unselected decisions, missing decisions and
 unsupported disposition/operation combinations are rejected. Decisions are the
@@ -245,10 +264,23 @@ ruby scripts/manage_adoption.rb validate /tmp/adoption/plan.yml \
   --output /tmp/adoption/validation-result.yml
 ```
 
-Validation requires completed matching application evidence and verifies managed
-files and metadata before execution. It uses direct argv execution (no implicit
-shell interpolation) in declared order and stops at the first unsuccessful
-command. Children receive only host `PATH`, fixed `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
+Validation requires completed matching application evidence. Before execution,
+the canonical target and HEAD must match the plan, and every index mode/blob entry
+must still equal the starting HEAD tree. The validator compares actual tracked
+bytes and executable modes with HEAD, allowing only exact file replacements,
+creations and metadata writes declared by the applied plan. New approved files
+may remain untracked; unexpected non-ignored untracked files block execution.
+Managed outputs and metadata must retain their approved identities. Status output
+and index flags cannot hide unrelated changes from these byte/mode checks.
+
+A stale pre-validation state is refused before any project command starts, using
+existing diagnostic/exit conventions; prior application evidence is untouched.
+After execution has begun, a changed state before a subsequent command stops the
+sequence and produces a failed validation result containing completed command
+evidence. Post-command comparisons and inspection failures remain recorded.
+Validation uses direct argv execution (no implicit shell interpolation) in
+declared order and stops at the first unsuccessful command. Children receive only
+host `PATH`, fixed `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
 `TZ=UTC`, and approved additions. Inherited HOME, operational credentials,
 Git variables and runtime options are not forwarded. Output capture retains at
 most 65,536 raw bytes per stream per command, drains excess to avoid pipe blocking,
@@ -260,8 +292,12 @@ build/test artefacts need not independently fail it.
 Validation executes repository-controlled code. Even `make verify` may read
 files/credentials, write files or access a network. There is **no additional
 guaranteed execution sandbox or network isolation**. Approving a command set
-requires considering that trust boundary. Supply no secrets in specs or command
-output. Planning/application stay offline; validation authority is separate.
+requires considering that trust boundary. The state check is not a general
+filesystem snapshot: ignored caches/files, external executables and dependencies
+are not guaranteed immutable. Git tracks executable modes, rather than all Unix
+permission bits, for unrelated tracked files; planned outputs retain their exact
+approved modes. Supply no secrets in specs or command output. Planning/application
+stay offline; validation authority is separate.
 Validation never rewrites application evidence or adoption metadata itself.
 
 Separate immutable results use `passed`, `failed`, `skipped` or `unavailable`.

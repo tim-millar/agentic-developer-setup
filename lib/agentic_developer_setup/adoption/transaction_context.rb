@@ -54,6 +54,11 @@ module AgenticDeveloperSetup
         {"root" => target.to_s, "head" => target_head, "scope" => scope}
       end
 
+      def source_required?(id)
+        @operation == "update_inherited" ||
+          (%w[initial_adoption add_components].include?(@operation) && %w[inherited specialised].include?(decisions.fetch(id)["disposition"]))
+      end
+
       def source_file(id)
         relative = entries.fetch(id).fetch("source_path")
         path = safe_path(source, relative)

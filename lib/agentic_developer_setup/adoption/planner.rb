@@ -67,7 +67,7 @@ module AgenticDeveloperSetup
         # Revalidate all source/target/input state, including the output identity, before publication.
         PlanValidator.new(plan).check!(allow_blocked: true)
         fail!("unsafe_path", "plan destination changed") unless external(output, roots) == destination
-        atomic_write(destination, YAML.dump(canonical(plan)))
+        atomic_write(destination, YAML.dump(canonical(plan)), mode: "0600")
         plan
       end
 
@@ -82,7 +82,7 @@ module AgenticDeveloperSetup
           "reviewed_content" => context.reviewed_files[id], "metadata_record" => previous
         }
         begin
-          action["source_file"] = context.source_file(id)
+          action["source_file"] = context.source_file(id) if context.source_required?(id)
           if %w[initial_adoption add_components].include?(@operation)
             adopt(action, previous, decision)
           elsif @operation == "update_inherited"
@@ -173,12 +173,12 @@ module AgenticDeveloperSetup
 
       def reconcile(action, previous, decision)
         path = eligible_record!(previous)
-        fail!("unsupported_operation", "reconciliation requires a local inherited digest mismatch") if digest(File.binread(path)) == previous["adopted_source_digest"]
+        committed = committed_regular_file!(context.target, previous["target_path"])
+        fail!("unsupported_operation", "reconciliation requires a committed inherited digest mismatch") if committed["digest"] == previous["adopted_source_digest"]
         record = previous.merge("ownership" => "specialised", "update_policy" => "manual_merge", "local_ownership" => decision["local_ownership"])
         action["action"] = "convert_to_specialised"
         action["metadata_record"] = record
-        file = {"digest" => digest(File.binread(path)), "mode" => mode(path)}
-        action["target_file"] = target_file(previous["target_path"], path, file)
+        action["target_file"] = target_file(previous["target_path"], path, committed)
         action["before"] = state(previous, path)
         action["after"] = state(record, path)
       end

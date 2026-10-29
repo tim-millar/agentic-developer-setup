@@ -740,7 +740,452 @@ class ManageAdoptionTest < Minitest::Test
     assert_nil output
   end
 
+  def test_reconciliation_rejects_uncommitted_tracked_content_under_a_later_ignore_rule
+    committed_mismatch
+    relative = Pathname.new(target_path(CONFIG)).relative_path_from(Pathname.new(@target)).to_s
+    File.write(File.join(@target, ".gitignore"), "#{relative}\n")
+    commit(@target)
+    File.write(target_path(CONFIG), "uncommitted ignored content\n")
+    original_metadata = File.binread(File.join(@target, A::METADATA_PATH))
+    plan_for([reconciliation_decision], operation: "reconcile_inherited", expected: 3)
+    assert_equal original_metadata, File.binread(File.join(@target, A::METADATA_PATH))
+  end
+
+  def test_reconciliation_rejects_assume_unchanged_worktree_content
+    assert_hidden_reconciliation_refused("--assume-unchanged")
+  end
+
+  def test_reconciliation_rejects_skip_worktree_content
+    assert_hidden_reconciliation_refused("--skip-worktree")
+  end
+
+  def test_reconciliation_rechecks_committed_content_even_with_a_rehashed_matching_file_digest
+    committed_mismatch
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited")
+    git(@target, "update-index", "--assume-unchanged", relative_target)
+    File.write(target_path(CONFIG), "hidden after planning\n")
+    assert_empty git(@target, "status", "--porcelain")
+    cli("check", @plan, expected: 4)
+    action = plan["actions"].first
+    content = File.binread(target_path(CONFIG))
+    %w[before after].each do |key|
+      action[key]["content"] = [content].pack("m0")
+      action[key]["size"] = content.bytesize
+    end
+    action["target_file"]["expected_digest"] = T.digest(content)
+    action["target_file"]["result_digest"] = T.digest(content)
+    plan["plan_id"] = T.plan_id(plan)
+    File.write(@plan, YAML.dump(T.canonical(plan)))
+    original_metadata = File.binread(File.join(@target, A::METADATA_PATH))
+    assert_includes cli("check", @plan, expected: 4), "committed HEAD"
+    cli("apply", @plan, "--dry-run", expected: 4)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 4)
+    assert_equal "refused", read(refusal_result)["status"]
+    assert_equal original_metadata, File.binread(File.join(@target, A::METADATA_PATH))
+    assert_equal content, File.binread(target_path(CONFIG))
+  end
+
+  def test_reconciliation_rechecks_skip_worktree_changes_after_planning
+    committed_mismatch
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited")
+    git(@target, "update-index", "--skip-worktree", relative_target)
+    File.write(target_path(CONFIG), "hidden stale content\n")
+    assert_empty git(@target, "status", "--porcelain")
+    cli("check", @plan, expected: 4)
+    cli("apply", @plan, "--dry-run", expected: 4)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 4)
+    assert_equal "refused", read(refusal_result)["status"]
+  end
+
+  def test_reconciliation_requires_index_agreement_with_head_during_plan_and_preflight
+    committed_mismatch
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited")
+    object = git(@target, "rev-parse", "HEAD:README.md").strip
+    git(@target, "update-index", "--cacheinfo", "100644,#{object},#{relative_target}")
+    error = assert_raises(A::TransactionError) { T.committed_regular_file!(Pathname.new(@target), relative_target) }
+    assert_equal "plan_stale", error.code
+    cli("check", @plan, expected: 3)
+    cli("apply", @plan, "--dry-run", expected: 3)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 3)
+    assert_equal "refused", read(refusal_result)["status"]
+    File.unlink(@plan)
+    plan_for([reconciliation_decision], operation: "reconcile_inherited", expected: 3)
+    refute File.exist?(@plan)
+  end
+
+  def test_reconciliation_rejects_untracked_ignored_target_absent_from_head
+    committed_mismatch
+    git(@target, "rm", "--cached", "--", relative_target)
+    File.write(File.join(@target, ".gitignore"), "#{relative_target}\n")
+    commit(@target)
+    assert_empty git(@target, "status", "--porcelain")
+    original_metadata = File.binread(File.join(@target, A::METADATA_PATH))
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited", expected: 4)
+    assert_includes plan["diagnostics"].map { |item| item["code"] }, "provenance_unavailable"
+    assert_equal original_metadata, File.binread(File.join(@target, A::METADATA_PATH))
+  end
+
+  def test_reconciliation_rejects_worktree_mode_changes_hidden_by_core_filemode
+    committed_mismatch
+    git(@target, "config", "core.filemode", "false")
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited")
+    File.chmod(0o755, target_path(CONFIG))
+    assert_empty git(@target, "status", "--porcelain")
+    cli("check", @plan, expected: 4)
+    cli("apply", @plan, "--dry-run", expected: 4)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 4)
+    assert_equal "refused", read(refusal_result)["status"]
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited", expected: 4)
+    assert_includes plan["diagnostics"].map { |item| item["code"] }, "local_modification"
+  end
+
+  def test_validation_accepts_exact_untracked_application_outputs_and_ignored_cache
+    File.write(File.join(@target, ".gitignore"), "cache/\n")
+    commit(@target)
+    sentinel_validation_plan
+    FileUtils.mkdir_p(File.join(@target, "cache"))
+    File.write(File.join(@target, "cache/build.dat"), "ignored cache")
+    cli("validate", @plan, "--application-result", @result, "--output", @validation_result)
+    assert File.file?(@sentinel)
+    assert_equal "passed", read(@validation_result)["status"]
+    assert_includes git(@target, "ls-files", "--others", "--exclude-standard"), ".github/ISSUE_TEMPLATE/config.yml"
+  end
+
+  def test_validation_accepts_authorised_tracked_replacement_and_metadata_changes
+    adopt_and_commit
+    change_source(CONFIG, "approved updated content\n")
+    sentinel_validation_plan(operation: "update_inherited", decisions: [update_decision])
+    cli("validate", @plan, "--application-result", @result, "--output", @validation_result)
+    assert File.file?(@sentinel)
+    assert_equal "approved updated content\n", File.binread(target_path(CONFIG))
+    assert_equal "passed", read(@validation_result)["status"]
+  end
+
+  def test_validation_refuses_changed_head_before_command_execution
+    sentinel_validation_plan
+    git(@target, "commit", "--allow-empty", "-qm", "Unapproved new HEAD")
+    assert_validation_refused("target HEAD")
+  end
+
+  def test_validation_refuses_unrelated_tracked_makefile_changes
+    sentinel_validation_plan
+    File.write(File.join(@target, "Makefile"), File.binread(File.join(@target, "Makefile")) + "# unapproved change\n")
+    assert_validation_refused("tracked bytes")
+  end
+
+  def test_validation_refuses_changed_tracked_validation_script
+    @sentinel = File.join(@tmp, "command-started")
+    script = File.join(@target, "verify.rb")
+    File.write(script, 'File.write(ARGV.fetch(0), "started")' + "\n")
+    commit(@target)
+    spec = validation_spec([{"id" => "verify", "argv" => [RbConfig.ruby, "verify.rb", @sentinel], "cwd" => "repository", "env" => {}, "expected_exit_code" => 0}])
+    apply(plan_for([inherited], extra: ["--validation-spec", spec]))
+    File.write(script, File.binread(script) + "# unapproved script change\n")
+    assert_validation_refused("tracked bytes")
+  end
+
+  def test_validation_refuses_staged_unrelated_changes
+    sentinel_validation_plan
+    File.write(File.join(@target, "README.md"), "unapproved staged bytes\n")
+    git(@target, "add", "README.md")
+    assert_validation_refused("index differs")
+  end
+
+  def test_validation_refuses_staging_even_authorised_new_outputs
+    sentinel_validation_plan
+    git(@target, "add", ".github/ISSUE_TEMPLATE/config.yml")
+    assert_validation_refused("index differs")
+  end
+
+  def test_validation_refuses_unexpected_non_ignored_untracked_files
+    sentinel_validation_plan
+    File.write(File.join(@target, "unexpected.rb"), "unapproved code\n")
+    assert_validation_refused("unexpected non-ignored untracked")
+  end
+
+  def test_validation_refuses_tracked_changes_hidden_by_assume_unchanged_and_skip_worktree
+    %w[--assume-unchanged --skip-worktree].each do |flag|
+      sentinel_validation_plan
+      git(@target, "update-index", flag, "README.md")
+      File.write(File.join(@target, "README.md"), "hidden unapproved content\n")
+      refute_includes git(@target, "status", "--porcelain"), "README.md"
+      assert_validation_refused("tracked bytes")
+      reset_target
+    end
+  end
+
+  def test_validation_refuses_hidden_unrelated_executable_mode_changes
+    sentinel_validation_plan
+    git(@target, "config", "core.filemode", "false")
+    File.chmod(0o755, File.join(@target, "README.md"))
+    assert_validation_refused("tracked executable mode")
+    reset_target
+    script = File.join(@target, "verify-script")
+    File.write(script, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, script)
+    commit(@target)
+    sentinel_validation_plan
+    git(@target, "config", "core.filemode", "false")
+    File.chmod(0o655, script)
+    assert_validation_refused("tracked executable mode")
+  end
+
+  def test_validation_refuses_tampered_managed_output_without_changing_application_evidence
+    sentinel_validation_plan
+    File.write(target_path(CONFIG), "tampered managed output\n")
+    assert_validation_refused("applied file identity")
+  end
+
+  def test_validation_checks_expected_state_before_each_command_and_retains_failure_evidence
+    @sentinel = File.join(@tmp, "second-command-started")
+    spec = validation_spec([
+      {"id" => "first", "argv" => [RbConfig.ruby, "-e", 'File.write("README.md", "unapproved")'], "cwd" => "repository", "env" => {}, "expected_exit_code" => 0},
+      {"id" => "second", "argv" => [RbConfig.ruby, "-e", 'File.write(ARGV.fetch(0), "started")', @sentinel], "cwd" => "repository", "env" => {}, "expected_exit_code" => 0}
+    ])
+    apply(plan_for([inherited], extra: ["--validation-spec", spec]))
+    original_application = File.binread(@result)
+    cli("validate", @plan, "--application-result", @result, "--output", @validation_result, expected: 6)
+    refute File.exist?(@sentinel)
+    result = read(@validation_result)
+    assert_equal "failed", result["status"]
+    assert_equal ["first"], result["commands"].map { |command| command["id"] }
+    assert_equal original_application, File.binread(@result)
+  end
+
+  def test_external_plans_are_private_when_new_replaced_or_already_private
+    with_permissive_umask do
+      plan_for([inherited])
+      assert_equal "0600", T.mode(Pathname.new(@plan))
+      File.chmod(0o644, @plan)
+      plan_for([inherited])
+      assert_equal "0600", T.mode(Pathname.new(@plan))
+      plan_for([inherited])
+      assert_equal "0600", T.mode(Pathname.new(@plan))
+    end
+  end
+
+  def test_application_journal_is_private_at_initialisation_every_progress_update_and_completion
+    with_permissive_umask do
+      plan = plan_for([inherited, {"id" => "agent_launcher", "disposition" => "inherited"}])
+      observations = []
+      application = A::Application.new(A::PlanValidator.new(plan))
+      result_path = @result
+      application.define_singleton_method(:persist!) do |initial: false|
+        super(initial: initial)
+        journal = YAML.safe_load(File.binread(result_path))
+        observations << [initial, T.mode(Pathname.new(result_path)), journal["status"], journal["actions"].map { |action| action["state"] }]
+      end
+      result, code = application.apply(accept_plan_id: plan["plan_id"], result: @result, plan_path: @plan)
+      assert_equal 0, code
+      assert_equal "applied_unvalidated", result["status"]
+      assert observations.first.first
+      assert_equal ["pending", "pending"], observations.first.last
+      assert observations.any? { |item| item.last.include?("started") }
+      assert observations.any? { |item| item.last.include?("completed") }
+      assert observations.all? { |item| item[1] == "0600" }
+      assert_equal "0600", T.mode(Pathname.new(@result))
+      assert_equal "0644", T.mode(Pathname.new(target_path(CONFIG)))
+      assert_equal "0755", T.mode(Pathname.new(target_path("agent_launcher")))
+    end
+  end
+
+  def test_partial_application_journal_remains_private_under_permissive_umask
+    with_permissive_umask do
+      plan = plan_for([inherited])
+      hook = ->(event, _action) { raise Errno::EIO, "injected metadata failure" if event == :before_metadata }
+      result, code = A::Application.new(A::PlanValidator.new(plan), hook: hook).apply(accept_plan_id: plan["plan_id"], result: @result, plan_path: @plan)
+      assert_equal 5, code
+      assert_equal "partially_applied", result["status"]
+      assert_equal "0600", T.mode(Pathname.new(@result))
+      assert_equal "0644", T.mode(Pathname.new(File.join(@target, ".github/ISSUE_TEMPLATE/config.yml")))
+    end
+  end
+
+  def test_validation_success_and_failure_results_are_private_under_permissive_umask
+    [0, 7].each do |exit_code|
+      with_permissive_umask do
+        spec = validation_spec([{"id" => "verify", "argv" => [RbConfig.ruby, "-e", "exit #{exit_code}"], "cwd" => "repository", "env" => {}, "expected_exit_code" => 0}])
+        apply(plan_for([inherited], extra: ["--validation-spec", spec]))
+        cli("validate", @plan, "--application-result", @result, "--output", @validation_result, expected: exit_code.zero? ? 0 : 6)
+        assert_equal "0600", T.mode(Pathname.new(@validation_result))
+      end
+      reset_target
+    end
+  end
+
+  def test_private_atomic_output_temporaries_keep_mode_0600
+    with_permissive_umask do
+      path = Pathname.new(@tmp).join("private-output.yml")
+      T.atomic_write(path, "private bytes", mode: "0600", create: true) do
+        temps = Dir.glob(File.join(@tmp, ".ads-*.tmp"))
+        refute_empty temps
+        assert temps.all? { |file| T.mode(Pathname.new(file)) == "0600" }
+        assert_equal "0600", T.mode(path)
+      end
+    end
+  end
+
+  def test_metadata_only_dispositions_do_not_require_selected_source_files
+    ids = [CONFIG, REVIEW, "domain_context"]
+    ids.each { |id| File.unlink(source_path(id)) }
+    commit(@source)
+    native = File.binread(File.join(@target, "README.md"))
+    decisions = [
+      {"id" => CONFIG, "disposition" => "repository_owned", "equivalent" => {"paths" => ["README.md"]}, "rationale" => "Native equivalent."},
+      {"id" => REVIEW, "disposition" => "deferred", "rationale" => "Later."},
+      {"id" => "domain_context", "disposition" => "declined", "rationale" => "Outside scope."}
+    ]
+    plan = plan_for(decisions)
+    assert plan["actions"].all? { |action| action["source_file"].nil? }
+    cli("check", @plan)
+    cli("apply", @plan, "--dry-run")
+    apply(plan)
+    records = read(File.join(@target, A::METADATA_PATH))["components"]
+    assert_equal %w[active declined deferred], records.map { |record| record["status"] }.sort
+    assert records.all? { |record| !record.key?("adopted_revision") && !record.key?("adopted_source_digest") && !record.key?("source_path") }
+    assert_equal native, File.binread(File.join(@target, "README.md"))
+  end
+
+  def test_metadata_only_addition_works_without_source_bytes
+    File.unlink(source_path(REVIEW))
+    commit(@source)
+    adopt_and_commit
+    plan = plan_for([{"id" => REVIEW, "disposition" => "deferred", "rationale" => "Later."}], operation: "add_components")
+    assert_nil plan.dig("actions", 0, "source_file")
+    cli("check", @plan)
+    apply(plan)
+    assert_equal "deferred", read(File.join(@target, A::METADATA_PATH))["components"].last["status"]
+  end
+
+  def test_reconciliation_preserves_historical_provenance_without_current_source_bytes
+    committed_mismatch
+    original_record = read(File.join(@target, A::METADATA_PATH))["components"].first
+    original_bytes = File.binread(target_path(CONFIG))
+    File.unlink(source_path(CONFIG))
+    commit(@source)
+    metadata_path = File.join(@target, A::METADATA_PATH)
+    document = read(metadata_path)
+    document["framework"]["revision"] = git(@source, "rev-parse", "HEAD").strip
+    File.write(metadata_path, YAML.dump(document))
+    commit(@target)
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited")
+    assert_nil plan.dig("actions", 0, "source_file")
+    cli("check", @plan)
+    cli("apply", @plan, "--dry-run")
+    apply(plan)
+    record = read(metadata_path)["components"].first
+    assert_equal original_record["adopted_revision"], record["adopted_revision"]
+    assert_equal original_record["adopted_source_digest"], record["adopted_source_digest"]
+    assert_equal original_record["source_path"], record["source_path"]
+    assert_equal original_record["target_path"], record["target_path"]
+    assert_equal original_bytes, File.binread(target_path(CONFIG))
+    assert_equal "specialised", record["ownership"]
+  end
+
+  def test_managed_creation_still_requires_original_source_bytes
+    File.unlink(source_path(CONFIG))
+    commit(@source)
+    content = File.join(@tmp, "reviewed.md")
+    File.write(content, "reviewed local policy\n")
+    decisions = [inherited, {"id" => CONFIG, "disposition" => "specialised", "content_path" => content, "local_ownership" => ["local"], "reviewed" => true}]
+    decisions.each do |decision|
+      plan = plan_for([decision], expected: 4)
+      assert_includes plan["diagnostics"].map { |item| item["code"] }, "source_unavailable"
+      cli("check", @plan, expected: 4)
+      cli("apply", @plan, "--dry-run", expected: 4)
+      refute File.exist?(File.join(@target, A::METADATA_PATH))
+    end
+  end
+
+  def test_nullable_source_file_cannot_be_used_to_forge_an_executable_action
+    File.unlink(source_path(CONFIG))
+    commit(@source)
+    plan = plan_for([{"id" => CONFIG, "disposition" => "repository_owned", "equivalent" => {"paths" => ["README.md"]}, "rationale" => "Native equivalent."}])
+    plan["actions"][0]["action"] = "create_inherited"
+    plan["plan_id"] = T.plan_id(plan)
+    File.write(@plan, YAML.dump(T.canonical(plan)))
+    original = tree(@target)
+    cli("check", @plan, expected: 2)
+    cli("apply", @plan, "--dry-run", expected: 2)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 2)
+    assert_equal "refused", read(refusal_result)["status"]
+    assert_equal original, tree(@target)
+  end
+
+  def test_metadata_only_dispositions_still_require_a_complete_safe_catalogue
+    catalogue_path = File.join(@source, "framework.yml")
+    catalogue = read(catalogue_path)
+    catalogue["baseline"]["recommended"].find { |item| item["name"] == REVIEW }["source_path"] = "../unsafe"
+    File.write(catalogue_path, YAML.dump(catalogue))
+    commit(@source)
+    plan_for([{"id" => REVIEW, "disposition" => "deferred", "rationale" => "Later."}], expected: 3)
+    refute File.exist?(@plan)
+    malformed = read(File.join(ROOT, "framework.yml")).except("usage_modes")
+    File.write(catalogue_path, YAML.dump(malformed))
+    commit(@source)
+    plan_for([{"id" => REVIEW, "disposition" => "deferred", "rationale" => "Later."}], expected: 3)
+    refute File.exist?(@plan)
+  end
+
   private
+
+  def refusal_result
+    File.join(@tmp, "refused-result.yml")
+  end
+
+  def reconciliation_decision
+    {"id" => CONFIG, "disposition" => "convert_to_specialised", "local_ownership" => ["local policy"], "rationale" => "Committed specialisation."}
+  end
+
+  def committed_mismatch
+    adopt_and_commit
+    File.write(target_path(CONFIG), "committed local policy\n")
+    commit(@target)
+  end
+
+  def relative_target
+    Pathname.new(target_path(CONFIG)).relative_path_from(Pathname.new(@target)).to_s
+  end
+
+  def assert_hidden_reconciliation_refused(flag)
+    committed_mismatch
+    git(@target, "update-index", flag, relative_target)
+    File.write(target_path(CONFIG), "hidden uncommitted policy\n")
+    assert_empty git(@target, "status", "--porcelain")
+    original_metadata = File.binread(File.join(@target, A::METADATA_PATH))
+    plan = plan_for([reconciliation_decision], operation: "reconcile_inherited", expected: 4)
+    assert_includes plan["diagnostics"].map { |item| item["code"] }, "local_modification"
+    cli("check", @plan, expected: 4)
+    cli("apply", @plan, "--dry-run", expected: 4)
+    cli("apply", @plan, "--accept-plan-id", plan["plan_id"], "--result", refusal_result, expected: 4)
+    assert_equal "refused", read(refusal_result)["status"]
+    assert_equal original_metadata, File.binread(File.join(@target, A::METADATA_PATH))
+    assert_equal "hidden uncommitted policy\n", File.binread(target_path(CONFIG))
+  end
+
+  def sentinel_validation_plan(operation: "initial_adoption", decisions: [inherited])
+    @sentinel = File.join(@tmp, "validation-command-started")
+    spec = validation_spec([{"id" => "verify", "argv" => [RbConfig.ruby, "-e", 'File.write(ARGV.fetch(0), "started")', @sentinel], "cwd" => "repository", "env" => {}, "expected_exit_code" => 0}])
+    plan = plan_for(decisions, operation: operation, extra: ["--validation-spec", spec])
+    apply(plan)
+    plan
+  end
+
+  def assert_validation_refused(message)
+    original_application = File.binread(@result)
+    output = cli("validate", @plan, "--application-result", @result, "--output", @validation_result, expected: 4)
+    assert_includes output, message
+    refute File.exist?(@sentinel), "validation command was started"
+    assert_equal original_application, File.binread(@result)
+    refute File.exist?(@validation_result)
+  end
+
+  def with_permissive_umask
+    previous = File.umask(0)
+    yield
+  ensure
+    File.umask(previous)
+  end
 
   def read(path)
     YAML.safe_load(File.binread(path), permitted_classes: [], aliases: false)

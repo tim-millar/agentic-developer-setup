@@ -49,9 +49,7 @@ module AgenticDeveloperSetup
         else
           fail!("invalid_document", "commands require an explicit validation specification", 2) unless @plan["validation_commands"].empty?
         end
-        actual_root, = repository(roots.first, "target", clean: false)
-        fail!("invalid_target", "target canonical identity changed", 3) unless actual_root == roots.first
-        @validator.verify_outputs!
+        verify_target_state!
         state_before = repository_snapshot
         result = {"schema_version" => 1, "plan_id" => @plan["plan_id"], "application_status" => application["status"],
                   "started_at" => now, "finished_at" => now, "status" => "passed", "commands" => [], "diagnostics" => []}
@@ -60,6 +58,15 @@ module AgenticDeveloperSetup
           result["diagnostics"] << diagnostic("validation_skipped", "No validation commands were approved.", severity: "warning")
         else
           @plan["validation_commands"].each do |command|
+            unless result["commands"].empty?
+              begin
+                verify_target_state!
+              rescue TransactionError, SystemCallError, IOError, Assessment::Error => e
+                result["status"] = "failed"
+                result["diagnostics"] << diagnostic("validation_failed", "Target changed between validation commands: #{e.message}")
+                break
+              end
+            end
             command_result = execute(command)
             result["commands"] << command_result
             next if command_result["status"] == "passed"
@@ -94,7 +101,7 @@ module AgenticDeveloperSetup
         result["diagnostics"] = sorted_diagnostics(result["diagnostics"])
         schema!("validation-result", result)
         fail!("unsafe_path", "validation result destination changed") unless external(output, roots, new_file: true) == destination
-        atomic_write(destination, YAML.dump(canonical(result)), create: true)
+        atomic_write(destination, YAML.dump(canonical(result)), mode: "0600", create: true)
         [result, {"passed" => 0, "skipped" => 4, "failed" => 6, "unavailable" => 6}.fetch(result["status"])]
       end
 
@@ -116,6 +123,67 @@ module AgenticDeveloperSetup
           end
           fail!("invalid_document", "application action evidence differs", 2) unless valid
         end
+      end
+
+      # The plan starts from a clean HEAD/index. Only declared file writes and the
+      # metadata write may differ afterwards; ignored caches are outside this check.
+      def verify_target_state!
+        root = @validator.roots.first
+        actual_root, head = repository(root, "target", clean: false)
+        fail!("invalid_target", "target canonical identity changed", 3) unless actual_root == root
+        fail!("plan_stale", "validation target HEAD differs from approved target.head") unless head == @plan.dig("target", "head")
+        tree = git_tree(root, head)
+        fail!("plan_stale", "validation target index differs from approved HEAD") unless git_index(root) == tree
+        @validator.verify_outputs!
+        outputs = @plan["actions"].filter_map do |action|
+          file = action["target_file"]
+          [file["path"], [file["result_digest"], file["result_mode"]]] if WRITES.include?(action["action"])
+        end.to_h
+        outputs[METADATA_PATH] = [@plan.dig("proposed_metadata", "digest"), "0644"] if @validator.changed?
+        tree.each do |relative, identity|
+          next if outputs.key?(relative)
+          verify_tracked_file!(root, relative, identity)
+        end
+        outputs.each do |relative, (expected_digest, expected_mode)|
+          path = safe_path(root, relative)
+          unless path.file? && digest(File.binread(path)) == expected_digest && mode(path) == expected_mode
+            fail!("plan_stale", "validation output differs from approved plan: #{relative}")
+          end
+        end
+        untracked = git!(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+        unexpected = untracked - outputs.keys
+        fail!("plan_stale", "unexpected non-ignored untracked files before validation: #{unexpected.sort.join(", ")}") unless unexpected.empty?
+      end
+
+      def verify_tracked_file!(root, relative, identity)
+        git_mode, object = identity
+        parent = PathSafety.existing(root, File.dirname(relative), allow_dot: true)
+        fail!("plan_stale", "tracked path has an unsafe or missing parent: #{relative}") unless parent.is_a?(Pathname) && parent.directory?
+        path = parent.join(File.basename(relative))
+        if git_mode == "160000"
+          # Do not traverse submodule contents. Verify an initialised worktree's
+          # commit/status; an absent or empty uninitialised gitlink is permitted.
+          fail!("plan_stale", "submodule path is not a directory: #{relative}") if path.symlink? || (path.exist? && !path.directory?)
+          if path.directory? && GitCommand.worktree_root(path) == path
+            fail!("plan_stale", "submodule changed before validation: #{relative}") unless GitCommand.revision(path) == object && git_state(path).empty?
+          end
+          return
+        end
+        stat = path.lstat
+        bytes = if git_mode == "120000" && stat.symlink?
+          File.readlink(path).b
+        elsif %w[100644 100755].include?(git_mode) && stat.file?
+          actual_git_mode = (stat.mode & 0o100).zero? ? "100644" : "100755"
+          fail!("plan_stale", "tracked executable mode changed before validation: #{relative}") unless actual_git_mode == git_mode
+          File.binread(path)
+        else
+          fail!("plan_stale", "tracked file type changed before validation: #{relative}")
+        end
+        # Raw Git blob identity, without filters or index-stat shortcuts.
+        actual_object = Digest::SHA1.hexdigest("blob #{bytes.bytesize}\0".b + bytes)
+        fail!("plan_stale", "tracked bytes changed before validation: #{relative}") unless actual_object == object
+      rescue Errno::ENOENT, Errno::ENOTDIR
+        fail!("plan_stale", "tracked file missing before validation: #{relative}")
       end
 
       def repository_snapshot

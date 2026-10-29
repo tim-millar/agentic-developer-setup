@@ -99,10 +99,11 @@ module AgenticDeveloperSetup
           assert!(action["after"]["record"] == action["metadata_record"], "action result record differs")
           expected_metadata = context.metadata ? [File.binread(context.target.join(METADATA_PATH))].pack("m0") : nil
           ["before", "after"].each { |key| assert!(action[key]["metadata_content"] == expected_metadata, "embedded original metadata differs") }
-          source_file = context.source_file(id)
+          source_file = context.source_required?(id) ? context.source_file(id) : nil
           stale!("source file identity changed") unless action["source_file"] == source_file
           reviewed = (decision["disposition"] == "specialised") ? context.reviewed_file(decision) : nil
           stale!("reviewed content identity changed") unless action["reviewed_content"] == reviewed
+          assert!(!WRITES.include?(action["action"]) || source_file, "executable file actions require approved framework source bytes")
           file = action["target_file"]
           validate_file!(action, file, source_file, reviewed) if file
           record = expected_record(action, previous, decision, source_file)
@@ -168,6 +169,8 @@ module AgenticDeveloperSetup
           file = action["target_file"]
           assert!(file && file["path"] == previous["target_path"] && file["expected_type"] == "regular", "inherited operation requires existing mapped target")
           if plan["operation"] == "reconcile_inherited"
+            committed = committed_regular_file!(context.target, previous["target_path"])
+            stale!("reconciliation committed-content identity changed") unless committed == {"digest" => file["expected_digest"], "mode" => file["expected_mode"]}
             assert!(type == "convert_to_specialised" && file["expected_digest"] != previous["adopted_source_digest"], "only inherited local mismatches can be reconciled")
             previous.merge("ownership" => "specialised", "update_policy" => "manual_merge", "local_ownership" => decision["local_ownership"])
           elsif source_file["digest"] == previous["adopted_source_digest"]

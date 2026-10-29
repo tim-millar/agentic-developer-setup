@@ -201,6 +201,39 @@ module AgenticDeveloperSetup
         result.stdout
       end
 
+      # Compare tree/index object identities, independently of status and index flags.
+      # Paths are read from NUL-delimited Git output, never interpreted as pathspecs.
+      def git_tree(root, revision = "HEAD")
+        git!(root, "ls-tree", "-r", "--full-tree", "-z", revision).split("\0").to_h do |entry|
+          attributes, path = entry.split("\t", 2)
+          git_mode, _type, object = attributes.split(" ")
+          [path, [git_mode, object]]
+        end
+      end
+
+      def git_index(root)
+        git!(root, "ls-files", "--stage", "-z").split("\0").each_with_object({}) do |entry, index|
+          attributes, path = entry.split("\t", 2)
+          git_mode, object, stage = attributes.split(" ")
+          fail!("plan_stale", "index must contain one stage-zero entry per path: #{path}") unless stage == "0" && !index.key?(path)
+          index[path] = [git_mode, object]
+        end
+      end
+
+      def committed_regular_file!(root, relative)
+        path = safe_path(root, relative)
+        fail!("local_modification", "reconciliation requires an existing regular target: #{relative}") unless path.file?
+        committed = git_tree(root)[relative]
+        supported = committed && {"100644" => "0644", "100755" => "0755"}[committed.first]
+        fail!("provenance_unavailable", "reconciliation target must be a regular file committed in target HEAD: #{relative}") unless supported
+        fail!("plan_stale", "reconciliation target index differs from HEAD: #{relative}") unless git_index(root)[relative] == committed
+        blob = git!(root, "cat-file", "blob", committed.last).b
+        unless File.binread(path) == blob && mode(path) == supported
+          fail!("local_modification", "reconciliation target bytes/mode differ from committed HEAD; commit or discard local changes: #{relative}")
+        end
+        {"digest" => digest(blob), "mode" => supported}
+      end
+
       def git_state(root)
         git!(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
       end

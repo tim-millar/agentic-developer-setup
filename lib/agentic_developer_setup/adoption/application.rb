@@ -71,7 +71,7 @@ module AgenticDeveloperSetup
         end
         schema!("application-result", @journal)
         raw = YAML.dump(canonical(@journal))
-        atomic_write(@result, raw, create: initial)
+        atomic_write(@result, raw, mode: "0600", create: initial)
         @journal_digest = digest(raw)
       end
 
