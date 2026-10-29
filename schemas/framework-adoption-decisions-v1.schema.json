@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/framework-adoption-decisions-v1.schema.json",
+  "title": "Framework adoption decisions v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "components"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "inherited"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition",
+              "local_ownership",
+              "content_path",
+              "reviewed"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "specialised"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "local_ownership": {
+                "$ref": "#/$defs/non_empty_strings"
+              },
+              "content_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reviewed": {
+                "const": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition",
+              "equivalent",
+              "rationale"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "repository_owned"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "equivalent": {
+                "$ref": "#/$defs/equivalent"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition",
+              "rationale"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "deferred"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition",
+              "rationale"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "declined"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "update_inherited"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "disposition",
+              "local_ownership",
+              "rationale"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "disposition": {
+                "const": "convert_to_specialised"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "local_ownership": {
+                "$ref": "#/$defs/non_empty_strings"
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "non_empty_strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "equivalent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "commands": {
+          "$ref": "#/$defs/non_empty_strings"
+        }
+      },
+      "minProperties": 1
+    }
+  }
+}

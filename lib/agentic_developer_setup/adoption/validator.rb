@@ -16,11 +16,11 @@ module AgenticDeveloperSetup
 
       attr_reader :root, :framework_root, :catalogue, :diagnostics
 
-      def initialize(root:, framework_root:)
+      def initialize(root:, framework_root:, schema_path: nil)
         @root = Pathname.new(root).expand_path.realpath
         @framework_root = Pathname.new(framework_root).expand_path.realpath
         @diagnostics = []
-        @schema = Schema.load(@framework_root.join("schemas/framework-adoption-v1.schema.json"))
+        @schema = Schema.load(schema_path || @framework_root.join("schemas/framework-adoption-v1.schema.json"))
         @catalogue = load_catalogue
       rescue Errno::ENOENT, Errno::EACCES => e
         raise Assessment::InvocationError, "adoption root is not readable: #{e.message}"

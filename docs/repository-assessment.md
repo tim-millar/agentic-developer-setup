@@ -353,8 +353,8 @@ When metadata is valid, the assessor consumes the shared adoption library for
 ownership summaries, deferred/pinned state, inconsistencies, and undeclared
 framework-like artefacts. When it is absent or invalid, it continues with
 heuristic detection without inventing ownership. Assessment does not compare a
-candidate framework source. Issue #10 will define safe adoption/update
-planning and mutation. Assessment remains a read-only input to those later
+candidate framework source. The [adoption transaction CLI](adoption-workflow.md) provides safe adoption/update
+planning and mutation. Assessment remains a read-only input to those
 workflows, not an installer or general `framework` executable.
 
 ## Review expectations

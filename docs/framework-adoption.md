@@ -35,5 +35,6 @@ for application. Declared repository-owned commands are never executed.
 
 Repository assessment emits schema version 2 and consumes the same metadata
 library for ownership summaries and confidence. Assessment does not perform
-candidate comparison. Planning, mutation, update, and reconciliation remain
-out of scope for Issue #9 and belong to Issue #10.
+candidate comparison. The separate [adoption transaction CLI](adoption-workflow.md)
+consumes these contracts for explicitly selected planning, application, inherited
+updates and limited reconciliation; assessment and inspection remain read-only.

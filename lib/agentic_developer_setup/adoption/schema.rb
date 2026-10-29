@@ -59,6 +59,9 @@ module AgenticDeveloperSetup
         when String
           @errors << "#{location}: is too short" if schema["minLength"] && value.length < schema["minLength"]
           @errors << "#{location}: has an invalid format" if schema["pattern"] && !Regexp.new(schema["pattern"]).match?(value)
+        when Integer
+          @errors << "#{location}: is below the minimum" if schema["minimum"] && value < schema["minimum"]
+          @errors << "#{location}: exceeds the maximum" if schema["maximum"] && value > schema["maximum"]
         when Array
           @errors << "#{location}: has too few items" if schema["minItems"] && value.length < schema["minItems"]
           @errors << "#{location}: must contain unique items" if schema["uniqueItems"] && value.uniq.length != value.length
@@ -71,7 +74,10 @@ module AgenticDeveloperSetup
             unknown_keys = value.keys.reject { |key| properties.key?(key) }
             unknown_keys.sort_by { |key| [key.class.name, key.inspect] }.each { |key| @errors << "#{location}.#{key}: is not allowed" }
           end
-          value.each { |key, item| validate_value(item, properties[key], "#{location}.#{key}") if properties[key] }
+          value.each do |key, item|
+            child_schema = properties[key] || (schema["additionalProperties"] if schema["additionalProperties"].is_a?(Hash))
+            validate_value(item, child_schema, "#{location}.#{key}") if child_schema
+          end
         end
       end
 

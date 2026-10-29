@@ -35,13 +35,13 @@ module AgenticDeveloperSetup
     def capture(root, *arguments, stdin_data: nil)
       options = {chdir: root.to_s}
       options[:stdin_data] = stdin_data if stdin_data
-      environment = {
+      environment = ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] }.merge(
         "GIT_OPTIONAL_LOCKS" => "0",
         "GIT_DIR" => nil,
         "GIT_WORK_TREE" => nil,
         "GIT_INDEX_FILE" => nil,
         "GIT_COMMON_DIR" => nil
-      }
+      )
       stdout, stderr, status = Open3.capture3(
         environment,
         "git",
