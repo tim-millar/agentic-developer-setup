@@ -9,7 +9,7 @@ module AgenticDeveloperSetup
       include TransactionSupport
 
       OUTPUT_LIMIT = 65_536
-      SECRET_NAME = /TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE_KEY|AUTH|COOKIE|ACCESS_KEY|ASKPASS/i
+      SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_?KEY|AUTH|COOKIE|(?:API|ACCESS|SIGNING|ENCRYPTION|HMAC|CLIENT|SSH)_?KEY|ASKPASS|(?:\A|_)KEY(?:\z|_)/i
       ENV_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
       def self.validate_commands!(commands)

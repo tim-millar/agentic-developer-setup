@@ -429,7 +429,7 @@ class ManageAdoptionTest < Minitest::Test
   end
 
   def test_validation_spec_rejects_secret_fields_duplicate_commands_and_invalid_exit_codes
-    [{"MY_TOKEN" => "hidden"}, {"PASSWORD" => "hidden"}, {"PRIVATE_KEY_PATH" => "hidden"}].each do |env|
+    [{"MY_TOKEN" => "hidden"}, {"PASSWORD" => "hidden"}, {"PRIVATE_KEY_PATH" => "hidden"}, {"API_KEY" => "hidden"}, {"SIGNING_KEY" => "hidden"}, {"KEY" => "hidden"}, {"APIKEY" => "hidden"}, {"PRIVATEKEY" => "hidden"}].each do |env|
       spec = validation_spec([{"id" => "verify", "argv" => ["true"], "cwd" => "repository", "env" => env, "expected_exit_code" => 0}])
       plan_for([inherited], extra: ["--validation-spec", spec], expected: 2)
     end
