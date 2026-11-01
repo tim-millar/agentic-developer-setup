@@ -397,7 +397,22 @@ run_codex() {
   fi
 
   if [[ -n "$CODEX_PROFILE" ]]; then
-    env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
+    if [[ "$AGENT_USAGE_MODE" == active ]]; then
+      env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
+        -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
+        -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
+        -c "$CODEX_PATH_CONFIG" \
+        "${usage_config[@]}" \
+        "$@" <&0 &
+    else
+      env "${CODEX_ENV[@]}" "$CODEX_BIN" --profile "$CODEX_PROFILE" \
+        -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
+        -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
+        -c "$CODEX_PATH_CONFIG" \
+        "$@" <&0 &
+    fi
+  elif [[ "$AGENT_USAGE_MODE" == active ]]; then
+    env "${CODEX_ENV[@]}" "$CODEX_BIN" \
       -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
       -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
       -c "$CODEX_PATH_CONFIG" \
@@ -408,7 +423,6 @@ run_codex() {
       -c "$CODEX_ALLOW_LOGIN_SHELL_CONFIG" \
       -c "$CODEX_USE_SHELL_PROFILE_CONFIG" \
       -c "$CODEX_PATH_CONFIG" \
-      "${usage_config[@]}" \
       "$@" <&0 &
   fi
 
@@ -1053,18 +1067,35 @@ github_api() {
   fi
 
   if [[ -n "$body" ]]; then
-    curl -sS "${timeout_args[@]}" -X "$method" \
-      -H "$auth_header" \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      -d "$body" \
-      "$url"
+    if [[ ${#timeout_args[@]} -gt 0 ]]; then
+      curl -sS "${timeout_args[@]}" -X "$method" \
+        -H "$auth_header" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -d "$body" \
+        "$url"
+    else
+      curl -sS -X "$method" \
+        -H "$auth_header" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -d "$body" \
+        "$url"
+    fi
   else
-    curl -sS "${timeout_args[@]}" -X "$method" \
-      -H "$auth_header" \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      "$url"
+    if [[ ${#timeout_args[@]} -gt 0 ]]; then
+      curl -sS "${timeout_args[@]}" -X "$method" \
+        -H "$auth_header" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$url"
+    else
+      curl -sS -X "$method" \
+        -H "$auth_header" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$url"
+    fi
   fi
 }
 
@@ -2107,10 +2138,18 @@ unset FAKE_TOKEN_SEQUENCE_JSON FAKE_TOKEN_ATTEMPT_FILE FAKE_LAUNCHER_CLOCK
 
 if [[ -n "$RESUME_SESSION" ]]; then
   CODEX_STATUS=0
-  run_codex resume "$RESUME_SESSION" "${CODEX_ARGS[@]}" || CODEX_STATUS=$?
+  if [[ ${#CODEX_ARGS[@]} -gt 0 ]]; then
+    run_codex resume "$RESUME_SESSION" "${CODEX_ARGS[@]}" || CODEX_STATUS=$?
+  else
+    run_codex resume "$RESUME_SESSION" || CODEX_STATUS=$?
+  fi
   exit "$CODEX_STATUS"
 fi
 
 CODEX_STATUS=0
-run_codex "${CODEX_ARGS[@]}" "$PROMPT_CONTENT" || CODEX_STATUS=$?
+if [[ ${#CODEX_ARGS[@]} -gt 0 ]]; then
+  run_codex "${CODEX_ARGS[@]}" "$PROMPT_CONTENT" || CODEX_STATUS=$?
+else
+  run_codex "$PROMPT_CONTENT" || CODEX_STATUS=$?
+fi
 exit "$CODEX_STATUS"

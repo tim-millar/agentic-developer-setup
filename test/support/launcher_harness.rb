@@ -183,6 +183,19 @@ class LauncherHarness
     Result.new(stdout: stdout, stderr: stderr, status: status)
   end
 
+  def run_with_bash(interpreter, *arguments, env: {}, chdir: root, stdin_data: "")
+    stdout, stderr, status = Open3.capture3(
+      base_env.merge(env),
+      interpreter,
+      launcher,
+      *arguments,
+      chdir: chdir,
+      stdin_data: stdin_data,
+      unsetenv_others: true
+    )
+    Result.new(stdout: stdout, stderr: stderr, status: status)
+  end
+
   def run_app(*arguments, env: {}, chdir: root)
     run(*arguments, env: app_env.merge(env), chdir: chdir)
   end

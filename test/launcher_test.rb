@@ -81,6 +81,32 @@ class LauncherTest < Minitest::Test
       @harness.invocation.fetch("args")
   end
 
+  def test_zero_forwarded_arguments_work_with_explicit_bash_for_normal_resume_and_profiles
+    result = @harness.run_with_bash("/bin/bash")
+    assert_success(result, "explicit Bash normal launch without forwarded arguments")
+    assert_equal @harness.expected_codex_args(@harness.expected_prompt), @harness.invocation.fetch("args")
+    assert_equal 1, @harness.codex_invocations.length
+
+    @harness = replace_harness
+    result = @harness.run_with_bash("/bin/bash", "--resume", "session-36")
+    assert_success(result, "explicit Bash resume without forwarded arguments")
+    assert_equal @harness.expected_codex_args("resume", "session-36"), @harness.invocation.fetch("args")
+    assert_equal 1, @harness.codex_invocations.length
+
+    @harness = replace_harness
+    result = @harness.run_with_bash("/bin/bash", env: {"CODEX_PROFILE" => "profile-36"})
+    assert_success(result, "explicit Bash profiled normal launch without forwarded arguments")
+    assert_equal ["--profile", "profile-36", *@harness.expected_codex_args(@harness.expected_prompt)],
+      @harness.invocation.fetch("args")
+
+    @harness = replace_harness
+    result = @harness.run_with_bash("/bin/bash", "--resume", "session-36", "--profile", "profile-36")
+    assert_success(result, "explicit Bash profiled resume without forwarded arguments")
+    assert_equal ["--profile", "profile-36", *@harness.expected_codex_args("resume", "session-36")],
+      @harness.invocation.fetch("args")
+    refute_includes @harness.invocation.fetch("args"), @harness.expected_prompt
+  end
+
   def test_child_inherits_launcher_standard_input
     result = @harness.run(
       "--interactive-check",
