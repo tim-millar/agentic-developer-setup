@@ -876,6 +876,9 @@ class LauncherHarness
 
       abort "unexpected fake curl invocation" unless ENV["FAKE_CURL_MODE"] == "app"
       abort "launcher PATH changed before a security-sensitive command" unless ENV["PATH"] == ENV.fetch("FAKE_EXPECTED_LAUNCHER_PATH")
+      if (argv_log = ENV["FAKE_CURL_ARGV_LOG"])
+        File.open(argv_log, "a", 0o600) { |file| file.puts(JSON.generate(ARGV)) }
+      end
       method = "GET"
       headers = []
       connect_timeout = nil

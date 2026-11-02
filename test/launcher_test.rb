@@ -727,6 +727,71 @@ class LauncherTest < Minitest::Test
     refute File.exist?(File.join(@harness.repository, "SHOULD_NOT_EXIST"))
   end
 
+  def test_app_mode_empty_timeouts_with_explicit_bash
+    @harness.write_json(@harness.issue_json, {"number" => nil, "title" => "missing"})
+    curl_argv_log = File.join(@harness.root, "curl-argv.jsonl")
+    result = @harness.run_with_bash(
+      "/bin/bash",
+      "--issue", "7",
+      env: @harness.app_env.merge("FAKE_CURL_ARGV_LOG" => curl_argv_log)
+    )
+
+    refute result.status.success?, "invalid synthetic issue response should stop the App launch"
+    assert_includes result.stderr, "failed to fetch issue #7", "launcher should reach issue-response validation"
+    refute_includes result.stderr, "BASHPID", "launcher should stop before credential-worker startup"
+    refute_includes result.stderr, "renewal worker exited before becoming ready", "launcher should stop before credential-worker startup"
+    assert_empty @harness.codex_invocations
+    assert_empty @harness.events.grep(/^renewal:/)
+
+    expected_curl_events = [
+      "curl:app method=GET url=https://api.github.com/app auth_matches_expected=true",
+      "curl:token method=POST url=https://api.github.com/app/installations/#{LauncherHarness::INSTALLATION_ID}/access_tokens auth_matches_expected=true",
+      "curl:repository method=GET url=https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY} auth_matches_expected=true",
+      "curl:issue method=GET url=https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}/issues/7 auth_matches_expected=true"
+    ]
+    assert_equal expected_curl_events, @harness.events.grep(/^curl:/)
+
+    raw_curl_argv = File.readlines(curl_argv_log, chomp: true).map { |line| JSON.parse(line) }
+    expected_requests = [
+      ["GET", "https://api.github.com/app", :app_jwt],
+      ["POST", "https://api.github.com/app/installations/#{LauncherHarness::INSTALLATION_ID}/access_tokens", :app_jwt],
+      ["GET", "https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}", :installation_token],
+      ["GET", "https://api.github.com/repos/#{LauncherHarness::OWNER}/#{LauncherHarness::REPOSITORY}/issues/7", :installation_token]
+    ]
+    assert_equal expected_requests.length, raw_curl_argv.length
+
+    expected_requests.zip(raw_curl_argv).each_with_index do |((method, url, auth_kind), argv), index|
+      assert(!argv.any?(&:empty?), "curl request #{index + 1} included an empty argv element")
+      assert(!argv.include?("--connect-timeout"), "curl request #{index + 1} included a connect-timeout flag")
+      assert(!argv.include?("--max-time"), "curl request #{index + 1} included a max-time flag")
+      assert(!argv.include?("-d"), "bodyless curl request #{index + 1} included a body argument")
+
+      authorization = argv[4]
+      if auth_kind == :app_jwt
+        jwt_pattern = /\AAuthorization: Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\z/
+        assert(jwt_pattern.match?(authorization), "curl request #{index + 1} did not use an App JWT bearer header")
+        normalized_authorization = "Authorization: Bearer <App JWT>"
+      else
+        expected_installation_header = "Authorization: Bearer #{LauncherHarness::INSTALLATION_TOKEN}"
+        assert(authorization == expected_installation_header, "curl request #{index + 1} did not use the installation bearer header")
+        normalized_authorization = "Authorization: Bearer <installation token>"
+      end
+
+      normalized_argv = argv.dup
+      normalized_argv[4] = normalized_authorization
+      expected_argv = [
+        "-sS",
+        "-X", method,
+        "-H", normalized_authorization,
+        "-H", "Accept: application/vnd.github+json",
+        "-H", "X-GitHub-Api-Version: 2022-11-28",
+        url
+      ]
+      assert_equal expected_argv, normalized_argv,
+        "curl request #{index + 1} argv differed after authorization redaction"
+    end
+  end
+
   def test_app_mode_policy_describes_conditional_publication_capability_without_exposing_credentials
     result = @harness.run_app("--issue", "7")
     assert_success(result, "App publication capability policy")
