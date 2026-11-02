@@ -183,6 +183,19 @@ class LauncherHarness
     Result.new(stdout: stdout, stderr: stderr, status: status)
   end
 
+  def run_with_bash(interpreter, *arguments, env: {}, chdir: root, stdin_data: "")
+    stdout, stderr, status = Open3.capture3(
+      base_env.merge(env),
+      interpreter,
+      launcher,
+      *arguments,
+      chdir: chdir,
+      stdin_data: stdin_data,
+      unsetenv_others: true
+    )
+    Result.new(stdout: stdout, stderr: stderr, status: status)
+  end
+
   def run_app(*arguments, env: {}, chdir: root)
     run(*arguments, env: app_env.merge(env), chdir: chdir)
   end
@@ -863,6 +876,9 @@ class LauncherHarness
 
       abort "unexpected fake curl invocation" unless ENV["FAKE_CURL_MODE"] == "app"
       abort "launcher PATH changed before a security-sensitive command" unless ENV["PATH"] == ENV.fetch("FAKE_EXPECTED_LAUNCHER_PATH")
+      if (argv_log = ENV["FAKE_CURL_ARGV_LOG"])
+        File.open(argv_log, "a", 0o600) { |file| file.puts(JSON.generate(ARGV)) }
+      end
       method = "GET"
       headers = []
       connect_timeout = nil
