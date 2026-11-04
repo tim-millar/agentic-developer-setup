@@ -1,12 +1,14 @@
 # Claude Code Explore runtime
 
-`claude-explore` is a globally installed, reduced-authority Claude Code runtime for supervised repository archaeology, migration reconnaissance, local prototyping, test/build diagnosis, and planning. It permits local working-tree edits, project commands, staging and local commits, and deterministically local PostgreSQL access. It is not a publishing or autonomous execution runtime.
+`ads-claude-explore` is a globally installed, reduced-authority Claude Code runtime for supervised repository archaeology, migration reconnaissance, local prototyping, test/build diagnosis, and planning. It permits local working-tree edits, project commands, staging and local commits, and deterministically local PostgreSQL access. It is not a publishing or autonomous execution runtime.
 
 The runtime is coding-agent infrastructure, not a repository adapter or a replacement for repository-owned `AGENTS.md`, `CLAUDE.md`, development commands, or execution environments. Its installed path is independent of project-selected Ruby, Python, Node, package-manager, and language-manager versions. Repository toolchains remain on the ordinary `PATH`, subject to runtime policy. The source policy in [`policy.sh`](../../agent-runtimes/claude-explore/policy.sh) is authoritative; this document summarises it rather than duplicating every list.
 
 ## Prerequisites and lifecycle
 
 Supported hosts are macOS and Linux with `/bin/sh`, `/bin/bash` 3.2 or newer, a real `realpath`, normal system filesystem/process utilities, and Claude Code 2.1.224 or newer. The developer installs and authenticates Claude separately. The runtime does not require Ruby, Python, Node, npm, Bundler, a virtual environment, or a compiled framework helper.
+
+The canonical source launcher is `agent-runtimes/claude-explore/bin/ads-claude-explore`; there is no source compatibility launcher. The logical runtime ID, internal `CLAUDE_EXPLORE_*` controls and runtime-owned `--claude-explore-*` diagnostic flags retain their existing names. ADS public commands use `ads-*`, independently of PAF's `paf-*` namespace. The installer maintains no unqualified `claude-explore` or generic `claude` alias. Personal shell aliases remain outside framework ownership.
 
 Install from this checkout:
 
@@ -20,7 +22,7 @@ The installer discovers `claude` on the pre-install `PATH`. Select a particular 
 agent-runtimes/claude-explore/install.sh install --claude-bin /absolute/path/to/claude
 ```
 
-If another tool or shell configuration already wraps the `claude` command, use `--claude-bin` with the vendor Claude launcher explicitly. `claude-explore` records exactly the selected stable launcher and does not attempt to infer which third-party wrapper should be bypassed or silently search for a replacement later.
+If another tool or shell configuration already wraps the `claude` command, use `--claude-bin` with the vendor Claude launcher explicitly. `ads-claude-explore` records exactly the selected stable launcher and does not attempt to infer which third-party wrapper should be bypassed or silently search for a replacement later.
 
 Upgrade or uninstall with:
 
@@ -29,13 +31,24 @@ agent-runtimes/claude-explore/install.sh upgrade
 agent-runtimes/claude-explore/install.sh uninstall
 ```
 
-Installation is user-level. The stable command is `~/.local/bin/claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Explicit `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values must be absolute; relative roots fail rather than creating state under the caller's working directory. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required.
+Existing users migrate with `agent-runtimes/claude-explore/install.sh upgrade`; uninstalling first is unnecessary and would delete framework-owned session/configuration state. Upgrade and reinstall retain the recorded stable vendor launcher unless `--claude-bin` explicitly selects another one. The logical runtime ID remains `claude-explore`, with the same persistent roots:
 
-The installer owns only its documented framework paths. A non-framework object already at `~/.local/bin/claude-explore` is an exact-destination collision and fails closed. An unrelated executable with the same name elsewhere on `PATH` is left untouched: installation succeeds, then reports that bare `claude-explore` remains shadowed and identifies both paths so the developer can deliberately reorder `PATH` or use the installed absolute path. No profile or unrelated command is rewritten. Uninstall removes only ownership-proven framework resources and preserves the selected Claude launcher, repositories, Claude settings, and unrelated user files.
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/agent-development-framework/claude-explore/
+${XDG_CONFIG_HOME:-$HOME/.config}/agent-development-framework/claude-explore/install.meta
+```
 
-The metadata records Claude's stable launcher path, not only its current binary target. Installation and every invocation validate the launcher and resolved target path hierarchy: root-owned or current-user-owned, non-group/world-writable components are accepted, as are normal root-owned sticky temporary roots. A normal Claude updater symlink change therefore takes effect without reinstalling `claude-explore`; a missing, recursive, replaceable through an unsafe ancestor, unparseable, or too-old target fails rather than triggering a `PATH` search.
+Installation is user-level. The stable command is `~/.local/bin/ads-claude-explore`; versioned runtime data and strict line-oriented metadata use the normal XDG data/config roots. Explicit `XDG_DATA_HOME` and `XDG_CONFIG_HOME` values must be absolute; relative roots fail rather than creating state under the caller's working directory. Shell profiles are never edited. If `~/.local/bin` is absent from `PATH`, the installer prints the manual action required.
 
-Activation stages the version directory, `current` link, stable launcher, and metadata before replacing any live path. Link replacement does not follow an existing symlink-to-directory, and prior links, metadata, and same-version content remain available until every activation step succeeds. A failed upgrade rolls those resources back and removes transaction artefacts. Per-session controls live outside version directories, so successful and failed upgrades preserve active session state.
+The installer owns only its documented framework paths. A non-framework object already at `~/.local/bin/ads-claude-explore` is an exact-destination collision and fails closed. An unrelated executable with the same name elsewhere on `PATH` is left untouched: installation succeeds, then reports that bare `ads-claude-explore` remains shadowed and identifies both paths so the developer can deliberately reorder `PATH` or use the installed absolute path. No profile or unrelated command is rewritten. Uninstall removes only ownership-proven framework resources and preserves the selected Claude launcher, repositories, Claude settings, and unrelated user files.
+
+Legacy ADS ownership requires the expected symlink to `current/bin/claude-explore`, a contained safe version directory, trusted owners/modes/ancestors, strict metadata with the matching logical runtime ID and versions, consistent installed policy, and a recorded vendor launcher that is not a managed wrapper. Both public paths are preflighted before activation. An unowned qualified destination, an ADS-related but unproven generic launcher, or an inconsistent mixed state fails closed and remains untouched. A demonstrably unrelated generic executable is preserved through fresh qualified installation, reinstall, upgrade and uninstall; qualified ADS ownership must be established independently. Generic links to the exact ADS data root or its descendants, unresolved links and unsafe external targets are ambiguous and rejected before activation. Fresh-install classification occurs before populating such a target. Neither a basename nor a location in `~/.local/bin` proves ownership.
+
+Verified legacy, qualified, and consistent mixed ADS states can be uninstalled directly. Every ADS entrypoint is verified before shared runtime/configuration data is deleted, so an ambiguous mixed state is rejected without deleting shared state or leaving a known launcher dangling. Removing any launcher must succeed before runtime deletion proceeds. Uninstall retains its existing framework-owned configuration/session deletion semantics, and never removes PAF or vendor Claude resources.
+
+The metadata records Claude's stable launcher path, not only its current binary target. The qualified ADS name, legacy ADS name and `paf-claude-explore` are rejected as vendor launchers by both selected basename and resolved target basename; they are also guarded nested-agent commands. No replacement vendor binary is silently selected. Installation and every invocation validate the launcher and resolved target path hierarchy: root-owned or current-user-owned, non-group/world-writable components are accepted, as are normal root-owned sticky temporary roots. A normal Claude updater symlink change therefore takes effect without reinstalling `ads-claude-explore`; a missing, recursive, replaceable through an unsafe ancestor, unparseable, or too-old target fails rather than triggering a `PATH` search.
+
+Activation stages the version directory, `current` link, qualified stable launcher, and metadata before replacing any live path. Staging and backup slots live in exclusively created mode-0700 transaction directories under the trusted version, data, configuration and launcher parents, keeping each rename within its destination filesystem. No PID-derived path confers ownership. The installer records device/inode, owner and mode identities, rejects occupied slots before mutation and before each move, and creates staged metadata exclusively. Cleanup validates the allocated directory boundaries and object identities; it uses `rmdir` for the transaction directories so unknown children and stale transactions are preserved. Rollback removes only an identified activated object and restores a known backup only into an absent destination. An unexpected replacement is preserved alongside the recovery backup and reported as incomplete rollback. A proven legacy symlink is retired by moving the link itself into a transaction backup after activation. The qualified entrypoint and legacy retirement are then verified before any transaction backups are discarded; migration success requires both. An activation or retirement failure restores the previous version, current link, metadata and public launcher state, including the old link. Incomplete rollback exits unsuccessfully and identifies the affected paths and retained recovery backups; preserve those backups for repair before retrying. Link replacement does not follow an existing symlink-to-directory, and prior links, metadata, and same-version content remain available until every activation step succeeds. A successfully rolled-back failed upgrade removes its staging artefacts. Per-session controls live outside version directories, so successful and failed upgrades preserve active session state.
 
 ## Runtime controls
 
@@ -65,13 +78,13 @@ Normal application commands such as `make test`, `bundle exec …`, and `npm tes
 
 ## Execution telemetry
 
-Normal fresh and resumed `claude-explore` workloads automatically emit one common local execution record. Help, runtime inspection, command classification, and malformed invocations do not. Each invocation receives a distinct run ID even when resuming one Claude session. Set `AGENT_TELEMETRY=0` to opt out, or use an absolute `AGENT_TELEMETRY_DIR` as the run-root override. Records are permission-restricted, retained until the user removes them, never uploaded automatically, and fail open without replacing Claude's or the runtime's meaningful status.
+Normal fresh and resumed `ads-claude-explore` workloads automatically emit one common schema-v1 local execution record. The logical harness identity remains `agent-development-framework/claude-explore`, the client remains `claude-code`, and the launcher revision hashes the installed `bin/ads-claude-explore` bytes. Migration leaves historical run, usage and outcome evidence unchanged. Help, runtime inspection, command classification, and malformed invocations do not. Each invocation receives a distinct run ID even when resuming one Claude session. Set `AGENT_TELEMETRY=0` to opt out, or use an absolute `AGENT_TELEMETRY_DIR` as the run-root override. Records are permission-restricted, retained until the user removes them, never uploaded automatically, and fail open without replacing Claude's or the runtime's meaningful status.
 
 When execution telemetry is active, the trusted installed runtime also attempts request-level usage collection through a temporary loopback-only OTLP HTTP/JSON logs collector. The launcher pins the logs endpoint and nonce header for that invocation, keeps metrics and traces routing separate, and forces prompt, assistant-response, tool-detail, tool-content, and raw-body logging off. The Claude child cannot write the protected run directory, and it receives no additional GitHub, cloud, database, or host credentials. A trusted host Ruby, when available, is used only as the optional collector substrate; its absence records usage as unavailable and does not make Claude unavailable or add Ruby as an installation prerequisite.
 
 Set `AGENT_USAGE_TELEMETRY=0` to retain normal execution telemetry while leaving the user's provider log exporter untouched; the terminal usage sidecar records the explicit disablement. Fresh and resumed invocations remain distinct accounting runs even if Claude retains the same session ID, while `/clear` or other session changes inside one invocation remain in that invocation. See [`../run-usage.md`](../run-usage.md) for token normalization, runtime-estimated cost semantics, content exclusions, state meanings, and same-user containment limitations.
 
-Runtime version 3 also performs optional implementation-outcome reconciliation around accepted workloads. Installation snapshots the common reconciler into the versioned trusted runtime; `claude-explore` never executes a repository-controlled reconciler outside the sandbox. Host GitHub authority is captured only for trusted reconciliation and stripped from the Claude child. Missing reconciliation tools or evidence remain fail-open and do not make Claude unavailable. See [`../run-outcomes.md`](../run-outcomes.md).
+Runtime version 3 also performs optional implementation-outcome reconciliation around accepted workloads. Installation snapshots the common reconciler into the versioned trusted runtime; `ads-claude-explore` never executes a repository-controlled reconciler outside the sandbox. Host GitHub authority is captured only for trusted reconciliation and stripped from the Claude child. Missing reconciliation tools or evidence remain fail-open and do not make Claude unavailable. See [`../run-outcomes.md`](../run-outcomes.md).
 
 The runtime records explicit supported model, effort, and session arguments as requested configuration. An explicit positional initial prompt supplied to the wrapper may be stored as local task evidence. It does not infer effective values or configuration stability, or scrape Claude session state, transcripts or history, private runtime files, generic system/runtime guidance, hidden reasoning, or unrelated task text. It does not enable hooks or weaken any sandbox, settings, permission, or environment policy for observability. See [`../run-telemetry.md`](../run-telemetry.md) for the common schema, storage path, lifecycle, privacy boundary, task-evidence model, and downstream run-ID contract.
 
@@ -82,15 +95,15 @@ Intentional policy blocks begin with `CLAUDE_EXPLORE_BLOCKED` and exit 126. They
 Inspect the installed/runtime/client boundary without starting a session:
 
 ```sh
-claude-explore --claude-explore-runtime-info
+ads-claude-explore --claude-explore-runtime-info
 ```
 
 Classify a structured command without executing Claude or the command:
 
 ```sh
-claude-explore --claude-explore-check-command -- git status
-claude-explore --claude-explore-check-command -- git push
-claude-explore --claude-explore-check-command -- psql -d mydb -c 'select 1'
+ads-claude-explore --claude-explore-check-command -- git status
+ads-claude-explore --claude-explore-check-command -- git push
+ads-claude-explore --claude-explore-check-command -- psql -d mydb -c 'select 1'
 ```
 
 Allowed classifications begin with `CLAUDE_EXPLORE_CLASSIFICATION` and exit 0; blocked classifications use the normal blocked diagnostic and exit 126.
@@ -101,7 +114,7 @@ This is a cooperating-agent reduced-authority guardrail, not hostile-code contai
 
 ## Disposable manual smoke procedure
 
-Use a disposable user/XDG environment and synthetic credentials. Inspect `type -a claude-explore` and `type -a claude` first; if `claude` is wrapped, install with the explicit vendor launcher and initially invoke `~/.local/bin/claude-explore` rather than assuming either bare command resolves to the intended executable. Then:
+Use a disposable user/XDG environment and synthetic credentials. Inspect `type -a ads-claude-explore` and `type -a claude` first; if `claude` is wrapped, install with the explicit vendor launcher and initially invoke `~/.local/bin/ads-claude-explore` rather than assuming either bare command resolves to the intended executable. Then:
 
 1. install with an explicit stable Claude launcher and inspect runtime info;
 2. enter repositories selecting incompatible Ruby, Node, and Python versions and confirm the wrapper still starts;
@@ -113,7 +126,10 @@ Use a disposable user/XDG environment and synthetic credentials. Inspect `type -
 8. confirm MCP, Chrome, cloud/remote-control, background, print, and system-prompt override modes are rejected;
 9. exercise dry-run allowed/blocked classification without executing either command;
 10. confirm a normal exit and `SIGINT` remove only the current session directory;
-11. run uninstall and confirm real Claude, repositories, Claude settings/sessions, and unrelated XDG files remain.
+11. inspect fresh and resumed `run.json` records for distinct run IDs, the unchanged logical harness identity and the qualified launcher hash; inspect usage/outcome availability or fail-open status, and exercise the explicit usage opt-out;
+12. in a disposable verified legacy installation, upgrade without uninstalling and confirm the generic ADS link is retired while recorded vendor selection, active session controls and historical evidence remain;
+13. resolve `ads-claude-explore` and simulated or separately installed `paf-claude-explore` with both PATH orders and confirm their independent paths; check PAF files remain unchanged through ADS install/upgrade/uninstall;
+14. run uninstall and confirm real Claude, repositories, Claude settings/sessions, PAF and unrelated XDG files remain.
 
 Automated offline coverage uses fake tools and disposable homes:
 

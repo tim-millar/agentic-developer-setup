@@ -610,6 +610,8 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
     assert_equal "claude-code", fresh.dig("runtime", "client", "id")
     assert_equal "2.1.224", fresh.dig("runtime", "client", "version", "value")
     assert_equal "agent-development-framework/claude-explore", fresh.dig("runtime", "harness", "id")
+    expected_revision = "sha256:#{Digest::SHA256.file(@harness.installed_launcher).hexdigest}"
+    assert_equal expected_revision, fresh.dig("runtime", "harness", "revision")
     assert_equal 3, fresh.dig("runtime", "harness", "version")
     assert_equal "sonnet", fresh.dig("configuration", "model", "requested", "value")
     assert_equal "high", fresh.dig("configuration", "reasoning_effort", "requested", "value")

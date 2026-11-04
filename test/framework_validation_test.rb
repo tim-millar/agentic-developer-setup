@@ -87,6 +87,17 @@ class FrameworkValidationTest < Minitest::Test
     refute_includes launcher, "require_cmd cp"
   end
 
+  def test_claude_runtime_qualifies_only_the_public_launcher_namespace
+    metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"), aliases: false)
+    runtime = metadata.fetch("agent_runtimes").fetch("supported").find { |entry| entry.fetch("id") == "claude-explore" }
+    assert_equal "global-user", runtime.fetch("distribution")
+    assert_equal 3, runtime.fetch("runtime_version")
+    launcher = runtime.fetch("artefacts").find { |entry| entry.fetch("role") == "launcher" }
+    assert_equal "agent-runtimes/claude-explore/bin/ads-claude-explore", launcher.fetch("source_path")
+    assert File.executable?(File.join(REPOSITORY_ROOT, launcher.fetch("source_path")))
+    refute File.exist?(File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore/bin/claude-explore"))
+  end
+
   def test_runtime_outcome_metadata_uses_each_runtime_owned_source
     metadata = YAML.safe_load_file(File.join(REPOSITORY_ROOT, "framework.yml"), aliases: false)
     runtimes = metadata.fetch("agent_runtimes").fetch("supported").to_h { |runtime| [runtime.fetch("id"), runtime] }
