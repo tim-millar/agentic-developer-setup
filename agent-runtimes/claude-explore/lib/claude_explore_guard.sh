@@ -26,7 +26,7 @@ trusted_file() {
   [ "$($REALPATH_BIN "$trusted_path" 2>/dev/null)" = "$trusted_path" ] || return 1
   if [ "$trusted_kind" = executable ]; then [ -x "$trusted_path" ]; else [ ! -x "$trusted_path" ]; fi
 }
-trusted_file "$RUNTIME_ROOT/bin/claude-explore" executable &&
+trusted_file "$RUNTIME_ROOT/bin/ads-claude-explore" executable &&
   trusted_file "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" executable &&
   trusted_file "$RUNTIME_ROOT/lib/claude_explore_guard.sh" executable &&
   trusted_file "$RUNTIME_ROOT/policy.sh" policy || guard_fail runtime-content-unsafe

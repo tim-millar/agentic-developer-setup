@@ -281,10 +281,10 @@ agent_runtimes:
       distribution: global-user
       description: >
         Supervised exploratory engineering with reduced ambient authority and a
-        fixed framework-owned policy.
+        fixed framework-owned policy, installed as ~/.local/bin/ads-claude-explore.
       artefacts:
         - role: launcher
-          source_path: agent-runtimes/claude-explore/bin/claude-explore
+          source_path: agent-runtimes/claude-explore/bin/ads-claude-explore
         - role: installer
           source_path: agent-runtimes/claude-explore/install.sh
         - role: policy

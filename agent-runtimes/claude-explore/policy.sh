@@ -30,7 +30,10 @@ CLAUDE_CODE_DISABLE_ARTIFACT=1
 GH_CONFIG_DIR=<private-session-directory>
 GIT_ASKPASS=<refusal-helper>'
 
-CLAUDE_EXPLORE_BLOCKED_EXECUTABLES='gh
+CLAUDE_EXPLORE_BLOCKED_EXECUTABLES='claude-explore
+ads-claude-explore
+paf-claude-explore
+gh
 aws
 gcloud
 az
@@ -205,4 +208,4 @@ CLAUDE_EXPLORE_CLAUDE_BOOLEAN_FLAGS='--help --version -v --continue -c --fork-se
 CLAUDE_EXPLORE_CLAUDE_BLOCKED_FLAGS='--dangerously-skip-permissions --allow-dangerously-skip-permissions --settings --setting-sources --mcp-config --strict-mcp-config --permission-prompt-tool --plugin-dir --plugin-url --agent --agents --channels --dangerously-load-development-channels --chrome --cloud --remote --environment --remote-control --rc --teleport --add-dir --worktree -w --tmux --from-pr --bg --background --exec --print -p --safe-mode --bare --system-prompt --system-prompt-file --append-system-prompt --append-system-prompt-file --append-subagent-system-prompt --allowedTools --allowed-tools --disallowedTools --disallowed-tools --tools --init --init-only --maintenance --debug-file'
 CLAUDE_EXPLORE_CLAUDE_BLOCKED_SUBCOMMANDS='update gateway install auth agents attach auto-mode daemon doctor import logs mcp plugin plugins project remote-control respawn rm self-hosted-runner setup-token stop kill ultrareview'
 
-CLAUDE_EXPLORE_GUIDANCE='claude-explore is a supervised reduced-authority runtime. CLAUDE_EXPLORE_BLOCKED results are intentional: report them and suggest a safe local alternative. Do not bypass guards, launch unrestricted Claude, restore stripped credentials, invoke alternate binaries to evade policy, or edit installed runtime, policy, metadata, or session controls.'
+CLAUDE_EXPLORE_GUIDANCE='ads-claude-explore is a supervised reduced-authority runtime. CLAUDE_EXPLORE_BLOCKED results are intentional: report them and suggest a safe local alternative. Do not bypass guards, launch unrestricted Claude, restore stripped credentials, invoke alternate binaries to evade policy, or edit installed runtime, policy, metadata, or session controls.'

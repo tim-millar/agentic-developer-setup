@@ -2,7 +2,7 @@
 
 Supported framework launchers automatically preserve a local, runtime-neutral record of each accepted agent workload invocation. One telemetry run is one launcher invocation: a fresh launch and every resume launch receive distinct framework-generated `run_id` values even when they refer to the same underlying runtime session. Help, runtime-information, command-classification, and malformed launcher invocations are not workloads and do not create records.
 
-The supported v1 boundaries are the adopted `scripts/run_codex.sh` launcher and the globally installed `claude-explore` runtime. The repository-root Codex wrapper only supplies repository defaults before delegating to the baseline launcher, so it is not a separate harness. Direct invocation of arbitrary `codex` or `claude` clients is outside the telemetry guarantee.
+The supported v1 boundaries are the adopted `scripts/run_codex.sh` launcher and the globally installed `ads-claude-explore` runtime. The repository-root Codex wrapper only supplies repository defaults before delegating to the baseline launcher, so it is not a separate harness. Direct invocation of arbitrary `codex` or `claude` clients is outside the telemetry guarantee.
 
 > Telemetry records what the framework can reliably observe about an execution. It does not prove that the implementation is correct, complete, publishable, or ready to merge.
 

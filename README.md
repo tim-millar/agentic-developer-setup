@@ -96,7 +96,7 @@ An agent runtime is the tool-specific launcher and operating policy for a specif
 
 The framework is agent-runtime-aware rather than agent-agnostic: shared repository practices live in the baseline, while agent-specific execution behaviour lives in runtime launchers.
 
-Two distributions are supported. Repository runtimes, such as Codex, may declare target-repository paths for adopted artefacts where applicable. Global-user runtimes, such as `claude-explore`, install outside repositories and deliberately have no target-repository paths.
+Two distributions are supported. Repository runtimes, such as Codex, may declare target-repository paths for adopted artefacts where applicable. Global-user runtimes, such as `ads-claude-explore`, install outside repositories and deliberately have no target-repository paths.
 
 ### Prompts
 
@@ -339,7 +339,7 @@ This framework is general-purpose at the repository and workflow level, but agen
 
 Different coding agents have different interfaces, strengths, failure modes, and safety characteristics. Rather than hiding those differences behind a single generic wrapper, the framework treats each supported agent as a distinct runtime with its own launcher, prompt assembly, access policy, and operating constraints.
 
-The public runtimes are Codex and Claude Code Explore. Codex remains a repository-distributed launcher for deterministic implementation, prompt construction, and optional GitHub App access. `claude-explore` is a globally installed, reduced-authority runtime for supervised local exploration. It combines a fixed framework policy, Claude Code's required native sandbox and permission controls, startup-argument classification, credential/environment reduction, and guarded command resolution. See [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md).
+The public runtimes are Codex and Claude Code Explore. Codex remains a repository-distributed launcher for deterministic implementation, prompt construction, and optional GitHub App access. `ads-claude-explore` is a globally installed, reduced-authority runtime for supervised local exploration. The installed command is `~/.local/bin/ads-claude-explore`; its logical runtime ID remains `claude-explore`. Existing ADS users migrate with `agent-runtimes/claude-explore/install.sh upgrade`, without uninstalling first. ADS uses the `ads-*` executable namespace; PAF uses `paf-*`. No generic compatibility launcher is maintained. It combines a fixed framework policy, Claude Code's required native sandbox and permission controls, startup-argument classification, credential/environment reduction, and guarded command resolution. See [`docs/runtimes/claude-explore.md`](docs/runtimes/claude-explore.md).
 
 Normal workloads through either supported framework launcher automatically emit local, permission-restricted execution telemetry. Each fresh or resumed launcher invocation receives a distinct canonical run ID; arbitrary direct `codex` or `claude` invocation is outside this guarantee. See [`docs/run-telemetry.md`](docs/run-telemetry.md) for storage, opt-out, schema, lifecycle, privacy, and observability semantics.
 

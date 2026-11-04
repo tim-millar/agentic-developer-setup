@@ -105,7 +105,7 @@ class ClaudeExploreHarness
   end
 
   def installed_launcher
-    File.join(home, ".local/bin/claude-explore")
+    File.join(home, ".local/bin/ads-claude-explore")
   end
 
   def metadata

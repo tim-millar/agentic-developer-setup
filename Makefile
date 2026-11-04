@@ -27,7 +27,7 @@ test-launcher:
 
 .PHONY: test-claude-runtime
 test-claude-runtime:
-	bundle exec ruby -Itest test/claude_explore_runtime_test.rb
+	bundle exec ruby -Itest -e 'Dir["test/claude_explore_*_test.rb"].sort.each { |file| require File.expand_path(file) }'
 
 .PHONY: test-outcomes
 test-outcomes:

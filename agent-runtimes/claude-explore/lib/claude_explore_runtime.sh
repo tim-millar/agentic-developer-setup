@@ -1,7 +1,7 @@
 #!/bin/bash
 set -u
 unset BASH_ENV ENV CDPATH
-case $- in *p*) ;; *) printf '%s\n' 'claude-explore: trusted Bash privileged mode is required' >&2; exit 1 ;; esac
+case $- in *p*) ;; *) printf '%s\n' 'ads-claude-explore: trusted Bash privileged mode is required' >&2; exit 1 ;; esac
 ORIGINAL_PATH=${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 unset PINNED_OUTCOME_RECONCILER PINNED_OUTCOME_TOKEN_HELPER PINNED_OUTCOME_HOST_GH_TOKEN
@@ -10,7 +10,7 @@ unset PINNED_OUTCOME_GH_BIN PINNED_OUTCOME_RUBY_BIN PINNED_OUTCOME_GIT_BIN
 unset PINNED_USAGE_RUBY_BIN
 
 runtime_error() {
-  printf 'claude-explore: %s\n' "$1" >&2
+  printf 'ads-claude-explore: %s\n' "$1" >&2
   return 1
 }
 
@@ -191,7 +191,7 @@ initialize_runtime_source() {
   RUNTIME_ROOT=$(dirname "$(dirname "$SCRIPT_REAL")")
   DATA_INSTALL_ROOT=$(dirname "$(dirname "$RUNTIME_ROOT")")
   POLICY_FILE="$RUNTIME_ROOT/policy.sh"
-  for path in "$RUNTIME_ROOT/bin/claude-explore" "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" "$RUNTIME_ROOT/lib/claude_explore_guard.sh"; do
+  for path in "$RUNTIME_ROOT/bin/ads-claude-explore" "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" "$RUNTIME_ROOT/lib/claude_explore_guard.sh"; do
     safe_owned_executable "$path" || { runtime_error "executable runtime content is missing or unsafe"; return 1; }
     case "$path" in "$RUNTIME_ROOT"/*) ;; *) runtime_error "runtime content resolves outside installation"; return 1 ;; esac
   done
@@ -520,7 +520,7 @@ read_metadata() {
 
 validate_installed_runtime() {
   local path stable_launcher current_link
-  for path in "$RUNTIME_ROOT/bin/claude-explore" "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" "$RUNTIME_ROOT/lib/claude_explore_guard.sh"; do
+  for path in "$RUNTIME_ROOT/bin/ads-claude-explore" "$RUNTIME_ROOT/lib/claude_explore_runtime.sh" "$RUNTIME_ROOT/lib/claude_explore_guard.sh"; do
     safe_owned_executable "$path" || { runtime_error "installed executable runtime file is missing or unsafe"; return 1; }
   done
   safe_owned_file "$RUNTIME_ROOT/lib/agent_run_telemetry.sh" || { runtime_error "installed telemetry helper is missing or unsafe"; return 1; }
@@ -531,8 +531,8 @@ validate_installed_runtime() {
   safe_owned_dir "$DATA_INSTALL_ROOT" || { runtime_error "installed runtime directory is unsafe"; return 1; }
   current_link=$DATA_INSTALL_ROOT/current
   [ -L "$current_link" ] && [ "$($REALPATH_BIN "$current_link" 2>/dev/null)" = "$RUNTIME_ROOT" ] || { runtime_error "active runtime link is missing or unsafe"; return 1; }
-  stable_launcher=$HOME/.local/bin/claude-explore
-  [ -L "$stable_launcher" ] && [ "$($REALPATH_BIN "$stable_launcher" 2>/dev/null)" = "$RUNTIME_ROOT/bin/claude-explore" ] || { runtime_error "stable launcher is missing or unsafe"; return 1; }
+  stable_launcher=$HOME/.local/bin/ads-claude-explore
+  [ -L "$stable_launcher" ] && [ "$($REALPATH_BIN "$stable_launcher" 2>/dev/null)" = "$RUNTIME_ROOT/bin/ads-claude-explore" ] || { runtime_error "stable launcher is missing or unsafe"; return 1; }
   read_metadata || return 1
   safe_owned_dir "$CONFIG_ROOT" || { runtime_error "installation metadata directory is unsafe"; return 1; }
 }
@@ -542,6 +542,10 @@ validate_claude() {
   [ -e "$launcher" ] || { runtime_error "recorded Claude launcher is missing"; return 1; }
   safe_path_ancestors "$launcher" || { runtime_error "recorded Claude launcher path hierarchy is unsafe"; return 1; }
   target=$($REALPATH_BIN "$launcher" 2>/dev/null) || { runtime_error "recorded Claude launcher cannot be resolved"; return 1; }
+  case "${launcher##*/}:${target##*/}" in
+    claude-explore:*|ads-claude-explore:*|paf-claude-explore:*|*:claude-explore|*:ads-claude-explore|*:paf-claude-explore)
+      runtime_error "recorded Claude launcher is a managed wrapper"; return 1 ;;
+  esac
   case "$target" in "$RUNTIME_ROOT"/*) runtime_error "recorded Claude launcher recurses into claude-explore"; return 1 ;; esac
   [ "$target" != "$SCRIPT_REAL" ] || { runtime_error "recorded Claude launcher resolves to claude-explore"; return 1; }
   [ -f "$target" ] && [ -x "$target" ] || { runtime_error "resolved Claude target is not an executable regular file"; return 1; }
@@ -610,7 +614,7 @@ json_permission_denies() {
   done <<EOF
 $CLAUDE_EXPLORE_CREDENTIAL_PATHS
 EOF
-  for path in "$DATA_INSTALL_ROOT" "$CONFIG_ROOT" "$HOME/.local/bin/claude-explore" "$SESSION_DIR"; do
+  for path in "$DATA_INSTALL_ROOT" "$CONFIG_ROOT" "$HOME/.local/bin/ads-claude-explore" "$SESSION_DIR"; do
     [ "$first" -eq 1 ] || printf ','; first=0
     pattern=//${path#/}
     printf '"Edit(%s)","Edit(%s/**)"' "$(json_escape "$pattern")" "$(json_escape "$pattern")"
@@ -625,7 +629,7 @@ write_settings() {
   settings_json=$({
     printf '{"sandbox":{"enabled":%s,"failIfUnavailable":%s,"allowUnsandboxedCommands":%s,"filesystem":{"disabled":%s,"denyWrite":["%s","%s","%s","%s","%s"]},"credentials":{"files":[' \
       "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_FAIL_IF_UNAVAILABLE" "$CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS" "$CLAUDE_EXPLORE_SANDBOX_FILESYSTEM_DISABLED" \
-      "$(json_escape "$DATA_INSTALL_ROOT")" "$(json_escape "$CONFIG_ROOT")" "$(json_escape "$HOME/.local/bin/claude-explore")" "$(json_escape "$SESSION_DIR")" "$(json_escape "$telemetry_deny")"
+      "$(json_escape "$DATA_INSTALL_ROOT")" "$(json_escape "$CONFIG_ROOT")" "$(json_escape "$HOME/.local/bin/ads-claude-explore")" "$(json_escape "$SESSION_DIR")" "$(json_escape "$telemetry_deny")"
     json_credential_files
     printf '],"envVars":['; json_credential_env
     printf ']}},"disableAllHooks":%s,"disableArtifact":%s,"permissions":{"deny":[' "$CLAUDE_EXPLORE_DISABLE_ALL_HOOKS" "$CLAUDE_EXPLORE_DISABLE_ARTIFACT"; json_permission_denies
@@ -677,7 +681,7 @@ make_session() {
 $CLAUDE_EXPLORE_GUARDED_EXECUTABLES
 EOF
   mkdir "$SESSION_DIR/gh" || return 1
-  printf '#!/bin/sh\necho "claude-explore: interactive Git authentication is disabled" >&2\nexit 1\n' > "$SESSION_DIR/askpass" || return 1
+  printf '#!/bin/sh\necho "ads-claude-explore: interactive Git authentication is disabled" >&2\nexit 1\n' > "$SESSION_DIR/askpass" || return 1
   chmod 700 "$SESSION_DIR/askpass" || return 1
   : > "$SESSION_DIR/$CLAUDE_EXPLORE_PSQL_PASSWORD_FILE_NAME" || return 1
   chmod 600 "$SESSION_DIR/$CLAUDE_EXPLORE_PSQL_PASSWORD_FILE_NAME" || return 1
@@ -721,6 +725,7 @@ EOF
 runtime_info() {
   validate_installed_runtime && validate_claude || return 1
   printf 'runtime_id=%s\nruntime_version=%s\npolicy_schema_version=%s\npolicy_version=%s\n' "$CLAUDE_EXPLORE_RUNTIME_ID" "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$CLAUDE_EXPLORE_POLICY_SCHEMA_VERSION" "$CLAUDE_EXPLORE_POLICY_VERSION"
+  printf 'public_launcher_path=%s\n' "$HOME/.local/bin/ads-claude-explore"
   printf 'installed_runtime_path=%s\nrecorded_claude_launcher_path=%s\nresolved_current_claude_path=%s\nclaude_version=%s\n' "$RUNTIME_ROOT" "$META_CLAUDE_LAUNCHER" "$CLAUDE_TARGET" "$CLAUDE_VERSION"
   case "$(uname -s)" in Darwin) printf 'supported_platform=macos\n' ;; Linux) printf 'supported_platform=linux\n' ;; *) printf 'supported_platform=unsupported\n' ;; esac
   printf 'sandbox_required=%s\nunsandboxed_retry_allowed=%s\nguarded_commands=%s\n' "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS" "$(printf '%s' "$CLAUDE_EXPLORE_GUARDED_EXECUTABLES" | tr '\n' ',')"
@@ -840,7 +845,7 @@ run_session() {
     TELEMETRY_REPO_ROOT=$(pwd -P)
   fi
   if [ "$inspection" -eq 0 ]; then
-    agent_telemetry_start claude-code agent-development-framework/claude-explore "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$RUNTIME_ROOT/bin/claude-explore" "$TELEMETRY_REPO_ROOT"
+    agent_telemetry_start claude-code agent-development-framework/claude-explore "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$RUNTIME_ROOT/bin/ads-claude-explore" "$TELEMETRY_REPO_ROOT"
     observe_claude_requested_configuration "$@"
     observe_claude_task "$@"
   fi

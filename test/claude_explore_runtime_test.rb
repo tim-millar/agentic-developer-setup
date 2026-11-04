@@ -19,7 +19,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_install_runtime_info_idempotence_and_uninstall
     stdout, stderr, status = @harness.install
     assert status.success?, stderr
-    assert_includes stdout, "claude-explore 3 install"
+    assert_includes stdout, "ads-claude-explore 3 install"
     assert File.symlink?(@harness.installed_launcher)
     assert_equal 0o600, File.stat(@harness.metadata).mode & 0o777
     assert_equal 0o700, File.stat(@harness.current_runtime).mode & 0o777
@@ -96,7 +96,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
       lib/agent_run_usage.sh
       lib/claude_explore_runtime.sh
       policy.sh
-      bin/claude-explore
+      bin/ads-claude-explore
       lib/claude_explore_guard.sh
     ]
 
@@ -871,7 +871,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     _stdout, stderr, status = @harness.install_from(File.join(source_v4, "install.sh"), "upgrade")
     assert status.success?, stderr
     assert_match(%r{/versions/4\z}, File.realpath(File.join(@harness.data_root, "current")))
-    assert_match(%r{/versions/4/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_match(%r{/versions/4/bin/ads-claude-explore\z}, File.realpath(@harness.installed_launcher))
     assert_includes @harness.read(@harness.metadata), "runtime_version=4"
     assert Dir.exist?(preserved_session), "upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
@@ -884,7 +884,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_includes stderr, "injected metadata activation failure"
     assert_equal active_before, File.realpath(File.join(@harness.data_root, "current"))
     assert_equal metadata_before, @harness.read(@harness.metadata)
-    assert_match(%r{/versions/4/bin/claude-explore\z}, File.realpath(@harness.installed_launcher))
+    assert_match(%r{/versions/4/bin/ads-claude-explore\z}, File.realpath(@harness.installed_launcher))
     assert Dir.exist?(preserved_session), "failed upgrade must preserve stable sessions state"
     assert_empty activation_transaction_artifacts
   end
@@ -892,7 +892,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def activation_transaction_artifacts
     Dir.glob(File.join(@harness.data_root, ".{previous,current}.*"), File::FNM_DOTMATCH) +
       Dir.glob(File.join(File.dirname(@harness.metadata), ".{previous,install.meta.tmp}.*"), File::FNM_DOTMATCH) +
-      Dir.glob(File.join(File.dirname(@harness.installed_launcher), ".{previous,claude-explore}.*"), File::FNM_DOTMATCH)
+      Dir.glob(File.join(File.dirname(@harness.installed_launcher), ".{previous,ads-claude-explore}.*"), File::FNM_DOTMATCH)
   end
 
   def test_reserved_runtime_diagnostic_does_not_echo_secret_argument
@@ -918,7 +918,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_unrelated_path_shadowing_claude_explore_is_preserved_and_reported
-    unrelated = File.join(@harness.fake_bin, "claude-explore")
+    unrelated = File.join(@harness.fake_bin, "ads-claude-explore")
     contents = "#!/bin/sh\necho unrelated-explore\n"
     @harness.write_executable(unrelated, contents)
 
@@ -928,7 +928,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     assert_equal contents, File.read(unrelated)
     assert_includes stderr, "PATH shadowing"
     assert_includes stderr, "installed public launcher=#{@harness.installed_launcher}"
-    assert_includes stderr, "bare claude-explore resolves to=#{unrelated}"
+    assert_includes stderr, "bare ads-claude-explore resolves to=#{unrelated}"
     assert_includes stderr, "will continue to select the earlier PATH entry"
     assert_includes stdout, "launcher=#{@harness.installed_launcher}"
     assert_includes stdout, "Add #{File.dirname(@harness.installed_launcher)} to PATH manually."
