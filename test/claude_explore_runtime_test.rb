@@ -890,9 +890,10 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def activation_transaction_artifacts
-    Dir.glob(File.join(@harness.data_root, ".{previous,current}.*"), File::FNM_DOTMATCH) +
-      Dir.glob(File.join(File.dirname(@harness.metadata), ".{previous,install.meta.tmp}.*"), File::FNM_DOTMATCH) +
-      Dir.glob(File.join(File.dirname(@harness.installed_launcher), ".{previous,ads-claude-explore}.*"), File::FNM_DOTMATCH)
+    Dir.glob(File.join(@harness.data_root, "versions/.transaction.*"), File::FNM_DOTMATCH) +
+      Dir.glob(File.join(@harness.data_root, ".{transaction,previous,current}.*"), File::FNM_DOTMATCH) +
+      Dir.glob(File.join(File.dirname(@harness.metadata), ".{transaction,previous,install.meta.tmp}.*"), File::FNM_DOTMATCH) +
+      Dir.glob(File.join(File.dirname(@harness.installed_launcher), ".{transaction,previous,ads-claude-explore}.*"), File::FNM_DOTMATCH)
   end
 
   def test_reserved_runtime_diagnostic_does_not_echo_secret_argument

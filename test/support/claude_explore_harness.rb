@@ -176,7 +176,7 @@ class ClaudeExploreHarness
     if fail_metadata_activation
       installer = File.join(destination, "lib/claude_explore_installer.sh")
       contents = File.read(installer).sub(
-        'mv "$STAGED_METADATA" "$METADATA_FILE" || activation_fail "cannot activate installation metadata"',
+        'move_to_empty "$STAGED_METADATA" "$METADATA_FILE" "$STAGED_METADATA_ID" || activation_fail "cannot activate installation metadata"',
         'false || activation_fail "injected metadata activation failure"'
       )
       File.write(installer, contents)
