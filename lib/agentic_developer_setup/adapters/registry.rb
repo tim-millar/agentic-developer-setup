@@ -159,7 +159,7 @@ module AgenticDeveloperSetup
       def definition(entry)
         id, category, source, status = entry.values_at("name", "type", "path", "status")
         raise Error, "invalid adapter ID: #{id}" unless /\A[a-z][a-z0-9-]*\z/.match?(id)
-        Contracts.relative!(source)
+        Contracts.contained!(@root, source)
         base = {"id" => id, "category" => category, "status" => status, "source_path" => source}
         return Definition.new(base) if status == "planned"
 
