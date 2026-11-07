@@ -168,7 +168,8 @@ resolutions: []
 
 `explicit` selection can lack positive evidence; the assessment records that
 uncertainty. `accepted_detection` is an explicit decision requiring a current,
-matching positive candidate for the same category, ID and scope. Confidence
+matching candidate for the same category, ID and scope. Accepting an ambiguous
+or negative candidate retains its uncertainty; no positive evidence is invented. Confidence
 never accepts a candidate automatically. Unknown/planned adapters, duplicate
 categories or identities, missing ecosystem, unsafe scopes, malformed inputs
 and malformed resolutions are invocation errors.

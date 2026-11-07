@@ -48,7 +48,7 @@ class AdapterAssessmentTest < AdapterTest
   end
 
   def test_accepted_detection_requires_current_matching_candidate
-    register("ruby", marker: "Gemfile")
+    register("ruby")
     document = selected(["ecosystem", "ruby"])
     document["selected"][0]["source"] = "accepted_detection"
     assert_raises(A::Error) { assess(document) }
@@ -180,5 +180,15 @@ class AdapterAssessmentTest < AdapterTest
     result = assess
     result["framework"]["undeclared"] = true
     assert_raises(A::Error) { A::Contracts.validate!("assessment", result) }
+  end
+
+  def test_accepted_detection_can_explicitly_accept_a_candidate_without_positive_evidence
+    register("ruby", marker: "Gemfile")
+    document = selected(["ecosystem", "ruby"])
+    document["selected"][0]["source"] = "accepted_detection"
+    result = assess(document)
+    assert_equal "ready", result.dig("composition", "status")
+    assert_equal "not_detected", result.dig("candidates", 0, "status")
+    assert result.dig("candidates", 0, "ambiguities").any?
   end
 end

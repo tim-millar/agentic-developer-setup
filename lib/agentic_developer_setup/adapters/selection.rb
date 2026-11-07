@@ -57,8 +57,8 @@ module AgenticDeveloperSetup
       def validate_candidates!(candidates)
         document["selected"].each do |item|
           next unless item["source"] == "accepted_detection"
-          unless candidates.any? { |candidate| candidate.values_at("category", "id", "scope", "status") == [item["category"], item["id"], scope, "detected"] }
-            raise Error, "accepted_detection requires a current matching detected candidate: #{item["id"]}"
+          unless candidates.any? { |candidate| candidate.values_at("category", "id", "scope") == [item["category"], item["id"], scope] }
+            raise Error, "accepted_detection requires a current matching candidate: #{item["id"]}"
           end
         end
       end

@@ -25,11 +25,11 @@ module AgenticDeveloperSetup
           detected = Contracts.copy(detected)
           detected.each { |candidate| validate_candidate!(candidate, definition) }
         end
+        @selection&.validate_candidates!(candidates)
         record_selection_uncertainties(candidates)
         candidates = Contracts.order(candidates.uniq)
         identities = candidates.map { |candidate| candidate.values_at("category", "id", "scope") }
         raise Error, "duplicate candidate identity for one scope" unless identities.uniq == identities
-        @selection&.validate_candidates!(candidates)
         result = base_result(candidates)
         if @selection
           contributions = collect_contributions
