@@ -9,13 +9,14 @@ module AgenticDeveloperSetup
 
       def initialize(definitions:, scope:, contributions:, inputs: {}, resolutions: [], component_ids: [], evidence_ids: [], initial_conflicts: [])
         @definitions, @scope = definitions, Contracts.copy(scope)
-        @contributions = Contracts.copy(contributions)
+        @source_contributions = Contracts.freeze_tree(Contracts.copy(contributions))
         @inputs, @resolutions = Contracts.copy(inputs), Contracts.copy(resolutions)
         @component_ids, @evidence_ids = component_ids, evidence_ids
         @initial_conflicts = Contracts.copy(initial_conflicts)
       end
 
       def compose
+        @contributions = Contracts.copy(@source_contributions)
         validate_arguments!
         @conflicts, @checks, @used_resolutions = [], [], []
         compatibility
@@ -166,14 +167,26 @@ module AgenticDeveloperSetup
 
       def compose_paths
         paths = @contributions["paths"]
-        paths.combination(2).each do |left, right|
-          overlap = left["path"] == right["path"] || ancestor?(left, right) || ancestor?(right, left)
-          next unless overlap && left["owner"] && right["owner"] && left["owner"] != right["owner"]
-          subject = [left["path"], right["path"]].sort.join("|")
-          record = conflict("path_ownership_conflict", "paths", subject, origins([left, right]), allowed: ["choose_path_owner"])
+        pending = paths.select { |item| item["owner"] }.dup
+        until pending.empty?
+          group = [pending.shift]
+          loop do
+            connected = pending.select do |entry|
+              group.any? do |other|
+                entry["path"] == other["path"] || ancestor?(entry, other) || ancestor?(other, entry)
+              end
+            end
+            break if connected.empty?
+            group.concat(connected)
+            pending -= connected
+          end
+          owners = group.map { |item| item["owner"] }.uniq
+          next unless owners.size > 1
+          subject = JSON.generate(group.map { |item| item["path"] }.uniq.sort)
+          record = conflict("path_ownership_conflict", "paths", subject, origins(group), allowed: ["choose_path_owner"])
           if record["resolution"]
             owner = record["resolution"]["value"]["owner"]
-            raise Error, "path owner resolution must choose a declared owner" unless [left["owner"], right["owner"]].include?(owner)
+            raise Error, "path owner resolution must choose a declared owner" unless owners.include?(owner)
           end
         end
         # Source records are retained; union classifications on overlapping
@@ -246,6 +259,8 @@ module AgenticDeveloperSetup
           final_command(chosen).merge("decision_source" => record["id"], "overridden_contribution_ids" => (proposals - [chosen]).map { |item| item["id"] })
         else
           override = decision["value"]["command"]
+          unrelated = @contributions["commands"].any? { |item| item["id"] == override["id"] && !proposals.include?(item) }
+          raise Error, "override command ID collides with an unrelated contribution" if unrelated
           Contributions.command!(override, @scope)
           unless override["scope"] == proposals.first["scope"] && override["capability"] == proposals.first["capability"]
             raise Error, "override_command must retain the conflicting scope and capability"

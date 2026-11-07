@@ -174,4 +174,31 @@ class AdapterEdgeContractTest < AdapterTest
     result = trace.enable(target_thread: Thread.current) { composer.compose }
     assert_equal "ready", result.dig("composition", "status")
   end
+
+  def test_repeated_composition_is_pure_after_finding_deduplication
+    finding = {"id" => "one", "category" => "risk", "severity" => "review_required", "confidence" => "high", "summary" => "Shared risk", "evidence_ids" => [], "related_finding_ids" => [], "equivalence_id" => "shared"}
+    register("ruby")
+    set = stamped("findings", [finding, finding.merge("id" => "two")])
+    composer = A::Composer.new(definitions: registry.supported, scope: @scope, contributions: set)
+    assert_equal composer.compose, composer.compose
+    assert_equal 2, set["findings"].size
+  end
+
+  def test_three_overlapping_owners_have_one_consistent_explicit_resolution
+    register("ruby", contributions: {"paths" => [path("one", owner: "one"), path("two", owner: "two"), path("three", owner: "three")]})
+    document = selected(["ecosystem", "ruby"])
+    blocked = assess(document)
+    assert_equal 1, blocked["conflicts"].size
+    document["resolutions"] = [decision(blocked, "choose_path_owner", {"owner" => "three"}, code: "path_ownership_conflict")]
+    assert_equal "ready", assess(document).dig("composition", "status")
+  end
+
+  def test_command_override_cannot_collide_with_unrelated_command_identity
+    register("ruby", contributions: {"commands" => [command, command("ruby-lint", capability: "lint")]})
+    register("rails", "framework", contributions: {"commands" => [command("rails-test", argv: %w[bin rails test])]})
+    document = selected(["ecosystem", "ruby"], ["framework", "rails"])
+    blocked = assess(document)
+    document["resolutions"] = [decision(blocked, "override_command", {"command" => command("ruby-lint")})]
+    assert_match(/collides/, assert_raises(A::Error) { assess(document) }.message)
+  end
 end
