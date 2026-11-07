@@ -365,3 +365,19 @@ areas, deployment impact, review responsibilities, runtime access, and the
 actual commands that should be run. Do not treat a detected command as proof
 that it works, or a passing future validation as authorisation to merge or
 expand agent permissions.
+
+
+## Independent adapter assessment
+
+`ruby scripts/assess_adapters.rb TARGET` (or `make assess-adapters REPO=TARGET`)
+provides an opt-in, read-only adapter assessment. Add `--selection PATH` for an
+explicit version-1 selection document and `--output PATH` for safe external YAML
+writing. Without selection, detection never selects or composes adapters.
+
+This separate `adapter_assessment` schema v1 retains generic detector evidence,
+versions and digests, typed contributions, composed commands and visible
+conflicts/resolutions. A valid blocked result exits 0; malformed inputs, registry
+or provider output and unsafe destinations exit nonzero. All production adapters
+remain planned. The generic assessor's schema v2, default output and reference
+fixtures remain unchanged. No adapter recommendation reaches adoption v1 or
+modifies target files. See [adapter architecture](adapter-architecture.md).

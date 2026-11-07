@@ -166,3 +166,29 @@ never edit the maintained reference service. The CLI's schema engine is shared
 with metadata validation; the v1 metadata schema and inspection states remain
 unchanged. See [adoption-workflow.md](adoption-workflow.md) for the validation-code
 execution trust boundary and recovery guarantees.
+
+
+## Adapter foundation
+
+`make validate` also loads the existing schema-v2 catalogue through the adapter
+registry, validates supported manifests and compatibility references/cycles,
+checks safe source paths, and instantiates providers to check their interfaces.
+Planned registrations still need no implementation directory. The three closed
+v1 schemas are `schemas/adapter-manifest-v1.schema.json`,
+`schemas/adapter-selection-v1.schema.json`, and
+`schemas/adapter-assessment-v1.schema.json`.
+
+Run the focused deterministic suite with `make test-adapters`. It is included by
+root `make test` discovery and therefore `make check` and CI. Fixtures construct
+synthetic framework catalogues, providers and target repositories; no production
+adapters, network calls, credentials, target-code execution or target mutation
+are involved. The suite covers registry metadata, selection, bounded detection,
+compatibility, category authority, typed composition, conflict resolution,
+fingerprints and CLI/output safety. Existing assessment/adoption regression
+suites continue through `make test-assessment` and `make test-adoption`.
+
+The independent adapter CLI is `ruby scripts/assess_adapters.rb TARGET`, with
+optional `--selection PATH` and `--output PATH`. It uses the existing external
+output safeguards and leaves generic assessment v2 and adoption v1 unchanged.
+See [adapter architecture](adapter-architecture.md) for extension interfaces and
+all contribution/resolution contracts.

@@ -184,6 +184,16 @@ Adoption tiers describe increasing framework capability, not mandatory migration
 - **Tier 2: agent-operable** adds standard command, launcher, hook, and CI artefacts.
 - **Tier 3: agent-optimised** adds fuller architecture, domain, testing, and commit-convention support.
 
-Adapters specialise assumptions by **ecosystem**, **framework**, **runtime**, or **app-shape**. The taxonomy exists now, but all named adapter implementations declared in `framework.yml` are planned. Planned paths are not current implementations.
+Adapters specialise assumptions by **ecosystem**, **framework**, **runtime**, or **app-shape**. The public registry, manifest/provider interfaces, explicit selection, compatibility checks, typed composition and read-only adapter assessment are implemented. All named adapter implementations declared in `framework.yml` remain planned. Planned paths are not current implementations. See [adapter architecture](adapter-architecture.md) for the independent v1 manifest, selection and assessment contracts.
 
 A target repository may combine baseline artefacts, adapters when available, and its own specialisation to the degree its contract requires. It need not adopt every artefact or process identically, and useful native tooling should generally be preserved.
+
+
+The adapter assessor reuses the bounded assessment inventory, generic detector,
+evidence concepts and external-output path safeguards. Its pure composer adds
+structured recommendations and deterministic provenance/fingerprints without
+changing generic assessment v2 or transactional adoption v1. Application
+execution-environment adapters retain the `runtime` machine category and remain
+separate from coding-agent runtimes and the host toolchain. Synthetic providers
+under `test/adapters/` exercise these public interfaces without registering
+production ecosystem support.

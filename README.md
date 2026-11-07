@@ -86,9 +86,9 @@ Adapters capture the assumptions needed to apply the framework to a specific rep
 - runtime adapters for execution, container, and local-development assumptions
 - app-shape adapters for architectural patterns such as API services, workers, monoliths, and static sites
 
-A target repository may eventually combine several adapters. All named adapter implementations in `framework.yml` are currently planned; the repository currently provides their taxonomy and composition guidance.
+The public registry, manifest/provider interfaces, compatibility checks and read-only composition are implemented. All named adapter implementations in `framework.yml` remain planned; executable demonstrations are synthetic test fixtures. See [`docs/adapter-architecture.md`](docs/adapter-architecture.md).
 
-Adapters are intended to specialise the baseline, not replace it.
+Adapter assessment produces recommendations without changing baseline components or the existing adoption transaction workflow. Run `make assess-adapters REPO=/path/to/repository` to detect candidates without automatic selection.
 
 ### Agent runtime
 
