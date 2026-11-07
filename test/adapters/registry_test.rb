@@ -158,11 +158,11 @@ class AdapterRegistryTest < AdapterTest
     save_catalogue
     assert_raises(A::Error) { registry }
   end
+
   def test_existing_planned_source_symlink_is_rejected_without_requiring_directory
     register("ruby", status: "planned")
     FileUtils.mkdir_p(File.join(@framework, "adapters/ecosystems"))
     File.symlink(@target, File.join(@framework, "adapters/ecosystems/ruby"))
     assert_match(/symlink/, assert_raises(A::Error) { registry }.message)
   end
-
 end
