@@ -187,13 +187,20 @@ and malformed resolutions are invocation errors.
 
 Multiple independently configured roots or contradictory ecosystem markers
 produce `scope_conflict`. Contradictory positive adapter evidence produces
-`repository_evidence_conflict`. Positive, evidenced provider candidates also
-establish project roots, including when no conventional ecosystem marker exists. Multiple categories at one root
-count once; distinct positively detected roots produce a blocking conflict with
-all relevant evidence references. `not_detected` and `ambiguous` records remain
-visible without being promoted to positive project detections. A single nested
-project does not force workspace selection. A narrower explicit workspace can
-resolve a scope conflict. This version has no monorepo hierarchy or cross-scope graph.
+`repository_evidence_conflict`. Generic project markers and validated positive
+provider candidates feed one collection of canonical repository-relative roots.
+A marker in one workspace and a positive provider detection in another therefore
+produce one combined multi-root `scope_conflict`. The conflict subject contains
+sorted root paths and its evidence references include both sources, deduplicated
+and sorted. Static marker-presence evidence is recorded from the bounded
+inventory when the generic detector has not already materialised that marker.
+Several detectors or categories describing the same root count once; ordinary
+configuration files for one ecosystem do not create extra projects. Contradictory
+ecosystem families within a root retain their separate blocking check.
+`not_detected` and `ambiguous` candidates remain visible without becoming positive
+roots. A single nested project does not force workspace selection. A narrower
+explicit workspace may resolve ambiguity; its inventory, evidence and
+contributions remain contained within that scope. This version has no monorepo hierarchy or cross-scope graph.
 
 ## Compatibility and typed contributions
 
@@ -217,7 +224,7 @@ IDs must be unique across a composition. Providers cannot forge provenance.
 | `paths` | Ecosystem/framework/runtime classifications and optional ownership; conservative union |
 | `services` | Ecosystem/framework logical requirements; runtime bindings to named implementations |
 | `requirements` | Runtime execution/secret requirements or app-shape risk requirements, without secret values |
-| `inputs` | Typed declarations; ecosystem/framework/runtime only |
+| `inputs` | Manifest-registered declaration restatements; ecosystem/framework/runtime only |
 | `component_recommendations` | Ecosystem/framework/app-shape references to existing baseline component IDs, with rationale |
 | `documentation_requirements` | Stable IDs and descriptions; additive, without semantic Markdown merging |
 
@@ -251,6 +258,16 @@ Manifest input declarations have namespace-qualified `key` (for example
 `runtime/docker.service`), `type`, `required`, `description`, and optional
 `allowed_values`/`default`. Types are `string`, `boolean`, `integer`,
 `relative_path`. Explicit values live in selection `inputs`, not resolutions.
+For adapter contract v1, manifest declarations define the complete externally
+selectable input-key inventory. Provider input contributions cannot introduce
+new keys; compatible restatements are allowed and incompatible definitions block
+composition. Introducing a new selectable input requires updating its adapter's
+manifest first. Both assessor-driven and direct composition reject an undeclared
+provider key as invalid provider output, identifying the adapter and key after
+namespace and non-secret validation. It is not an unresolved user decision and
+cannot be satisfied through direct-composer inputs. There is no dynamic input
+registration phase.
+
 Required inputs need explicit values, even when defaults recommend a value.
 Compatible declarations combine; conflicting definitions block. Providers only
 receive validated explicit values declared in their manifest. No ambient

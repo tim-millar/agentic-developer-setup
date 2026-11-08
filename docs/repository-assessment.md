@@ -382,8 +382,11 @@ remain planned. The generic assessor's schema v2, default output and reference
 fixtures remain unchanged. No adapter recommendation reaches adoption v1 or
 modifies target files. See [adapter architecture](adapter-architecture.md).
 
-Adapter assessment also uses provider-evidenced project roots when checking
-single-scope ambiguity; several categories at one root count as one project.
+Adapter assessment combines generic marker and positive provider evidence in
+one canonical project-root collection. Mixed-source independent roots block
+repository composition, while several detectors or categories at one root count
+as one project. An explicit workspace limits evidence and recommendations to
+that scope.
 Its non-secret input checks apply before provider contribution collection and
 to direct composition, with exact adapter namespace ownership. Recognised
 credential material is rejected without echoing values; arbitrary-string secret
@@ -392,3 +395,9 @@ at any depth. Provider failures use sanitised adapter/phase diagnostics, and
 resolved path records distinguish effective `owner` from `original_owner` and
 link to their recorded repository resolution. The generic v2 assessment contract
 is unchanged; see the adapter architecture for these independent v1 contracts.
+
+Adapter manifests define the complete selectable input-key inventory for the
+independent v1 contract. Provider contributions may restate registered inputs;
+unknown provider keys are controlled errors, while incompatible restatements
+remain blocking `input_definition_conflict` records. A new selectable key must be
+declared in its originating manifest before it can be supplied.

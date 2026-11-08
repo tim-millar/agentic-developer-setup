@@ -31,6 +31,7 @@ module AgenticDeveloperSetup
         candidates = Contracts.order(candidates.uniq)
         identities = candidates.map { |candidate| candidate.values_at("category", "id", "scope") }
         raise Error, "duplicate candidate identity for one scope" unless identities.uniq == identities
+        scope_checks = scope_conflicts(candidates)
         result = base_result(candidates)
         if @selection
           contributions = collect_contributions
@@ -38,10 +39,10 @@ module AgenticDeveloperSetup
           composed = Composer.new(definitions: @selection.definitions, scope: @scope,
             contributions: contributions, inputs: @selection.inputs, resolutions: @selection.document["resolutions"],
             component_ids: @registry.catalogue.components.map { |item| item["name"] }, evidence_ids: evidence_ids,
-            initial_conflicts: scope_conflicts(candidates)).compose
+            initial_conflicts: scope_checks).compose
           result.merge!(composed)
         else
-          result["conflicts"] = scope_conflicts(candidates).map { |item| unselected_conflict(item) }
+          result["conflicts"] = scope_checks.map { |item| unselected_conflict(item) }
         end
         result["evidence"] = context.generic_evidence.sort_by { |item| item["id"] }
         validate_references!(result)
@@ -150,25 +151,47 @@ module AgenticDeveloperSetup
         set
       end
 
-      def scope_conflicts(candidates)
-        families = @inventory.files.keys.filter_map do |path|
+      def project_root_evidence(candidates)
+        roots = Hash.new { |items, path| items[path] = {"families" => [], "evidence_ids" => []} }
+        evidence_by_path = context.generic_evidence.group_by { |item| item["path"] }
+        @inventory.files.each_key do |path|
           basename = File.basename(path)
           family = PROJECT_MARKERS[basename]
           family ||= "python" if basename.match?(/\A(?:requirements[^\/]*\.txt|uv\.lock)\z/)
-          [path, family] if family
-        end.to_h
-        markers = families.keys
-        roots = markers.map { |path| File.dirname(path) }.uniq
-        conflicts = []
-        if roots.size > 1 || markers.group_by { |path| File.dirname(path) }.any? { |_, files| files.map { |path| families.fetch(path) }.uniq.size > 1 }
-          evidence = context.generic_evidence.select { |item| item["path"] && markers.any? { |path| item["path"] == ((@scope["path"] == ".") ? path : "#{@scope["path"]}/#{path}") } }
-          conflicts << {"code" => "scope_conflict", "subject" => "multiple independently configured projects or ecosystems", "evidence_ids" => evidence.map { |item| item["id"] }}
+          next unless family
+          repository_path = (@scope["path"] == ".") ? path : "#{@scope["path"]}/#{path}"
+          root = Contracts.scoped_path!(File.dirname(repository_path), @scope)
+          roots[root]["families"] << family
+          references = Array(evidence_by_path[repository_path]).map { |item| item["id"] }
+          if references.empty?
+            references << context.add_evidence(type: "file", method: "generic_project_marker", path: repository_path,
+              summary: "Static #{family} project marker detected")
+          end
+          roots[root]["evidence_ids"].concat(references)
         end
-        positive = candidates.select { |item| item["status"] == "detected" && item["evidence"].any? }
-        provider_roots = positive.map { |item| item["scope"]["path"] }.uniq
-        if provider_roots.size > 1
-          evidence = positive.flat_map { |item| item["evidence"] }.uniq.sort
-          conflicts << {"code" => "scope_conflict", "subject" => "provider project roots: #{JSON.generate(provider_roots.sort)}", "evidence_ids" => evidence}
+        candidates.each do |candidate|
+          next unless candidate["status"] == "detected" && candidate["evidence"].any?
+          # Candidate scopes and references are validated before contributions
+          # are collected; use the same repository-relative identity as markers.
+          root = Contracts.scoped_path!(candidate["scope"]["path"], @scope)
+          roots[root]["evidence_ids"].concat(candidate["evidence"])
+        end
+        roots.sort.to_h.transform_values do |record|
+          record.transform_values { |items| items.uniq.sort }
+        end
+      end
+
+      def scope_conflicts(candidates)
+        roots = project_root_evidence(candidates)
+        conflicts = []
+        if roots.size > 1
+          conflicts << {"code" => "scope_conflict", "subject" => "project roots: #{JSON.generate(roots.keys)}",
+                        "evidence_ids" => roots.values.flat_map { |item| item["evidence_ids"] }.uniq.sort}
+        end
+        roots.each do |path, record|
+          next unless record["families"].size > 1
+          conflicts << {"code" => "scope_conflict", "subject" => "contradictory ecosystems: #{JSON.generate({path => record["families"]})}",
+                        "evidence_ids" => record["evidence_ids"]}
         end
         if @selection
           selected_ecosystem = @selection.definitions.find { |entry| entry.category == "ecosystem" }.id

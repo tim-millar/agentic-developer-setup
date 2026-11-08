@@ -128,11 +128,12 @@ module AgenticDeveloperSetup
       end
 
       def compose_inputs
-        declarations = @definitions.flat_map do |entry|
+        manifest_declarations = @definitions.flat_map do |entry|
           entry.input_definitions.map { |item| item.merge("id" => "#{entry.category}/#{entry.id}:input:#{item["key"]}", "provenance" => [entry.provenance("#{entry.category}/#{entry.id}:input:#{item["key"]}", @scope)]) }
-        end + @contributions["inputs"]
+        end
+        declarations = manifest_declarations + @contributions["inputs"]
         declarations.each { |item| InputValues.validate_declaration!(item) }
-        unknown = @inputs.keys - declarations.map { |item| item["key"] }
+        unknown = @inputs.keys - manifest_declarations.map { |item| item["key"] }
         raise Error, "unknown explicit input: #{unknown.join(", ")}" unless unknown.empty?
         declarations.group_by { |item| item["key"] }.sort.each do |key, items|
           semantic = items.map { |item| normalize(item.except("id", "provenance")) }.uniq

@@ -236,11 +236,12 @@ class AdapterEdgeContractTest < AdapterTest
   end
 
   def test_provider_contributed_defaults_and_allowed_values_use_non_secret_policy
-    register("ruby")
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
     credential = "Bearer synthetic_sensitive_provider_value"
     [input("ecosystem/ruby.choice", required: false, default: credential),
       input("ecosystem/ruby.choice", required: false, allowed_values: [credential])].each do |declaration|
       error = assert_raises(A::Error) { pure_compose(stamped("inputs", [declaration.merge("id" => "choice")])) }
+      assert_match(/recognised credential/, error.message)
       refute_includes error.full_message, credential
     end
   end

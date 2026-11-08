@@ -272,4 +272,111 @@ class AdapterAssessmentTest < AdapterTest
       assert_equal 2, result["candidates"].count { |item| item["scope"]["type"] == "workspace" && item["status"] == status }
     end
   end
+
+  def test_mixed_source_roots_block_once_with_resolvable_generic_and_provider_evidence
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Gemfile")
+    write_target("apps/two/Makefile", "detected")
+    before = Dir.glob(File.join(@target, "**/*")).select { |path| File.file?(path) }.to_h { |path| [path, File.binread(path)] }
+    result = assess(selected(["ecosystem", "ruby"]))
+    assert_equal "blocked", result.dig("composition", "status")
+    conflicts = result["conflicts"].select { |item| item["code"] == "scope_conflict" }
+    assert_equal 1, conflicts.size
+    assert_equal 'project roots: ["apps/one","apps/two"]', conflicts[0]["subject"]
+    records = conflicts[0]["evidence_ids"].map { |id| result["evidence"].find { |record| record["id"] == id } }
+    refute_includes records, nil
+    assert_equal %w[apps/one/Gemfile apps/two/Makefile], records.map { |record| record["path"] }.uniq.sort
+    assert records.any? { |record| record["path"] == "apps/one/Gemfile" && record["method"] == "generic_project_marker" }
+    assert records.any? { |record| record["path"] == "apps/two/Makefile" && record["method"] == "synthetic_project" }
+    assert_equal conflicts[0]["evidence_ids"].uniq.sort, conflicts[0]["evidence_ids"]
+    unselected = assess
+    assert_equal "not_selected", unselected.dig("composition", "status")
+    assert_empty unselected["selected"]
+    assert_equal @scope, unselected["scope"]
+    assert_equal conflicts[0]["id"], unselected["conflicts"][0]["id"]
+    assert_equal before, Dir.glob(File.join(@target, "**/*")).select { |path| File.file?(path) }.to_h { |path| [path, File.binread(path)] }
+  end
+
+  def test_mixed_source_conflict_allows_either_explicit_workspace_without_importing_other_scope
+    register("ruby")
+    contribution = '{"paths" => [{"id" => "scope-path", "path" => context.scope.fetch("path"), "recursive" => true, "classifications" => ["required_for_validation"]}]}'
+    install_provider("ruby", detect: provider_workspace_detection, contribute: contribution)
+    write_target("apps/one/Gemfile")
+    write_target("apps/two/Makefile", "detected")
+    %w[one two].each do |name|
+      scope = {"type" => "workspace", "path" => "apps/#{name}"}
+      result = assess(selected(["ecosystem", "ruby"], scope: scope))
+      assert_equal "ready", result.dig("composition", "status")
+      assert_empty result["conflicts"]
+      assert result["evidence"].all? { |record| !record["path"] || record["path"].start_with?("apps/#{name}/") }
+      assert result["candidates"].all? { |candidate| candidate["scope"] == scope }
+      paths = result.dig("composition", "contributions", "paths")
+      assert_equal 1, paths.size
+      assert_equal scope["path"], paths[0]["path"]
+      assert_equal scope, paths[0]["provenance"][0]["scope"]
+    end
+  end
+
+  def test_unified_roots_deduplicate_generic_and_multiple_provider_categories_at_one_nested_project
+    register("ruby")
+    register("rails", "framework")
+    %w[ruby rails].each { |id| install_provider(id, detect: provider_workspace_detection) }
+    write_target("apps/one/Gemfile")
+    write_target("apps/one/Makefile", "detected")
+    result = assess(selected(["ecosystem", "ruby"], ["framework", "rails"]))
+    assert_equal "ready", result.dig("composition", "status")
+    refute_includes codes(result), "scope_conflict"
+    assert_equal ".", result["scope"]["path"]
+  end
+
+  def test_uncertain_provider_root_does_not_add_to_a_generic_project_root
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Gemfile")
+    %w[not_detected ambiguous].each do |status|
+      write_target("apps/two/Makefile", status)
+      result = assess(selected(["ecosystem", "ruby"]))
+      assert_equal "ready", result.dig("composition", "status")
+      refute_includes codes(result), "scope_conflict"
+      candidate = result["candidates"].find { |record| record["scope"]["path"] == "apps/two" }
+      assert_equal status, candidate["status"]
+    end
+  end
+
+  def test_unified_roots_are_deterministic_under_candidate_marker_and_evidence_reordering
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Gemfile")
+    write_target("apps/two/Makefile", "detected")
+    assessor = A::Assessor.new(target: @target, framework_root: @framework, selection: selected(["ecosystem", "ruby"]))
+    original = assessor.assess
+    reordered_evidence = AgenticDeveloperSetup::Assessment::Evidence.new
+    original["evidence"].reverse_each do |record|
+      reordered_evidence.add(type: record["type"], method: record["method"], path: record["path"], summary: record["summary"])
+    end
+    assessor.instance_variable_set(:@evidence, reordered_evidence)
+    inventory = assessor.instance_variable_get(:@inventory)
+    inventory.files.replace(inventory.files.to_a.reverse.to_h)
+    candidates = original["candidates"].reverse
+    composed = A::Composer.new(definitions: registry.supported, scope: @scope, contributions: A::Contributions.empty,
+      initial_conflicts: assessor.send(:scope_conflicts, candidates)).compose
+    result = original.merge(composed, "candidates" => A::Contracts.order(candidates),
+      "evidence" => assessor.send(:context).generic_evidence.sort_by { |record| record["id"] })
+    assert_equal original, result
+    assert_equal "blocked", result.dig("composition", "status")
+  end
+
+  def test_unified_roots_keep_separate_same_root_ecosystem_contradictions
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Gemfile")
+    write_target("apps/one/package.json", '{"name":"synthetic"}')
+    write_target("apps/two/Makefile", "detected")
+    result = assess(selected(["ecosystem", "ruby"]))
+    scopes = result["conflicts"].select { |record| record["code"] == "scope_conflict" }
+    assert_equal 1, scopes.count { |record| record["subject"].start_with?("project roots:") }
+    assert_equal 1, scopes.count { |record| record["subject"].start_with?("contradictory ecosystems:") }
+    assert_equal "blocked", result.dig("composition", "status")
+  end
 end

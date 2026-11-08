@@ -46,8 +46,9 @@ recommendations do not modify baseline components, repository commands,
 permissions, files, adoption plans or ownership metadata. Adapter-aware
 transactional adoption is reserved for a separately versioned follow-on task.
 
-Provider candidates can establish independent project roots without conventional
-marker files. Manifest and selection YAML reject duplicate mapping keys.
+Generic project markers and positive provider candidates share one canonical
+root collection. A project found by each source in different workspaces blocks
+repository-scope composition; the same root found by both counts only once. Manifest and selection YAML reject duplicate mapping keys.
 Non-secret input validation and exact provider namespace ownership apply before
 contribution collection and during direct composition. Recognised credential
 formats are rejected without disclosure; this is not a guarantee that every
@@ -55,3 +56,9 @@ arbitrary secret can be identified. Resolved path ownership exposes one
 effective owner while retaining original claims and resolution provenance.
 Provider lifecycle failures identify the adapter and phase without exposing
 arbitrary exception text. See the adapter architecture for details and limits.
+
+For adapter contract v1, manifest declarations define the complete externally
+selectable input-key inventory. Provider input contributions cannot introduce
+new keys; compatible restatements are allowed and incompatible definitions block
+composition. Add a legitimate new input to its adapter manifest before supplying
+it through selection or direct composition.

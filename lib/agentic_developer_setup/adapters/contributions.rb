@@ -16,6 +16,7 @@ module AgenticDeveloperSetup
           raise Error, "contribution domain must be an array: #{domain}" unless records.is_a?(Array)
           records.each do |record|
             Contracts.validate!("assessment", record, fragment: domain)
+            InputValues.validate_declaration!(record) if domain == "inputs"
             id = record.fetch("id")
             raise Error, "duplicate contribution ID: #{id}" if ids.include?(id)
             ids << id
@@ -28,6 +29,9 @@ module AgenticDeveloperSetup
               authority!(entry.category, domain, record)
               if domain == "inputs"
                 InputValues.validate_namespace!(record["key"], category: entry.category, id: entry.id)
+                unless entry.input_definitions.any? { |item| item["key"] == record["key"] }
+                  raise Error, "undeclared provider input #{entry.category}/#{entry.id}: #{record["key"]}"
+                end
               end
             end
             case domain
@@ -44,8 +48,6 @@ module AgenticDeveloperSetup
                 raise Error, "path ownership history is assigned by the composer"
               end
               Contracts.scoped_path!(record["path"], scope)
-            when "inputs"
-              InputValues.validate_declaration!(record)
             when "component_recommendations"
               raise Error, "unknown framework component: #{record["component_id"]}" unless component_ids.include?(record["component_id"])
             when "findings"

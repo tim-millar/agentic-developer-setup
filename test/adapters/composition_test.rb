@@ -236,7 +236,7 @@ class AdapterCompositionTest < AdapterTest
   end
 
   def test_provider_input_declarations_must_own_their_exact_namespace
-    register("ruby")
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
     valid = {"id" => "choice"}.merge(input("ecosystem/ruby.choice", required: false))
     assert_equal "ready", pure_compose(stamped("inputs", [valid])).dig("composition", "status")
     %w[runtime/docker.service ecosystem/python.choice framework/ruby.choice].each do |forged|
@@ -267,5 +267,65 @@ class AdapterCompositionTest < AdapterTest
     resolution = decision(blocked, "choose_path_owner", {"owner" => "one"}, code: "path_ownership_conflict")
     set["paths"][1]["owner"] = "one"
     assert_match(/stale/, assert_raises(A::Error) { pure_compose(set, resolutions: [resolution]) }.message)
+  end
+
+  def test_provider_only_inputs_are_invalid_in_both_assessment_and_direct_composition
+    [true, false].each do |required|
+      id = required ? "required" : "optional"
+      declaration = input("ecosystem/#{id}.discovered", required: required).merge("id" => "#{id}-input")
+      register(id, contributions: {"inputs" => [declaration]})
+      entry = registry.fetch(category: "ecosystem", id: id)
+      set = A::Contributions.empty.merge("inputs" => [declaration.merge("provenance" => [entry.provenance(declaration["id"], @scope)])])
+      [{}, {declaration["key"] => "explicit"}].each do |inputs|
+        error = assert_raises(A::Error) { A::Composer.new(definitions: [entry], scope: @scope, contributions: set, inputs: inputs).compose }
+        assert_includes error.message, "undeclared provider input ecosystem/#{id}"
+        assert_includes error.message, declaration["key"]
+      end
+      error = assert_raises(A::Error) { assess(selected(["ecosystem", id])) }
+      assert_includes error.message, "undeclared provider input ecosystem/#{id}"
+      assert_raises(A::Error) { assess(selected(["ecosystem", id], inputs: [{"key" => declaration["key"], "value" => "explicit"}])) }
+    end
+  end
+
+  def test_registered_provider_restatements_accept_only_explicit_values_for_required_inputs
+    declaration = input("ecosystem/ruby.choice", default: "recommendation", allowed_values: %w[recommendation explicit])
+    register("ruby", inputs: [declaration], contributions: {"inputs" => [declaration.merge("id" => "choice")]})
+    set = stamped("inputs", [declaration.merge("id" => "choice")])
+    [pure_compose(set), assess(selected(["ecosystem", "ruby"]))].each do |result|
+      assert_equal "blocked", result.dig("composition", "status")
+      assert_includes codes(result), "unresolved_required_input"
+    end
+    results = [pure_compose(set, inputs: {declaration["key"] => "explicit"}),
+      assess(selected(["ecosystem", "ruby"], inputs: [{"key" => declaration["key"], "value" => "explicit"}]))]
+    results.each do |result|
+      assert_equal "ready", result.dig("composition", "status")
+      assert_equal [{"key" => declaration["key"], "value" => "explicit"}], result.dig("composition", "explicit_inputs")
+    end
+  end
+
+  def test_registered_provider_input_refinements_cannot_silently_override_manifest_semantics
+    declaration = input("ecosystem/ruby.choice", required: false)
+    register("ruby", inputs: [declaration])
+    changes = [{"type" => "boolean"}, {"required" => true}, {"allowed_values" => ["restricted"]}, {"default" => "proposed"}]
+    changes.each do |change|
+      record = declaration.merge(change).merge("id" => "choice")
+      direct = pure_compose(stamped("inputs", [record]))
+      install_provider("ruby", contribute: {"inputs" => [record]}.inspect)
+      assessed = assess(selected(["ecosystem", "ruby"]))
+      [direct, assessed].each do |result|
+        assert_equal "blocked", result.dig("composition", "status")
+        assert_includes codes(result), "input_definition_conflict"
+      end
+    end
+  end
+
+  def test_another_selected_adapters_manifest_cannot_authorise_a_foreign_provider_key
+    declaration = input("runtime/docker.service", required: false)
+    register("ruby", contributions: {"inputs" => [declaration.merge("id" => "forged")]})
+    register("docker", "runtime", inputs: [declaration])
+    supplied = {declaration["key"] => "app"}
+    assert_match(/originating adapter namespace/, assert_raises(A::Error) { pure_compose(stamped("inputs", [declaration.merge("id" => "forged")]), inputs: supplied) }.message)
+    document = selected(["ecosystem", "ruby"], ["runtime", "docker"], inputs: [{"key" => declaration["key"], "value" => "app"}])
+    assert_match(/originating adapter namespace/, assert_raises(A::Error) { assess(document) }.message)
   end
 end
