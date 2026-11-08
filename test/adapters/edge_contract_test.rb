@@ -201,4 +201,78 @@ class AdapterEdgeContractTest < AdapterTest
     document["resolutions"] = [decision(blocked, "override_command", {"command" => command("ruby-lint")})]
     assert_match(/collides/, assert_raises(A::Error) { assess(document) }.message)
   end
+
+  def test_shared_input_policy_recognises_camel_case_names_without_substring_false_positives
+    %w[apiToken clientSecret privateKey sessionCookie signingKey encryptionKey authenticationCredentials AUTHORIZATION apikey accesskey privatekey signingkey encryptionkey].each do |name|
+      assert_raises(A::Error, name) { A::InputValues.validate_name!("ecosystem/ruby.#{name}") }
+    end
+    %w[tokenization tokenisation tokenizer keymap project_id authentication_mode].each do |name|
+      declaration = input("ecosystem/ruby.#{name}", required: false)
+      assert_equal "ordinary", A::InputValues.validate_value!(declaration, "ordinary")
+    end
+  end
+
+  def test_shared_input_policy_rejects_recognisable_credentials_in_composer_and_context
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
+    header = [JSON.generate({"alg" => "HS256", "typ" => "JWT"})].pack("m0").tr("+/", "-_").delete("=")
+    payload = [JSON.generate({"sub" => "synthetic", "exp" => 1234567890})].pack("m0").tr("+/", "-_").delete("=")
+    custom_payload = [JSON.generate({"role" => "synthetic"})].pack("m0").tr("+/", "-_").delete("=")
+    credentials = ["-----BEGIN RSA PRIVATE KEY-----\nsynthetic\n-----END RSA PRIVATE KEY-----",
+      "Bearer synthetic_bearer_value_123456", "  Authorization: Bearer synthetic_header_token  ", "ghp_" + "SyntheticValue" * 3,
+      "github_pat_" + "SyntheticValue" * 3, "glpat-" + "SyntheticValue" * 3,
+      "xox" + "b-" + ["1234567890", "SyntheticValue"].join("-"), "sk-proj-" + "SyntheticValue" * 3,
+      "sk_live_" + "SyntheticValue" * 3, "AKIA" + "A" * 16,
+      "API_TOKEN=synthetic-sensitive-assignment", "https://user:synthetic-sensitive-password@example.invalid/service",
+      "#{header}.#{payload}.#{"S" * 24}", "#{header}.#{custom_payload}.#{"S" * 24}"]
+    credentials.each do |credential|
+      supplied = {"ecosystem/ruby.choice" => credential}
+      error = assert_raises(A::Error) { pure_compose(A::Contributions.empty, inputs: supplied) }
+      refute_includes error.full_message, credential
+      inventory = AgenticDeveloperSetup::Assessment::Inventory.new(Pathname.new(@target)).discover
+      evidence = AgenticDeveloperSetup::Assessment::Evidence.new
+      error = assert_raises(A::Error) { A::Context.new(scope: @scope, inventory: inventory, root: @target, evidence: evidence, inputs: supplied) }
+      refute_includes error.full_message, credential
+    end
+  end
+
+  def test_provider_contributed_defaults_and_allowed_values_use_non_secret_policy
+    register("ruby")
+    credential = "Bearer synthetic_sensitive_provider_value"
+    [input("ecosystem/ruby.choice", required: false, default: credential),
+      input("ecosystem/ruby.choice", required: false, allowed_values: [credential])].each do |declaration|
+      error = assert_raises(A::Error) { pure_compose(stamped("inputs", [declaration.merge("id" => "choice")])) }
+      refute_includes error.full_message, credential
+    end
+  end
+
+  def test_benign_strings_and_value_free_secret_requirements_remain_supported
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
+    %w[ordinary-project-123 apps/api-service npm:test abc.def.ghi https://example.invalid/tokenization].each do |value|
+      assert_equal "ready", pure_compose(A::Contributions.empty, inputs: {"ecosystem/ruby.choice" => value}).dig("composition", "status")
+    end
+    register("docker", "runtime")
+    record = {"id" => "credentials-required", "kind" => "secret", "description" => "Requires repository-managed database credentials; no value is supplied."}
+    result = pure_compose(stamped("requirements", [record], id: "docker"))
+    assert_equal "ready", result.dig("composition", "status")
+    refute result.dig("composition", "contributions", "requirements", 0).key?("value")
+  end
+
+  def test_provider_invocation_errors_are_sanitised_and_critical_failures_propagate
+    register("ruby")
+    {"detect" => {detect: 'raise "synthetic-sensitive-detection"'},
+     "contribute" => {contribute: 'raise "synthetic-sensitive-contribution"'}}.each do |phase, arguments|
+      install_provider("ruby", **arguments)
+      error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"])) }
+      assert_includes error.message, "ecosystem/ruby"
+      assert_includes error.message, phase
+      refute_includes error.full_message, "synthetic-sensitive"
+      assert_nil error.cause
+    end
+    %w[SystemExit Interrupt NoMemoryError].each do |name|
+      install_provider("ruby", detect: "raise #{name}")
+      assert_raises(Object.const_get(name)) { assess }
+      install_provider("ruby", contribute: "raise #{name}")
+      assert_raises(Object.const_get(name)) { assess(selected(["ecosystem", "ruby"])) }
+    end
+  end
 end

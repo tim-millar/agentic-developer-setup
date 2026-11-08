@@ -62,7 +62,7 @@ module AgenticDeveloperSetup
       def provider(definition)
         raise Error, "unsupported adapter: #{definition.id}" unless supported.include?(definition)
         path = Contracts.contained!(@root, "#{definition.source_path}/adapter.rb", exists: true)
-        source = File.binread(path)
+        source = Adapters.provider_call(definition, "source loading") { File.binread(path) }
         unless "sha256:#{Digest::SHA256.hexdigest(source)}" == definition.provider_digest
           raise Error, "provider changed after registry validation: #{definition.id}"
         end
@@ -76,18 +76,20 @@ module AgenticDeveloperSetup
         namespace.const_set(:AgenticDeveloperSetup, outer)
         outer.const_set(:Adapters, adapters)
         adapters.const_set(:Providers, Module.new)
-        namespace.module_eval(source, path.to_s, 1)
-        provider_class = definition.manifest.fetch("provider").fetch("constant").split("::").reduce(namespace) do |parent, name|
-          parent.const_get(name, false)
+        Adapters.provider_call(definition, "source evaluation") { namespace.module_eval(source, path.to_s, 1) }
+        provider_class = Adapters.provider_call(definition, "constant resolution") do
+          definition.manifest.fetch("provider").fetch("constant").split("::").reduce(namespace) do |parent, name|
+            parent.const_get(name, false)
+          end
         end
-        instance = provider_class.new
-        unless instance.respond_to?(:detect) && instance.respond_to?(:contribute) && instance.method(:detect).arity == 1 &&
-            instance.method(:contribute).parameters.include?([:keyreq, :inputs]) && instance.method(:contribute).parameters.count { |type, _| [:req, :opt].include?(type) } == 1
-          raise Error, "provider must implement detect(context) and contribute(context, inputs:)"
+        instance = Adapters.provider_call(definition, "construction") { provider_class.new }
+        Adapters.provider_call(definition, "interface validation") do
+          unless instance.respond_to?(:detect) && instance.respond_to?(:contribute) && instance.method(:detect).arity == 1 &&
+              instance.method(:contribute).parameters.include?([:keyreq, :inputs]) && instance.method(:contribute).parameters.count { |type, _| [:req, :opt].include?(type) } == 1
+            raise Error, "provider must implement detect(context) and contribute(context, inputs:)"
+          end
         end
         instance
-      rescue NameError, TypeError, ArgumentError, SyntaxError => e
-        raise Error, "invalid provider #{definition.id}: #{e.message.lines.first.strip}"
       end
 
       # Pure comparison against this already validated local registry.
@@ -185,7 +187,7 @@ module AgenticDeveloperSetup
         keys = declarations.map { |item| item["key"] }
         raise Error, "duplicate adapter input declaration" unless keys.uniq == keys
         declarations.each do |item|
-          raise Error, "input key must belong to #{category}/#{id}" unless item["key"].start_with?("#{category}/#{id}.")
+          InputValues.validate_namespace!(item["key"], category: category, id: id)
           InputValues.validate_declaration!(item)
         end
       end

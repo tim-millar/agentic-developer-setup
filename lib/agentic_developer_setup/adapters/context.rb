@@ -37,6 +37,7 @@ module AgenticDeveloperSetup
         @inventory = InventoryView.new(inventory, scope, root)
         @evidence = evidence
         @selected = Contracts.freeze_tree(Contracts.copy(selected))
+        InputValues.validate_supplied!(inputs)
         @inputs = Contracts.freeze_tree(Contracts.copy(inputs))
       end
 

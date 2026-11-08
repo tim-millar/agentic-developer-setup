@@ -381,3 +381,14 @@ or provider output and unsafe destinations exit nonzero. All production adapters
 remain planned. The generic assessor's schema v2, default output and reference
 fixtures remain unchanged. No adapter recommendation reaches adoption v1 or
 modifies target files. See [adapter architecture](adapter-architecture.md).
+
+Adapter assessment also uses provider-evidenced project roots when checking
+single-scope ambiguity; several categories at one root count as one project.
+Its non-secret input checks apply before provider contribution collection and
+to direct composition, with exact adapter namespace ownership. Recognised
+credential material is rejected without echoing values; arbitrary-string secret
+classification is not guaranteed. Manifest/selection YAML rejects duplicate keys
+at any depth. Provider failures use sanitised adapter/phase diagnostics, and
+resolved path records distinguish effective `owner` from `original_owner` and
+link to their recorded repository resolution. The generic v2 assessment contract
+is unchanged; see the adapter architecture for these independent v1 contracts.

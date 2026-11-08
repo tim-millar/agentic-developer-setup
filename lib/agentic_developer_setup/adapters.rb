@@ -10,6 +10,12 @@ module AgenticDeveloperSetup
   module Adapters
     class Error < Assessment::Error; end
 
+    def self.provider_call(definition, phase)
+      yield
+    rescue LoadError, SyntaxError, StandardError
+      raise Error, "adapter #{definition.category}/#{definition.id} failed during #{phase}", cause: nil
+    end
+
     CATEGORIES = {
       "ecosystem" => "adapters/ecosystems/<name>",
       "framework" => "adapters/frameworks/<name>",

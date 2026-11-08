@@ -1658,6 +1658,16 @@
             "string",
             "null"
           ]
+        },
+        "original_owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ownership_resolution_id": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
         }
       },
       "required": [

@@ -59,9 +59,28 @@ module AgenticDeveloperSetup
       end
 
       def load_yaml(path)
-        YAML.safe_load_file(path, permitted_classes: [], permitted_symbols: [], aliases: false)
-      rescue Psych::Exception, SystemCallError => e
-        raise Error, "cannot read YAML: #{e.message.lines.first.strip}"
+        raw = File.binread(path)
+        # Match adoption's AST-first interpretation: Psych otherwise keeps the
+        # last occurrence of a repeated key before schema validation can see it.
+        validate_yaml_keys!(Psych.parse_stream(raw))
+        document = YAML.safe_load(raw, permitted_classes: [], permitted_symbols: [], aliases: false)
+        plain!(document)
+        document
+      rescue Psych::Exception, ArgumentError
+        raise Error, "invalid adapter YAML", cause: nil
+      rescue SystemCallError
+        raise Error, "cannot read adapter YAML", cause: nil
+      end
+
+      def validate_yaml_keys!(node)
+        if node.is_a?(Psych::Nodes::Mapping)
+          keys = node.children.each_slice(2).map(&:first)
+          unless keys.all? { |key| key.is_a?(Psych::Nodes::Scalar) }
+            raise Error, "adapter YAML mapping keys must be scalar strings"
+          end
+          raise Error, "duplicate adapter YAML mapping key" unless keys.map(&:value).uniq.length == keys.length
+        end
+        Array(node.children).each { |child| validate_yaml_keys!(child) } if node.respond_to?(:children)
       end
 
       def validate!(name, value, fragment: nil)

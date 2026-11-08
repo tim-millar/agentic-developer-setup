@@ -20,12 +20,13 @@ module AgenticDeveloperSetup
         prepare_inventory
         @providers = @registry.supported.to_h { |definition| [definition, @registry.provider(definition)] }
         candidates = @providers.flat_map do |definition, provider|
-          detected = provider.detect(context)
+          detected = Adapters.provider_call(definition, "detect") { provider.detect(context) }
           raise Error, "provider detect must return an array" unless detected.is_a?(Array)
           detected = Contracts.copy(detected)
           detected.each { |candidate| validate_candidate!(candidate, definition) }
         end
         @selection&.validate_candidates!(candidates)
+        validate_references!({"candidates" => candidates, "evidence" => context.generic_evidence, "conflicts" => []})
         record_selection_uncertainties(candidates)
         candidates = Contracts.order(candidates.uniq)
         identities = candidates.map { |candidate| candidate.values_at("category", "id", "scope") }
@@ -46,8 +47,8 @@ module AgenticDeveloperSetup
         validate_references!(result)
         Contracts.validate!("assessment", result)
         Contracts.copy(result)
-      rescue ArgumentError, NoMethodError, KeyError, TypeError => e
-        raise Error, "invalid adapter provider result: #{e.message.lines.first.strip}"
+      rescue ArgumentError, NoMethodError, KeyError, TypeError
+        raise Error, "invalid adapter provider result", cause: nil
       end
 
       private
@@ -117,7 +118,9 @@ module AgenticDeveloperSetup
         selected = @selection.definitions.map(&:identity)
         @selection.definitions.each do |definition|
           own = @selection.inputs.select { |key, _| definition.input_definitions.any? { |item| item["key"] == key } }
-          output = @providers.fetch(definition).contribute(context(inputs: own, selected: selected), inputs: Contracts.freeze_tree(Contracts.copy(own)))
+          output = Adapters.provider_call(definition, "contribute") do
+            @providers.fetch(definition).contribute(context(inputs: own, selected: selected), inputs: Contracts.freeze_tree(Contracts.copy(own)))
+          end
           unless output.is_a?(Hash) && (output.keys - DOMAINS).empty? && output.values.all? { |items| items.is_a?(Array) }
             raise Error, "invalid provider contribution set"
           end
@@ -160,6 +163,12 @@ module AgenticDeveloperSetup
         if roots.size > 1 || markers.group_by { |path| File.dirname(path) }.any? { |_, files| files.map { |path| families.fetch(path) }.uniq.size > 1 }
           evidence = context.generic_evidence.select { |item| item["path"] && markers.any? { |path| item["path"] == ((@scope["path"] == ".") ? path : "#{@scope["path"]}/#{path}") } }
           conflicts << {"code" => "scope_conflict", "subject" => "multiple independently configured projects or ecosystems", "evidence_ids" => evidence.map { |item| item["id"] }}
+        end
+        positive = candidates.select { |item| item["status"] == "detected" && item["evidence"].any? }
+        provider_roots = positive.map { |item| item["scope"]["path"] }.uniq
+        if provider_roots.size > 1
+          evidence = positive.flat_map { |item| item["evidence"] }.uniq.sort
+          conflicts << {"code" => "scope_conflict", "subject" => "provider project roots: #{JSON.generate(provider_roots.sort)}", "evidence_ids" => evidence}
         end
         if @selection
           selected_ecosystem = @selection.definitions.find { |entry| entry.category == "ecosystem" }.id

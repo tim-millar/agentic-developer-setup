@@ -191,4 +191,85 @@ class AdapterAssessmentTest < AdapterTest
     assert_equal "not_detected", result.dig("candidates", 0, "status")
     assert result.dig("candidates", 0, "ambiguities").any?
   end
+
+  def test_provider_only_workspace_projects_block_repository_composition_and_allow_either_workspace
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    %w[one two].each { |name| write_target("apps/#{name}/Makefile", "detected") }
+    document = selected(["ecosystem", "ruby"])
+    result = assess(document)
+    assert_equal "blocked", result.dig("composition", "status")
+    conflict = result["conflicts"].find { |item| item["code"] == "scope_conflict" }
+    refute_nil conflict
+    assert_equal 2, conflict["evidence_ids"].size
+    assert conflict["evidence_ids"].all? { |id| result["evidence"].any? { |item| item["id"] == id } }
+    %w[one two].each do |name|
+      document["scope"] = {"type" => "workspace", "path" => "apps/#{name}"}
+      narrowed = assess(document)
+      assert_equal "ready", narrowed.dig("composition", "status")
+      assert narrowed["evidence"].all? { |item| !item["path"] || item["path"].start_with?("apps/#{name}/") }
+      assert narrowed["candidates"].all? { |item| item["scope"] == document["scope"] }
+    end
+    unselected = assess
+    assert_equal "not_selected", unselected.dig("composition", "status")
+    assert_empty unselected["selected"]
+    assert_equal @scope, unselected["scope"]
+  end
+
+  def test_provider_workspace_categories_at_same_root_do_not_create_false_scope_conflict
+    register("ruby")
+    register("rails", "framework")
+    %w[ruby rails].each { |id| install_provider(id, detect: provider_workspace_detection) }
+    write_target("apps/one/Makefile", "detected")
+    result = assess(selected(["ecosystem", "ruby"], ["framework", "rails"]))
+    assert_equal "ready", result.dig("composition", "status")
+    refute_includes codes(result), "scope_conflict"
+  end
+
+  def test_single_nested_provider_project_does_not_force_workspace_selection
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Makefile", "detected")
+    assert_equal "ready", assess(selected(["ecosystem", "ruby"])).dig("composition", "status")
+  end
+
+  def test_negative_or_ambiguous_workspace_candidates_do_not_invent_positive_projects
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    write_target("apps/one/Makefile", "detected")
+    %w[not_detected ambiguous].each do |status|
+      write_target("apps/two/Makefile", status)
+      result = assess(selected(["ecosystem", "ruby"]))
+      assert_equal "ready", result.dig("composition", "status")
+      candidate = result["candidates"].find { |item| item["scope"]["path"] == "apps/two" }
+      assert_equal status, candidate["status"]
+      assert candidate["ambiguities"].any? if status == "ambiguous"
+    end
+  end
+
+  def test_reordered_provider_candidates_produce_identical_scope_conflict_composition
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    %w[one two].each { |name| write_target("apps/#{name}/Makefile", "detected") }
+    assessor = A::Assessor.new(target: @target, framework_root: @framework, selection: selected(["ecosystem", "ruby"]))
+    result = assessor.assess
+    compositions = [result["candidates"], result["candidates"].reverse].map do |candidates|
+      initial = assessor.send(:scope_conflicts, candidates)
+      A::Composer.new(definitions: registry.supported, scope: @scope, contributions: A::Contributions.empty, initial_conflicts: initial).compose
+    end
+    assert_equal compositions.first, compositions.last
+    assert_equal "blocked", compositions.first.dig("composition", "status")
+  end
+
+  def test_multiple_uncertain_workspace_candidates_remain_visible_without_positive_scope_conflict
+    register("ruby")
+    install_provider("ruby", detect: provider_workspace_detection)
+    %w[not_detected ambiguous].each do |status|
+      %w[one two].each { |name| write_target("apps/#{name}/Makefile", status) }
+      result = assess(selected(["ecosystem", "ruby"]))
+      assert_equal "ready", result.dig("composition", "status")
+      refute_includes codes(result), "scope_conflict"
+      assert_equal 2, result["candidates"].count { |item| item["scope"]["type"] == "workspace" && item["status"] == status }
+    end
+  end
 end

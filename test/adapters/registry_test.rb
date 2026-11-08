@@ -165,4 +165,63 @@ class AdapterRegistryTest < AdapterTest
     File.symlink(@target, File.join(@framework, "adapters/ecosystems/ruby"))
     assert_match(/symlink/, assert_raises(A::Error) { registry }.message)
   end
+
+  def test_manifest_credential_names_defaults_and_allowed_values_are_rejected_without_echo
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
+    names = %w[password passphrase api_key access-key access.token client_secret private_key credentials auth authorization_header session_cookie signing_key encryption.key apiToken clientSecret]
+    names.each do |name|
+      mutate_manifest("ruby") { |manifest| manifest["inputs"] = [input("ecosystem/ruby.#{name}", required: false)] }
+      assert_raises(A::Error, name) { registry }
+    end
+    credential = "ghp_" + "SyntheticCredential" * 3
+    [{"default" => credential}, {"allowed_values" => ["ordinary", credential]}].each do |fields|
+      mutate_manifest("ruby") { |manifest| manifest["inputs"] = [input("ecosystem/ruby.choice", required: false).merge(fields)] }
+      error = assert_raises(A::Error) { registry }
+      refute_includes error.full_message, credential
+    end
+  end
+
+  def test_manifest_duplicate_mapping_keys_are_rejected_at_every_depth
+    register("ruby", inputs: [input("ecosystem/ruby.choice", required: false)])
+    manifest = File.join(@framework, "adapters/ecosystems/ruby/adapter.yml")
+    original = File.read(manifest)
+    invalid = [original + "schema_version: 1\n",
+      original.sub("  requires: []", "  requires: []\n  requires: []"),
+      original.sub("  requires: []", "  requires:\n  - category: ecosystem\n    category: ecosystem\n    one_of: [ruby]"),
+      original.sub("  type: string", "  type: string\n  type: string")]
+    invalid.each do |yaml|
+      refute_equal original, yaml
+      File.write(manifest, yaml)
+      assert_match(/duplicate/, assert_raises(A::Error) { registry }.message)
+    end
+  end
+
+  def test_provider_loading_failures_are_sanitised_and_identify_phase
+    register("ruby")
+    cases = [
+      ["source evaluation", {source: 'require "missing_synthetic_sensitive_dependency_12345"'}],
+      ["source evaluation", {source: "class SyntheticSensitiveSyntax <"}],
+      ["source evaluation", {source: 'raise "synthetic-sensitive-source-value"'}],
+      ["constant resolution", {source: "module EmptySyntheticProvider; end"}],
+      ["construction", {construction: 'raise "synthetic-sensitive-constructor-value"'}]
+    ]
+    cases.each do |phase, arguments|
+      install_provider("ruby", **arguments)
+      reg = registry
+      error = assert_raises(A::Error) { reg.provider(reg.supported.first) }
+      assert_includes error.message, "ecosystem/ruby"
+      assert_includes error.message, phase
+      refute_match(/sensitive|12345|SyntheticSensitive/, error.full_message)
+      assert_nil error.cause
+    end
+  end
+
+  def test_provider_boundary_preserves_critical_failures
+    register("ruby")
+    %w[SystemExit Interrupt NoMemoryError].each do |name|
+      install_provider("ruby", construction: "raise #{name}")
+      reg = registry
+      assert_raises(Object.const_get(name)) { reg.provider(reg.supported.first) }
+    end
+  end
 end

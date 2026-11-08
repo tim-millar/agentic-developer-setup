@@ -84,7 +84,10 @@ Definitions expose `id`, `category`, `version`, `status`, `source_path`,
 `manifest_digest`, `provider_digest`, `capabilities`, `contribution_domains`,
 `compatibility`, `input_definitions`, and a plain-value `to_h`. Version and
 digests are absent for planned entries. `make validate` checks supported
-manifests and provider interfaces through this registry.
+manifests and provider interfaces through this registry. Manifest and selection
+YAML are checked recursively before loading: duplicate mapping keys, non-scalar
+keys, aliases and unsafe object tags are rejected. Syntax errors use controlled
+diagnostics without echoing the input document.
 
 A provider class has a no-argument constructor and these public methods:
 
@@ -120,6 +123,14 @@ Only catalogue-validated, contained, non-symlinked framework source is loaded.
 The target repository's Ruby source is never loaded. Provider namespaces are
 isolated per instantiation, while public framework helper constants remain
 accessible. The context grants no target-code execution or mutation interface.
+
+Source loading/evaluation, constant resolution, construction, interface checks,
+`detect` and `contribute` failures produce a controlled adapter error identifying
+category/ID and lifecycle phase. Provider exception text and causes are withheld
+because they may contain repository content or credentials. `LoadError`,
+`SyntaxError` and ordinary exceptions are handled; `SystemExit`, `Interrupt` and
+`NoMemoryError` continue to propagate. Failed providers cannot yield a partial
+successful assessment. This error boundary does not sandbox trusted Ruby.
 
 ## Bounded evidence, scopes and selection
 
@@ -169,15 +180,20 @@ resolutions: []
 `explicit` selection can lack positive evidence; the assessment records that
 uncertainty. `accepted_detection` is an explicit decision requiring a current,
 matching candidate for the same category, ID and scope. Accepting an ambiguous
-or negative candidate retains its uncertainty; no positive evidence is invented. Confidence
-never accepts a candidate automatically. Unknown/planned adapters, duplicate
+or negative candidate retains its uncertainty; no positive evidence is invented.
+Confidence never accepts a candidate automatically. Unknown/planned adapters, duplicate
 categories or identities, missing ecosystem, unsafe scopes, malformed inputs
 and malformed resolutions are invocation errors.
 
 Multiple independently configured roots or contradictory ecosystem markers
 produce `scope_conflict`. Contradictory positive adapter evidence produces
-`repository_evidence_conflict`. A narrower explicit workspace can resolve a
-scope conflict. This version has no monorepo hierarchy or cross-scope graph.
+`repository_evidence_conflict`. Positive, evidenced provider candidates also
+establish project roots, including when no conventional ecosystem marker exists. Multiple categories at one root
+count once; distinct positively detected roots produce a blocking conflict with
+all relevant evidence references. `not_detected` and `ambiguous` records remain
+visible without being promoted to positive project detections. A single nested
+project does not force workspace selection. A narrower explicit workspace can
+resolve a scope conflict. This version has no monorepo hierarchy or cross-scope graph.
 
 ## Compatibility and typed contributions
 
@@ -216,7 +232,14 @@ Path classifications are `generated`, `cache_owned`, `sensitive`,
 `required_for_validation`. Recursive ancestor protections apply conservatively
 to descendants. Ownership disagreement on overlapping paths blocks composition.
 Choosing an owner cannot remove any protection and never changes permissions
-or ignore files.
+or ignore files. A resolved overlapping ownership group uses the selected
+`owner` consistently on all of its ownership records. Each record retains its
+provider's `original_owner`, unchanged adapter provenance, and
+`ownership_resolution_id`; that ID refers to the visible resolved conflict and
+its repository decision/rationale. Unrelated path records retain their original
+shape and ownership. The composition digest includes this authoritative output
+and its retained claims. Providers cannot supply these composer-owned history
+fields themselves.
 
 Logical service requirements identify `service_id` and required profiles;
 runtime bindings identify `service_id` and `implementation`. A missing binding
@@ -233,6 +256,25 @@ Compatible declarations combine; conflicting definitions block. Providers only
 receive validated explicit values declared in their manifest. No ambient
 credentials are inspected. Secret material must never be supplied as an input;
 secret needs belong in value-free requirements.
+
+Manifest and provider-contributed declarations must use their originating
+adapter's exact canonical namespace. Ownership comes from validated adapter
+identity and assessor-attached provenance, not an arbitrary provider field.
+The same non-secret policy checks declarations, defaults, allowed values,
+explicit values, provider contexts and direct composer inputs. Credential-like
+names use identifier boundaries (including underscore, hyphen, dot and camel
+case); ordinary tokenisation identifiers are not rejected by substring alone.
+Recognised values include private-key PEM blocks, bearer tokens, common provider
+token formats, credential assignments, credential-bearing URLs and unambiguous
+JWT-shaped credentials. Rejection never echoes the value, forwards it to a
+provider, emits an assessment or includes it in a fingerprint. Required explicit
+inputs are validated before contribution collection begins.
+
+These deterministic checks recognise credential material; they cannot classify
+every arbitrary string as secret or non-secret. There is no entropy threshold,
+credential discovery, redaction/storage facility, environment inspection or
+private-file lookup. Callers must continue to supply only non-secret
+configuration and represent secret operational needs as value-free requirements.
 
 ## Commands, conflicts and repository decisions
 

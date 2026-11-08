@@ -10,6 +10,7 @@ module AgenticDeveloperSetup
       def initialize(definitions:, scope:, contributions:, inputs: {}, resolutions: [], component_ids: [], evidence_ids: [], initial_conflicts: [])
         @definitions, @scope = definitions, Contracts.copy(scope)
         @source_contributions = Contracts.freeze_tree(Contracts.copy(contributions))
+        InputValues.validate_supplied!(inputs)
         @inputs, @resolutions = Contracts.copy(inputs), Contracts.copy(resolutions)
         @component_ids, @evidence_ids = component_ids, evidence_ids
         @initial_conflicts = Contracts.copy(initial_conflicts)
@@ -130,6 +131,7 @@ module AgenticDeveloperSetup
         declarations = @definitions.flat_map do |entry|
           entry.input_definitions.map { |item| item.merge("id" => "#{entry.category}/#{entry.id}:input:#{item["key"]}", "provenance" => [entry.provenance("#{entry.category}/#{entry.id}:input:#{item["key"]}", @scope)]) }
         end + @contributions["inputs"]
+        declarations.each { |item| InputValues.validate_declaration!(item) }
         unknown = @inputs.keys - declarations.map { |item| item["key"] }
         raise Error, "unknown explicit input: #{unknown.join(", ")}" unless unknown.empty?
         declarations.group_by { |item| item["key"] }.sort.each do |key, items|
@@ -187,6 +189,11 @@ module AgenticDeveloperSetup
           if record["resolution"]
             owner = record["resolution"]["value"]["owner"]
             raise Error, "path owner resolution must choose a declared owner" unless owners.include?(owner)
+            group.each do |path|
+              path["original_owner"] = path["owner"]
+              path["owner"] = owner
+              path["ownership_resolution_id"] = record["id"]
+            end
           end
         end
         # Source records are retained; union classifications on overlapping

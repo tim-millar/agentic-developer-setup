@@ -26,6 +26,9 @@ module AgenticDeveloperSetup
                 raise Error, "unsupported_contribution: #{entry.category}/#{entry.id} cannot contribute #{domain}"
               end
               authority!(entry.category, domain, record)
+              if domain == "inputs"
+                InputValues.validate_namespace!(record["key"], category: entry.category, id: entry.id)
+              end
             end
             case domain
             when "commands"
@@ -37,6 +40,9 @@ module AgenticDeveloperSetup
               environment!(record.fetch("env", {}))
               Contracts.scoped_path!(record["cwd"], scope) if record["cwd"]
             when "paths"
+              if record.key?("original_owner") || record.key?("ownership_resolution_id")
+                raise Error, "path ownership history is assigned by the composer"
+              end
               Contracts.scoped_path!(record["path"], scope)
             when "inputs"
               InputValues.validate_declaration!(record)

@@ -201,4 +201,71 @@ class AdapterCompositionTest < AdapterTest
     assert_equal 1, records.size
     assert_equal 2, records.first["provenance"].size
   end
+
+  def test_resolved_connected_path_group_has_one_effective_owner_and_keeps_claims_and_safety
+    paths = [path("parent", "db", owner: "ruby", classifications: %w[protected sensitive]),
+      path("child", "db/schema.rb", owner: "rails", classifications: ["migration_or_schema"]),
+      path("descendant", "db/migrate", owner: "runtime", classifications: ["framework_managed"]),
+      path("unrelated", "docs", owner: "repository", classifications: ["generated"])]
+    register("ruby")
+    set = stamped("paths", paths)
+    blocked = pure_compose(set)
+    assert_equal "blocked", blocked.dig("composition", "status")
+    assert_equal 1, blocked["conflicts"].size
+    resolution = decision(blocked, "choose_path_owner", {"owner" => "rails"}, code: "path_ownership_conflict")
+    ready = pure_compose(set, resolutions: [resolution])
+    assert_equal "ready", ready.dig("composition", "status")
+    records = ready.dig("composition", "contributions", "paths")
+    affected = records.reject { |item| item["id"] == "unrelated" }
+    assert_equal ["rails"], affected.map { |item| item["owner"] }.uniq
+    assert_equal %w[rails ruby runtime], affected.map { |item| item["original_owner"] }.sort
+    affected.each do |item|
+      assert_equal resolution["conflict_id"], item["ownership_resolution_id"]
+      assert_equal "ruby", item["provenance"][0]["adapter_id"]
+      assert_includes item["classifications"], "protected"
+      assert_includes item["classifications"], "sensitive"
+    end
+    assert_includes affected.find { |item| item["id"] == "child" }["classifications"], "migration_or_schema"
+    assert_equal blocked.dig("composition", "contributions", "paths").find { |item| item["id"] == "unrelated" }, records.find { |item| item["id"] == "unrelated" }
+    assert_equal resolution, ready["conflicts"][0]["resolution"]
+    refute_equal blocked.dig("composition", "composition_digest"), ready.dig("composition", "composition_digest")
+    set["paths"].reverse!
+    assert_equal ready, pure_compose(set, resolutions: [resolution])
+    resolution["value"]["owner"] = "absent"
+    assert_raises(A::Error) { pure_compose(set, resolutions: [resolution]) }
+  end
+
+  def test_provider_input_declarations_must_own_their_exact_namespace
+    register("ruby")
+    valid = {"id" => "choice"}.merge(input("ecosystem/ruby.choice", required: false))
+    assert_equal "ready", pure_compose(stamped("inputs", [valid])).dig("composition", "status")
+    %w[runtime/docker.service ecosystem/python.choice framework/ruby.choice].each do |forged|
+      set = stamped("inputs", [valid.merge("key" => forged)])
+      error = assert_raises(A::Error) { pure_compose(set) }
+      assert_match(/originating adapter namespace/, error.message)
+    end
+  end
+
+  def test_manifest_and_provider_input_declarations_coexist_without_overriding
+    declaration = input("ecosystem/ruby.choice", required: false)
+    register("ruby", inputs: [declaration], contributions: {"inputs" => [declaration.merge("id" => "choice")]})
+    result = assess(selected(["ecosystem", "ruby"]))
+    assert_equal "ready", result.dig("composition", "status")
+    assert_equal "ecosystem/ruby.choice", result.dig("composition", "contributions", "inputs", 0, "key")
+  end
+
+  def test_assessment_rejects_a_provider_forging_an_input_owner
+    register("ruby", contributions: {"inputs" => [input("runtime/docker.service", required: false).merge("id" => "forged")]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"])) }
+    assert_match(/originating adapter namespace/, error.message)
+  end
+
+  def test_path_owner_decision_becomes_stale_when_ownership_conflict_is_gone
+    register("ruby")
+    set = stamped("paths", [path("one", owner: "one"), path("two", owner: "two")])
+    blocked = pure_compose(set)
+    resolution = decision(blocked, "choose_path_owner", {"owner" => "one"}, code: "path_ownership_conflict")
+    set["paths"][1]["owner"] = "one"
+    assert_match(/stale/, assert_raises(A::Error) { pure_compose(set, resolutions: [resolution]) }.message)
+  end
 end

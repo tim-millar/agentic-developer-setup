@@ -130,4 +130,43 @@ class AdapterTest < Minitest::Test
     definition = registry.supported.find { |item| item.id == id }
     A::Contributions.empty.merge(domain => records.map { |item| item.merge("provenance" => [definition.provenance(item["id"], @scope)]) })
   end
+
+  def install_provider(id, detect: "[]", contribute: "{}", construction: "", source: nil)
+    entry = @metadata["adapters"]["available"].find { |item| item["name"] == id }
+    identity = {"category" => entry.fetch("type"), "id" => id}
+    code = source || <<~PROVIDER
+      module AgenticDeveloperSetup
+        module Adapters
+          module Providers
+            class Synthetic
+              IDENTITY = #{identity.inspect}.freeze
+              def initialize
+                #{construction}
+              end
+              def detect(context)
+                #{detect}
+              end
+              def contribute(context, inputs:)
+                #{contribute}
+              end
+            end
+          end
+        end
+      end
+    PROVIDER
+    File.write(File.join(@framework, entry.fetch("path"), "adapter.rb"), code)
+  end
+
+  def provider_workspace_detection
+    <<~PROVIDER
+      context.inventory.files.select { |path| File.basename(path) == "Makefile" }.map do |path|
+        root = File.dirname(path)
+        scope = {"type" => root == "." ? "repository" : "workspace", "path" => root}
+        status = context.inventory.read(path).strip
+        evidence = status == "not_detected" ? [] : [context.add_evidence(type: "configuration", method: "synthetic_project", path: path, summary: "Synthetic project configuration")]
+        IDENTITY.merge("scope" => scope, "status" => status, "confidence" => "high",
+          "evidence" => evidence, "ambiguities" => status == "ambiguous" ? evidence : [], "incompatible_evidence" => [])
+      end
+    PROVIDER
+  end
 end

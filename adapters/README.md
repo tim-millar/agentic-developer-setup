@@ -45,3 +45,13 @@ Commands remain structured argument vectors and are never executed. Assessment
 recommendations do not modify baseline components, repository commands,
 permissions, files, adoption plans or ownership metadata. Adapter-aware
 transactional adoption is reserved for a separately versioned follow-on task.
+
+Provider candidates can establish independent project roots without conventional
+marker files. Manifest and selection YAML reject duplicate mapping keys.
+Non-secret input validation and exact provider namespace ownership apply before
+contribution collection and during direct composition. Recognised credential
+formats are rejected without disclosure; this is not a guarantee that every
+arbitrary secret can be identified. Resolved path ownership exposes one
+effective owner while retaining original claims and resolution provenance.
+Provider lifecycle failures identify the adapter and phase without exposing
+arbitrary exception text. See the adapter architecture for details and limits.
