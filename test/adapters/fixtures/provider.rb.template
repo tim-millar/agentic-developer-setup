@@ -1,0 +1,35 @@
+# frozen_string_literal: true
+
+# Synthetic framework-owned provider. Never registered in the production catalogue.
+module AgenticDeveloperSetup
+  module Adapters
+    module Providers
+      class Synthetic
+        IDENTITY = __IDENTITY__
+        MARKER = __MARKER__
+        CONTRIBUTIONS = __CONTRIBUTIONS__
+
+        def detect(context)
+          return [] unless MARKER
+          prefix = context.scope["path"] == "." ? "" : "#{context.scope["path"]}/"
+          path = "#{prefix}#{MARKER}"
+          detected = context.inventory.exists?(path)
+          evidence = if detected
+            [context.add_evidence(type: "configuration", method: "synthetic_static_marker",
+              path: path, summary: "Synthetic configuration marker for #{IDENTITY["id"]}")]
+          else
+            []
+          end
+          [IDENTITY.merge("scope" => context.scope, "status" => detected ? "detected" : "not_detected",
+            "confidence" => detected ? "high" : "low", "evidence" => evidence, "ambiguities" => [], "incompatible_evidence" => [])]
+        end
+
+        def contribute(context, inputs:)
+          # Provider inputs are explicit, validated and non-secret. A real
+          # adapter may use them to construct structured tokens directly.
+          CONTRIBUTIONS
+        end
+      end
+    end
+  end
+end

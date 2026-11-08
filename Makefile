@@ -78,3 +78,12 @@ test-adoption:
 demo-adoption:
 	bundle exec ruby scripts/examples/initial_adoption.rb
 	bundle exec ruby scripts/examples/update_inherited.rb
+
+.PHONY: assess-adapters
+assess-adapters:
+	@test -n "$(REPO)" || { echo "REPO is required" >&2; exit 2; }
+	bundle exec ruby scripts/assess_adapters.rb "$(REPO)"
+
+.PHONY: test-adapters
+test-adapters:
+	bundle exec ruby -Ilib -Itest -e 'Dir["test/adapters/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'

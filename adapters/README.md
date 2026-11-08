@@ -1,220 +1,64 @@
 # Adapters
 
-## Purpose
+Adapters provide versioned, evidence-backed recommendations for one repository
+scope. The implemented registry, provider interface, compatibility checks,
+structured composition, explicit conflict resolution and read-only assessment
+are documented in [the adapter architecture](../docs/adapter-architecture.md).
 
-Adapters describe the repository-specific assumptions needed to apply the baseline framework safely.
+`framework.yml` remains authoritative for identities, categories, paths and
+support status. **All named production adapters remain planned.** Supported
+executable demonstrations exist only in `test/adapters/` synthetic fixtures.
+Generic Node/TypeScript/Python detection does not confer supported adapter status.
 
-Adapters exist so that repositories can share a common agent-development framework while still applying the conventions, tooling patterns, and operational details that make sense for their ecosystem, framework, runtime, and application shape.
+| Category | Source path | Responsibility |
+| --- | --- | --- |
+| `ecosystem` | `adapters/ecosystems/<name>` | Language, package manager and generic tooling |
+| `framework` | `adapters/frameworks/<name>` | Application-framework conventions and specialised validation |
+| `runtime` | `adapters/runtimes/<name>` | Application execution environment, services and command wrapping |
+| `app-shape` | `adapters/app-shapes/<name>` | Architecture, validation emphasis, documentation and risks |
 
-Adapters are intended to be:
+Use **application execution environment** or environment adapter in prose;
+`runtime` remains the canonical machine category. Coding-agent runtimes and
+the host toolchain are separate concerns. An ecosystem selection alone never
+requires its language runtime on the coding-agent host.
 
-- small
-- composable
-- focused
-- additive where possible
+Implemented adapters require `adapter.yml` (closed manifest schema v1) and
+trusted framework-owned `adapter.rb` implementing `detect(context)` and
+`contribute(context, inputs:)`. Planned adapters need neither file. Registry
+validation rejects unsafe source paths, invalid metadata, compatibility
+references and provider interfaces.
 
-They are not intended to replace the baseline.
+Detection supplies candidates and evidence. Explicit selection supplies one
+ecosystem and zero or one of each other category for a repository or workspace
+scope. No adapter is accepted automatically. Contributions retain provenance;
+material conflicts block composition until resolved through a permitted explicit
+repository decision. There is no last-adapter-wins rule.
 
-`framework.yml` is authoritative for adapter taxonomy, declared paths, and status. All named adapter implementations are currently planned; the directories in this area document the four adapter types and composition model rather than providing supported overlays.
-
-## Core Principle
-
-The baseline defines the shared framework shape.
-
-Adapters specialise that shape where a repository’s ecosystem, framework, runtime, or application shape requires it.
-
-In general, when implemented adapters are available:
-
-- start from `baseline/`
-- apply only the adapters that materially affect the repository
-- preserve the baseline where no specialisation is needed
-
-Adapters should extend or override the baseline only where there is a clear reason to do so.
-
-## Ecosystem, Execution Environment, and Host Toolchain
-
-Adapter selection must keep three related decisions separate:
-
-- the **application ecosystem** identifies language and package conventions;
-- the **application execution environment** identifies where development and validation commands run, such as directly on the host, in containers, remotely, or in a mixed workflow;
-- the **agent host toolchain** identifies the commands Codex itself must resolve from its host shell.
-
-Selecting an ecosystem does not by itself prove that its language runtime must exist on the host. Host-tool requirements depend on how the repository actually executes development and validation commands. A non-containerised application may need its language runtime on the host, while a containerised application in the same ecosystem may need only Git, Make, and container tooling. Mixed workflows require repository-specific evidence, including the needs of hooks, code generators, and validation commands.
-
-The baseline Codex launcher preserves the inherited host `PATH`. A repository may optionally provide `scripts/agent_host_env.sh` when its established contract requires deterministic host-tool selection. That hook is repository policy, not a new adapter type, and should not be generated merely because an ecosystem adapter was selected.
-
-## Adapter Types
-
-The framework treats adapters as belonging to four canonical types.
-
-### Ecosystem adapters
-
-Ecosystem adapters specialise the baseline for language and package-manager assumptions.
-
-Path:
-
-```text
-adapters/ecosystems/<name>
+```sh
+ruby scripts/assess_adapters.rb /path/to/repository
+ruby scripts/assess_adapters.rb /path/to/repository --selection selection.yml
+make assess-adapters REPO=/path/to/repository
+make test-adapters
 ```
 
-An ecosystem adapter may provide guidance or overlays for:
+Commands remain structured argument vectors and are never executed. Assessment
+recommendations do not modify baseline components, repository commands,
+permissions, files, adoption plans or ownership metadata. Adapter-aware
+transactional adoption is reserved for a separately versioned follow-on task.
 
-- Makefile command mappings
-- testing, linting, formatting, and type-check patterns
-- CI runtime/tooling setup
-- hook integrations
-- documentation notes relevant to that ecosystem
+Generic project markers and positive provider candidates share one canonical
+root collection. A project found by each source in different workspaces blocks
+repository-scope composition; the same root found by both counts only once. Manifest and selection YAML reject duplicate mapping keys.
+Non-secret input validation and exact provider namespace ownership apply before
+contribution collection and during direct composition. Recognised credential
+formats are rejected without disclosure; this is not a guarantee that every
+arbitrary secret can be identified. Resolved path ownership exposes one
+effective owner while retaining original claims and resolution provenance.
+Provider lifecycle failures identify the adapter and phase without exposing
+arbitrary exception text. See the adapter architecture for details and limits.
 
-### Framework adapters
-
-Framework adapters specialise the baseline for application-framework conventions.
-
-Path:
-
-```text
-adapters/frameworks/<name>
-```
-
-A framework adapter may provide guidance or overlays for:
-
-- framework-specific local commands
-- test, shell, console, and migration conventions
-- framework-specific documentation notes
-- common CI and hook implications
-
-### Runtime adapters
-
-Runtime adapters specialise the baseline for execution, containerisation, deployment, and local-development assumptions.
-
-Path:
-
-```text
-adapters/runtimes/<name>
-```
-
-A runtime adapter may provide guidance or overlays for:
-
-- how the standard command surface maps to local execution
-- how runtime startup is handled
-- how logs, shell access, and interactive consoles work
-- how local and CI commands differ
-- how infrastructure complexity is hidden behind the Makefile
-
-### App-shape adapters
-
-App-shape adapters specialise the baseline for architectural and delivery-shape assumptions.
-
-Path:
-
-```text
-adapters/app-shapes/<name>
-```
-
-An app-shape adapter may provide guidance or overlays for:
-
-- likely command-surface emphasis
-- likely testing emphasis
-- likely documentation emphasis
-- common CI validation categories
-- common operational concerns for this kind of system
-
-## Adapters Are Composable
-
-Repositories will often use more than one adapter.
-
-Typical combinations include:
-
-- Node + Express + Docker + API service
-- Ruby + Rails + Docker + monolith
-- Elixir + Phoenix + non-containerised + worker
-
-This is the intended usage model.
-
-Adapters should therefore be designed to combine cleanly rather than assuming that only one adapter will be applied.
-
-## What Belongs in an Adapter
-
-Adapters should usually contain small overlays such as:
-
-- Makefile fragments or examples
-- CI setup snippets
-- hook-related examples
-- testing notes for the relevant ecosystem, framework, runtime model, or app shape
-- local development notes that refine `docs/DEVELOPMENT.md`
-- adapter-specific notes that refine `docs/TESTING.md`
-
-Adapters should not usually contain:
-
-- a full replacement baseline
-- a complete application template
-- project-specific architecture
-- project-specific domain documentation
-
-If an adapter starts to look like an entire standalone framework, it is probably too large.
-
-## Choosing Adapters
-
-When implemented adapters are available, select them as follows:
-
-1. start from the baseline
-2. choose the ecosystem adapter that best matches the dominant language and package ecosystem
-3. choose the framework adapter that best matches the application framework, if any
-4. choose the runtime adapter that best matches the execution and local development model
-5. establish from repository evidence which tools agents need directly on the host
-6. choose the app-shape adapter that best matches the architecture or delivery shape, if any
-7. apply only the specialisations that are actually needed
-8. keep the number of overrides as small as practical
-
-A good rule is:
-
-- prefer the baseline by default
-- use available adapters to handle real ecosystem, framework, runtime, or app-shape differences
-- avoid introducing adapter-specific behaviour without a clear need
-
-## Greenfield vs Existing Repositories
-
-### Greenfield repositories
-
-For greenfield repos, available adapter implementations can be applied early and cleanly.
-
-This usually means:
-
-- start with `baseline/`
-- choose the relevant available ecosystem, framework, runtime, and app-shape adapters
-- instantiate the repo docs and command surface using those overlays
-
-### Existing or legacy repositories
-
-For existing repos, available adapter implementations should be applied more selectively.
-
-This usually means:
-
-- compare the repo against the baseline first
-- identify where the current repo already matches the framework goals
-- use available adapters only where they clarify or standardise existing behaviour
-- avoid rewriting healthy repo-specific patterns just to match an adapter mechanically
-
-## Adapter Structure
-
-Each adapter directory should be small and legible.
-
-A typical adapter may contain files such as:
-
-- `README.md`
-- `make/`
-- `ci/`
-- `hooks/`
-- `docs/`
-
-Not every adapter needs all of these.
-
-The exact structure should reflect the minimal set of overlays needed for that adapter.
-
-## Relationship to Other Framework Parts
-
-See also:
-
-- `baseline/` for the shared framework layer
-- `framework.yml` for machine-readable adapter metadata
-- `prompts/` for current adoption flows
-- `README.md` for the high-level framework overview
+For adapter contract v1, manifest declarations define the complete externally
+selectable input-key inventory. Provider input contributions cannot introduce
+new keys; compatible restatements are allowed and incompatible definitions block
+composition. Add a legitimate new input to its adapter manifest before supplying
+it through selection or direct composition.

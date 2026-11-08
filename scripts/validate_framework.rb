@@ -46,6 +46,7 @@ class FrameworkValidator
     @errors.concat(AgenticDeveloperSetup::FrameworkCatalogue.document_errors(@root, metadata))
     validate_metadata_paths(metadata)
     validate_adoption_contract
+    validate_adapter_registry if errors.empty?
     validate_repository_structure
     errors.empty?
   end
@@ -728,6 +729,14 @@ class FrameworkValidator
     validate_adapter_paths(metadata)
     validate_issue_template_paths(metadata)
     validate_convention_paths(metadata)
+  end
+
+  def validate_adapter_registry
+    require_relative "../lib/agentic_developer_setup/adapters"
+    registry = AgenticDeveloperSetup::Adapters::Registry.load(framework_root: @root)
+    registry.supported.each { |definition| registry.provider(definition) }
+  rescue AgenticDeveloperSetup::Assessment::Error => e
+    error("adapter registry", e.message)
   end
 
   def validate_adapter_paths(metadata)
