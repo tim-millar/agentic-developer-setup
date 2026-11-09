@@ -327,7 +327,7 @@ make validate          # validate framework metadata and root structure
 make check             # lint, test, and validate
 ```
 
-Pre-commit runs `make lint`, pre-push runs `make check`, and CI runs the same `make check` surface after setting up the committed bundle. The direct `ruby scripts/assess_repository.rb TARGET` entrypoint remains separate from root development dependency management; `make assess REPO=TARGET` is the bundled repository wrapper.
+Pre-commit runs `make lint`, pre-push runs `make check`, and CI runs the same `make check` surface after setting up the committed bundle. `make check` reports monotonic elapsed time and exit status for each stage. CI enables bounded Ruby timing with `ADS_TEST_TIMING=1`; use `make check ADS_TEST_TIMING=1 SEED=44383` locally to reproduce a recorded seed. The report includes every test family's count and elapsed time, the slowest 20 cases, and one diagnostic for any case still running after 30 seconds. See [`docs/ci-validation-timing.md`](docs/ci-validation-timing.md) for the measured baseline and fixture optimization rationale. Timing does not change test selection, ordering, assertions, or failure handling. `make check-reference-service` separately times locked setup and offline verification. The direct `ruby scripts/assess_repository.rb TARGET` entrypoint remains separate from root development dependency management; `make assess REPO=TARGET` is the bundled repository wrapper.
 
 ## Reference fixture
 

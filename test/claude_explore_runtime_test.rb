@@ -45,7 +45,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_stable_claude_launcher_is_reresolved_after_updater_change
-    install!
+    prepare_runtime!
     replacement = @harness.replace_claude(version: "2.1.225")
 
     stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info")
@@ -204,7 +204,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_environment_native_settings_mcp_browser_and_guidance_are_forced
-    install!
+    prepare_runtime!
     extra = {
       "GITHUB_TOKEN" => "secret-github",
       "AWS_ACCESS_KEY_ID" => "secret-aws",
@@ -260,7 +260,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_generated_settings_json_escapes_permitted_path_characters
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(prefix: "claude-quote-\"-backslash-\\-")
-    install!
+    prepare_runtime!
 
     _stdout, stderr, status = @harness.runtime
     assert status.success?, stderr
@@ -276,7 +276,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     }.each do |before, after|
       @harness.cleanup
       @harness = ClaudeExploreHarness.new
-      install!
+      prepare_runtime!
       @harness.replace_installed_runtime_text("lib/claude_explore_runtime.sh", before, after)
       FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
 
@@ -288,7 +288,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_allowed_and_blocked_claude_startup_arguments
-    install!
+    prepare_runtime!
     allowed = [
       [], ["--help"], ["--version"], ["-v"], ["--model", "sonnet"], ["--effort=high"],
       ["--fallback-model", "sonnet"], ["--autocompact", "500k"], ["-n", "explore"],
@@ -334,7 +334,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_every_policy_blocked_executable_has_a_non_delegating_guard
-    install!
+    prepare_runtime!
     policy_lines("CLAUDE_EXPLORE_BLOCKED_EXECUTABLES").each do |command|
       FileUtils.rm_f(@harness.env.fetch("FAKE_DELEGATE_LOG"))
       _stdout, stderr, status = @harness.runtime(extra_env: {"FAKE_INNER_SCENARIO" => "blocked", "FAKE_COMMAND" => command})
@@ -345,7 +345,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_git_policy_classification_and_delegation
-    install!
+    prepare_runtime!
     allowed = [["git", "status"], ["git", "-C", "/tmp", "log"], ["git", "branch", "topic"], ["git", "remote", "-v"], ["git", "remote", "get-url", "origin"], ["git", "config", "--get", "user.name"], ["git", "tag", "--list"], ["git", "tag", "--contains", "HEAD"]]
     blocked = [["git", "push"], ["git", "fetch"], ["git", "-c", "credential.helper=x", "status"], ["git", "branch", "-u", "origin/main"], ["git", "remote", "add", "x", "url"], ["git", "config", "user.name", "x"], ["git", "config", "--get", "--unset", "user.name"], ["git", "tag", "v1"], ["git", "tag", "--contains", "-d", "v1"], ["git", "submodule", "status"], ["git", "future-command"]]
     allowed.each { |argv| assert_classification(argv, 0, "allowed") }
@@ -374,7 +374,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_postgresql_policy_regressions_and_final_environment_scrub
-    install!
+    prepare_runtime!
     allowed = [
       ["psql"], ["psql", "mydb"], ["psql", "-d", "mydb"], ["psql", "-dmydb"], ["psql", "--dbname=mydb"],
       ["psql", "-h", "localhost"], ["psql", "-h127.0.0.1"], ["psql", "-h", "::1"],
@@ -431,7 +431,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_privilege_and_postgresql_companion_guards_are_policy_driven
-    install!
+    prepare_runtime!
     %w[sudo pg_dump pg_restore createdb pg_isready].each do |command|
       assert_includes policy_lines("CLAUDE_EXPLORE_BLOCKED_EXECUTABLES"), command
       assert_classification([command], 126, "CLAUDE_EXPLORE_BLOCKED")
@@ -440,7 +440,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_policy_override_environment_has_no_authority
-    install!
+    prepare_runtime!
     weaker = File.join(@harness.root, "weaker-policy.sh")
     File.write(weaker, "CLAUDE_EXPLORE_BLOCKED_EXECUTABLES=''\n")
     _stdout, stderr, status = @harness.runtime("--claude-explore-check-command", "--", "gh", extra_env: {"CLAUDE_EXPLORE_POLICY" => weaker})
@@ -449,7 +449,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_failed_upgrade_recursion_and_destination_collisions_preserve_active_runtime
-    install!
+    prepare_runtime!
     active_before = File.realpath(@harness.current_runtime)
     metadata_before = @harness.read(@harness.metadata)
 
@@ -468,7 +468,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_strict_metadata_and_installed_file_modes_fail_closed
-    install!
+    prepare_runtime!
     File.open(@harness.metadata, "a") { |file| file.puts("unexpected=value") }
     _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info")
     refute status.success?
@@ -497,7 +497,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     ].each do |relative, mode, diagnostic|
       @harness.cleanup
       @harness = ClaudeExploreHarness.new
-      install!
+      prepare_runtime!
       File.chmod(mode, File.join(@harness.current_runtime, relative))
       FileUtils.rm_f(@harness.env.fetch("FAKE_CLAUDE_LOG"))
       _stdout, stderr, status = @harness.runtime
@@ -508,7 +508,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
     @harness.cleanup
     @harness = ClaudeExploreHarness.new
-    install!
+    prepare_runtime!
     external = File.join(@harness.root, "external-guard")
     @harness.write_executable(external, "#!/bin/sh\nexit 0\n")
     guard = File.join(@harness.current_runtime, "lib/claude_explore_guard.sh")
@@ -526,7 +526,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     ].each do |relative, mode, diagnostic|
       @harness.cleanup
       @harness = ClaudeExploreHarness.new
-      install!
+      prepare_runtime!
       @harness.replace_installed_runtime_text(
         "lib/claude_explore_runtime.sh",
         "run_session \"$@\"",
@@ -545,7 +545,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_outcome_reconciliation_uses_trusted_installed_copy_and_keeps_authority_from_child
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     repository = File.join(@harness.root, "outcome-repository")
     FileUtils.mkdir_p(File.join(repository, "scripts"))
     repository_tools = File.join(repository, "child-tools")
@@ -600,7 +600,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_outcome_reconciliation_failure_preserves_claude_status
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     installed = File.join(@harness.current_runtime, "lib/agent_run_outcomes.sh")
     File.write(installed, "#!/bin/sh\nexit 44\n")
     File.chmod(0o700, installed)
@@ -614,7 +614,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_claude_usage_collection_owns_only_logs_and_retains_failed_run_evidence
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     payload = {
       "resourceLogs" => [{"scopeLogs" => [{"logRecords" => [
         claude_usage_record("session-a", "claude-a", 10, 3, 5, 2, 123),
@@ -680,7 +680,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_claude_usage_opt_out_preserves_existing_log_exporter_and_records_disabled
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
 
     _stdout, stderr, status = @harness.runtime(extra_env: {
       "AGENT_USAGE_TELEMETRY" => "0",
@@ -698,7 +698,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_claude_missing_trusted_ruby_makes_usage_unavailable_without_blocking_workload
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     path_without_ruby = @harness.protected_host_path_without("ruby")
 
     _stdout, stderr, status = @harness.runtime(extra_env: {"PATH" => path_without_ruby, "FAKE_CLAUDE_EXIT" => "17"})
@@ -713,7 +713,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_repository_controlled_outcome_tools_are_not_selected_for_host_reconciliation
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     repository = File.join(@harness.root, "unsafe-tool-repository")
     tools = File.join(repository, "bin")
     FileUtils.mkdir_p(tools)
@@ -743,7 +743,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_outcome_tool_resolution_skips_temporary_and_group_writable_candidates
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     unsafe_tools = File.join(@harness.root, "temporary-outcome-tools")
     protected_root = @harness.protected_host_directory("claude-protected-tree-")
     group_writable_tools = File.join(protected_root, "group-writable", "bin")
@@ -797,7 +797,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_only_temporary_outcome_authority_is_rejected_fail_open
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     unsafe_tools = File.join(@harness.root, "temporary-only-outcome-tools")
     FileUtils.mkdir_p(unsafe_tools)
     marker = File.join(@harness.root, "temporary-only-outcome-tool-ran")
@@ -851,7 +851,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     refute status.success?
     assert_includes stderr, "XDG_DATA_HOME must be absolute"
 
-    install!
+    prepare_runtime!
     _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info", extra_env: {"XDG_DATA_HOME" => "relative-data"})
     refute status.success?
     assert_includes stderr, "XDG_DATA_HOME must be absolute"
@@ -861,7 +861,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_cross_version_upgrade_and_injected_failure_are_atomic
-    install!
+    prepare_runtime!
     FileUtils.mkdir_p(@harness.sessions_root)
     File.chmod(0o700, @harness.sessions_root)
     preserved_session = File.join(@harness.sessions_root, "claude-explore.active")
@@ -897,7 +897,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_reserved_runtime_diagnostic_does_not_echo_secret_argument
-    install!
+    prepare_runtime!
     secret = "--claude-explore-api-key=secret-review-value"
     _stdout, stderr, status = @harness.runtime(secret)
     assert_equal 2, status.exitstatus
@@ -936,7 +936,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_trusted_cleanup_ignores_original_path_and_xdg_runtime_dir
-    install!
+    prepare_runtime!
     hostile_rm = File.join(@harness.fake_bin, "rm")
     @harness.write_executable(hostile_rm, "#!/bin/sh\n: > \"$FAKE_RM_MARKER\"\nexit 91\n")
     repository_runtime = File.join(@harness.root, "repository-controlled-runtime")
@@ -964,7 +964,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_sessions_root_permissions_and_signal_cleanup_use_trusted_rm
-    install!
+    prepare_runtime!
     hostile_rm = File.join(@harness.fake_bin, "rm")
     @harness.write_executable(hostile_rm, "#!/bin/sh\n: > \"$FAKE_RM_MARKER\"\nexit 91\n")
     @harness.replace_claude_with_signal_runtime
@@ -1011,7 +1011,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   def test_signal_before_child_creation_ignores_inherited_child_pid
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    install!
+    prepare_runtime!
     ready = File.join(@harness.root, "early-signal-ready")
     release = File.join(@harness.root, "early-signal-release")
     @harness.replace_installed_runtime_text(
@@ -1076,7 +1076,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   def test_unsafe_sessions_parent_fails_before_claude_starts
-    install!
+    prepare_runtime!
     outside = File.join(@harness.root, "outside-sessions")
     FileUtils.mkdir_p(outside)
     File.symlink(outside, @harness.sessions_root)
@@ -1091,9 +1091,9 @@ class ClaudeExploreRuntimeTest < Minitest::Test
 
   private
 
-  def install!
-    _stdout, stderr, status = @harness.install
-    assert status.success?, stderr
+  def prepare_runtime!
+    @harness.prepare_installed_fixture
+    assert File.symlink?(@harness.installed_launcher)
   end
 
   def trusted_claude_usage_ruby_path(environment_log: nil)

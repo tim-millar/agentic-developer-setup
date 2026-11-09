@@ -704,7 +704,7 @@ class LauncherHarness
 
   def build_fakes
     executable("git", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
       if ENV["FAKE_GIT_STATUS_FAILURE"] == "1" && ARGV.include?("--porcelain=v1")
         warn "synthetic Git status failure"
         exit 88
@@ -716,7 +716,7 @@ class LauncherHarness
     RUBY
 
     executable("chmod", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
       if ENV["FAKE_FAIL_READY_CHMOD"] == "1" && ARGV.last.include?("/renewal-worker.ready")
         warn "synthetic readiness publication failure"
         exit 1
@@ -725,7 +725,7 @@ class LauncherHarness
     RUBY
 
     executable("mv", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
       marker = ENV["FAKE_RENEWAL_CONTROL_DIR"] && File.join(ENV.fetch("FAKE_RENEWAL_CONTROL_DIR"), "fail-metadata-publication")
       if marker && File.exist?(marker) && ARGV.last.end_with?("/current-token.meta")
         File.delete(marker)
@@ -1049,7 +1049,7 @@ class LauncherHarness
     RUBY
 
     executable("launcher-test-sleep", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
 
       control_dir = ENV.fetch("FAKE_RENEWAL_CONTROL_DIR")
       ordinal_path = File.join(control_dir, "wait-count")
@@ -1065,7 +1065,7 @@ class LauncherHarness
     RUBY
 
     executable("launcher-test-gate", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
 
       control_dir = ENV.fetch("FAKE_RENEWAL_CONTROL_DIR")
       transition = ARGV.fetch(0)
@@ -1081,7 +1081,7 @@ class LauncherHarness
     RUBY
 
     executable("date", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
       clock = ENV["FAKE_HELPER_CLOCK"] || ENV["FAKE_LAUNCHER_CLOCK"]
       if clock && ARGV == ["+%s"]
         puts File.read(clock).strip
@@ -1091,7 +1091,7 @@ class LauncherHarness
     RUBY
 
     executable("sleep", <<~RUBY)
-      #!#{RbConfig.ruby}
+      #!#{RbConfig.ruby} --disable=gems
       File.write(ENV.fetch("FAKE_HELPER_WAIT_MARKER"), Process.pid.to_s) if ENV["FAKE_HELPER_WAIT_MARKER"]
       if ENV["FAKE_HELPER_CLOCK"]
         path = ENV.fetch("FAKE_HELPER_CLOCK")

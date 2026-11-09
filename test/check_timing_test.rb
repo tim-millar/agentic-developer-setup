@@ -25,6 +25,44 @@ class CheckTimingTest < Minitest::Test
     assert_includes stderr, "exit=143"
   end
 
+  def test_reporter_emits_one_stall_notice_per_case_without_waiting
+    io = StringIO.new
+    reporter = CheckTiming::Reporter.new(io)
+    clock = 0.0
+    reporter.define_singleton_method(:now) { clock }
+    reporter.prerecord(self.class, "slow_fixture")
+    clock = 29.0
+    reporter.send(:report_stalled_test)
+    assert_empty io.string
+    clock = 31.0
+    reporter.send(:report_stalled_test)
+    clock = 100.0
+    reporter.send(:report_stalled_test)
+    assert_equal 1, io.string.lines.length
+    assert_includes io.string, "CheckTimingTest#slow_fixture elapsed=31.0s"
+  end
+
+  def test_timing_toggle_preserves_passing_and_failing_suite_outcomes
+    [false, true].each do |failing|
+      statuses = ["0", "1"].map do |enabled|
+        code = <<~RUBY
+          require "minitest/autorun"
+          require_relative "test/support/check_timing"
+          class TimingFixture < Minitest::Test
+            def test_result
+              assert #{!failing}
+            end
+          end
+        RUBY
+        stdout, stderr, status = Open3.capture3({"ADS_TEST_TIMING" => enabled}, RbConfig.ruby, "-e", code, chdir: File.expand_path("..", __dir__))
+        assert_includes stdout, "1 runs, 1 assertions"
+        assert_equal enabled == "1", stderr.include?("TEST TIMING families")
+        status.exitstatus
+      end
+      assert_equal [failing ? 1 : 0] * 2, statuses
+    end
+  end
+
   def test_reporter_bounds_case_output_and_keeps_every_family_count
     io = StringIO.new
     reporter = CheckTiming::Reporter.new(io)

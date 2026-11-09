@@ -86,6 +86,44 @@ class ClaudeExploreHarness
     destination
   end
 
+  # Runtime/migration prerequisites need an installed tree, not another test of
+  # fresh installation. Every call owns its files; no template/cache is shared.
+  # The equivalence regression compares this tree with a real installer result.
+  def prepare_installed_fixture
+    source = File.join(REPOSITORY_ROOT, "agent-runtimes/claude-explore")
+    policy = File.read(File.join(source, "policy.sh"))
+    version = policy.match(/^CLAUDE_EXPLORE_RUNTIME_VERSION=(\d+)$/)[1]
+    policy_version = policy.match(/^CLAUDE_EXPLORE_POLICY_VERSION=(\d+)$/)[1]
+    active = File.join(data_root, "versions", version)
+    [active, metadata, installed_launcher, File.join(data_root, "current")].each do |path|
+      raise "installed fixture destination is occupied" if File.exist?(path) || File.symlink?(path)
+    end
+    [File.join(active, "bin"), File.join(active, "lib"), File.dirname(metadata), File.dirname(installed_launcher)].each do |path|
+      FileUtils.mkdir_p(path, mode: 0o700)
+    end
+    executable = %w[bin/ads-claude-explore lib/claude_explore_runtime.sh lib/claude_explore_guard.sh lib/agent_run_usage_collector.rb lib/agent_run_outcomes.sh]
+    (executable + %w[lib/agent_run_telemetry.sh lib/agent_run_usage.sh policy.sh]).each do |relative|
+      destination = File.join(active, relative)
+      FileUtils.cp(File.join(source, relative), destination)
+      File.chmod(executable.include?(relative) ? 0o700 : 0o600, destination)
+    end
+    File.write(metadata, <<~META, mode: "w", perm: 0o600)
+      schema_version=1
+      runtime_id=claude-explore
+      runtime_version=#{version}
+      policy_version=#{policy_version}
+      claude_launcher_path=#{claude_launcher}
+      source_framework_revision=unknown
+    META
+    current = File.join(data_root, "current")
+    File.symlink(active, current)
+    File.symlink(File.join(current, "bin/ads-claude-explore"), installed_launcher)
+    # macOS records the creator's umask in symlink modes; Linux uses 0777.
+    if RbConfig::CONFIG["host_os"].include?("darwin")
+      [current, installed_launcher].each { |path| File.lchmod(0o700, path) }
+    end
+  end
+
   def install(operation = "install", claude: claude_launcher, extra_env: {})
     install_from(INSTALLER, operation, claude:, extra_env:)
   end

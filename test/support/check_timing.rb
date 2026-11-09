@@ -14,15 +14,7 @@ module CheckTiming
       @watchdog = Thread.new do
         loop do
           sleep 1
-          current = @current
-          next unless current && !current[:reported]
-
-          elapsed = now - current[:started]
-          next if elapsed < 30
-
-          current[:reported] = true
-          @io.puts format("TEST TIMING still running %s#%s elapsed=%.1fs", current[:klass], current[:name], elapsed)
-          @io.flush
+          report_stalled_test
         end
       end
     end
@@ -52,6 +44,18 @@ module CheckTiming
     end
 
     private
+
+    def report_stalled_test
+      current = @current
+      return unless current && !current[:reported]
+
+      elapsed = now - current[:started]
+      return if elapsed < 30
+
+      current[:reported] = true
+      @io.puts format("TEST TIMING still running %s#%s elapsed=%.1fs", current[:klass], current[:name], elapsed)
+      @io.flush
+    end
 
     def now
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
