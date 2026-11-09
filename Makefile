@@ -19,7 +19,7 @@ validate:
 
 .PHONY: test
 test:
-	bundle exec ruby -Ilib -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
+	bundle exec ruby -Ilib -Itest -e 'require_relative "test/support/check_timing" if ENV["ADS_TEST_TIMING"] == "1"; Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
 
 .PHONY: test-launcher
 test-launcher:
@@ -43,9 +43,9 @@ test-assessment:
 
 .PHONY: check
 check:
-	$(MAKE) lint
-	$(MAKE) test
-	$(MAKE) validate
+	bundle exec ruby scripts/time_check.rb lint $(MAKE) lint
+	bundle exec ruby scripts/time_check.rb test $(MAKE) test
+	bundle exec ruby scripts/time_check.rb validate $(MAKE) validate
 
 .PHONY: hook-pre-commit
 hook-pre-commit:
@@ -67,8 +67,8 @@ adoption-inspect:
 
 .PHONY: check-reference-service
 check-reference-service:
-	$(MAKE) -C examples/reference-service setup
-	UV_OFFLINE=1 $(MAKE) -C examples/reference-service verify
+	bundle exec ruby scripts/time_check.rb reference-setup $(MAKE) -C examples/reference-service setup
+	UV_OFFLINE=1 bundle exec ruby scripts/time_check.rb reference-verify $(MAKE) -C examples/reference-service verify
 
 .PHONY: test-adoption
 test-adoption:

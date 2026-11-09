@@ -47,7 +47,7 @@ class ToolchainTest < Minitest::Test
     pre_commit = makefile[/\.PHONY: hook-pre-commit.*?(?=\.PHONY: hook-pre-push)/m]
     pre_push = makefile[/\.PHONY: hook-pre-push.*?(?=\.PHONY: assess)/m]
 
-    assert_equal ["$(MAKE) lint", "$(MAKE) test", "$(MAKE) validate"], check.lines.grep(/\$\(MAKE\)/).map(&:strip)
+    assert_equal %w[lint test validate].map { |stage| "bundle exec ruby scripts/time_check.rb #{stage} $(MAKE) #{stage}" }, check.lines.grep(/\$\(MAKE\)/).map(&:strip)
     assert_includes pre_commit, "$(MAKE) lint"
     refute_includes pre_commit, "$(MAKE) test"
     assert_includes pre_push, "$(MAKE) check"

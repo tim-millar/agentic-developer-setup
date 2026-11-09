@@ -14,6 +14,28 @@ class ClaudeExploreMigrationTest < Minitest::Test
     @harness.cleanup
   end
 
+  def test_prepared_fixture_matches_real_installation_and_is_isolated
+    _stdout, stderr, status = @harness.install
+    assert status.success?, stderr
+    roots = [@harness.env.fetch("XDG_DATA_HOME"), @harness.env.fetch("XDG_CONFIG_HOME"), File.join(@harness.home, ".local")]
+    signature = -> { snapshot(*roots).map { |path, kind, mode, content| [path, kind, mode, (kind == "file") ? Digest::SHA256.hexdigest(content) : content] } }
+    actual_installation = signature.call
+    roots.each { |root| FileUtils.remove_entry_secure(root) }
+    @harness.prepare_installed_fixture
+    assert_equal actual_installation, signature.call
+
+    other = ClaudeExploreHarness.new
+    other.prepare_installed_fixture
+    other_before = snapshot(other.root)
+    File.write(File.join(@harness.current_runtime, "policy.sh"), "changed fixture")
+    @harness.cleanup
+    assert_equal other_before, snapshot(other.root)
+    _stdout, stderr, status = other.runtime("--claude-explore-runtime-info")
+    assert status.success?, stderr
+  ensure
+    other&.cleanup
+  end
+
   def test_inherited_staging_variables_never_authorize_unowned_cleanup
     stage = File.join(@harness.root, "unrelated-stage")
     FileUtils.mkdir_p(stage)
@@ -175,7 +197,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
     %i[legacy qualified mixed].each do |state|
       reset_harness
       paf_before = simulate_paf
-      (state == :qualified) ? install! : legacy_install!
+      (state == :qualified) ? prepare_runtime! : legacy_install!
       add_qualified_link_to_legacy if state == :mixed
       add_persistent_evidence
       vendor_before = snapshot(@harness.claude_target, @harness.claude_launcher)
@@ -249,7 +271,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
   end
 
   def test_qualified_install_rejects_an_ambiguous_ads_related_generic_link_before_uninstall
-    install!
+    prepare_runtime!
     File.symlink(@harness.data_root, legacy_launcher)
     before = installation_snapshot
     %w[install upgrade uninstall].each do |operation|
@@ -263,7 +285,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
   def test_qualified_install_rejects_unresolved_or_unsafe_external_generic_targets
     %i[broken directory writable unsafe_ancestor].each do |kind|
       reset_harness
-      install!
+      prepare_runtime!
       target = File.join(@harness.root, "external-command")
       if kind == :directory
         FileUtils.mkdir_p(target)
@@ -387,7 +409,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
 
   def test_failed_qualified_upgrade_preserves_unrelated_generic_launcher
     paf_before = simulate_paf
-    install!
+    prepare_runtime!
     target = File.join(@harness.root, "unrelated-generic")
     @harness.write_executable(target, "#!/bin/sh\nexit 0\n")
     File.symlink(target, legacy_launcher)
@@ -607,7 +629,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
   def test_vendor_updater_cannot_turn_a_recorded_launcher_into_a_managed_wrapper
     %w[ads-claude-explore claude-explore paf-claude-explore].each do |name|
       reset_harness
-      install!
+      prepare_runtime!
       managed = File.join(@harness.root, name)
       @harness.write_executable(managed, "#!/bin/sh\nexit 99\n")
       FileUtils.rm(@harness.claude_launcher)
@@ -619,7 +641,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
   end
 
   def test_qualified_and_legacy_nested_agent_names_are_blocked_without_delegation
-    install!
+    prepare_runtime!
     %w[ads-claude-explore claude-explore paf-claude-explore].each do |name|
       _stdout, stderr, status = @harness.runtime("--claude-explore-check-command", "--", name)
       assert_equal 126, status.exitstatus, stderr
@@ -638,9 +660,9 @@ class ClaudeExploreMigrationTest < Minitest::Test
     @persistent_paths = nil
   end
 
-  def install!
-    _stdout, stderr, status = @harness.install
-    assert status.success?, stderr
+  def prepare_runtime!
+    @harness.prepare_installed_fixture
+    assert File.symlink?(@harness.installed_launcher)
   end
 
   def legacy_launcher
@@ -650,7 +672,7 @@ class ClaudeExploreMigrationTest < Minitest::Test
   # Synthetic legacy metadata/layout: no reliance on Git history or real installs.
   # The core launcher still works before and after fault-injected rollback.
   def legacy_install!
-    install!
+    prepare_runtime!
     active = @harness.current_runtime
     Dir[File.join(active, "{bin,lib}", "*")].each do |path|
       next unless File.file?(path)

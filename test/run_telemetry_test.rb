@@ -586,8 +586,8 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
 
   def setup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    _stdout, stderr, status = @harness.install
-    assert status.success?, stderr
+    @harness.prepare_installed_fixture
+    assert File.symlink?(@harness.installed_launcher)
   end
 
   def teardown
@@ -799,8 +799,8 @@ class ClaudeExploreRunTelemetryTest < Minitest::Test
   def replace_harness
     @harness.cleanup
     @harness = ClaudeExploreHarness.new(telemetry: true)
-    _stdout, stderr, status = @harness.install
-    assert status.success?, stderr
+    @harness.prepare_installed_fixture
+    assert File.symlink?(@harness.installed_launcher)
   end
 
   def git(repository, *arguments)
