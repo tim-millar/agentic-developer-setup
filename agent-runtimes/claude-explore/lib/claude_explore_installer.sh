@@ -24,20 +24,20 @@ case "$($REALPATH_BIN "$POLICY_FILE")" in "$SOURCE_ROOT"/*) ;; *) die "source po
 
 # Select stat syntax once from trusted platform information, never from a path.
 case "$(/usr/bin/uname -s)" in
-  Darwin) PLATFORM=macos; STAT_FORMAT_FLAG=-f; STAT_MODE_FORMAT=%Lp ;;
-  Linux) PLATFORM=linux; STAT_FORMAT_FLAG=-c; STAT_MODE_FORMAT=%a ;;
+  Darwin) PLATFORM=macos; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-f; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%Lp ;;
+  Linux) PLATFORM=linux; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-c; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%a ;;
   *) printf '%s\n' 'ads-claude-explore installer: unsupported platform; expected macOS or Linux' >&2; exit 1 ;;
 esac
 [ "$BASH_VERSINFO" -gt 3 ] || { [ "$BASH_VERSINFO" -eq 3 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; } || die "/bin/bash >= 3.2 is required"
 
 file_mode() {
-  stat_value=$(stat "$STAT_FORMAT_FLAG" "$STAT_MODE_FORMAT" "$1") || return 1
+  stat_value=$(stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" "$CLAUDE_EXPLORE_STAT_MODE_FORMAT" "$1") || return 1
   case "$stat_value" in ''|*[!0-7]*|?????*) return 1 ;; esac
   printf '%s\n' "$stat_value"
 }
 
 file_uid() {
-  stat_value=$(stat "$STAT_FORMAT_FLAG" '%u' "$1") || return 1
+  stat_value=$(stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" '%u' "$1") || return 1
   case "$stat_value" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s\n' "$stat_value"
 }

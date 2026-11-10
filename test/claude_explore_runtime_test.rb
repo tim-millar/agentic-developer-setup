@@ -29,7 +29,7 @@ class ClaudeExploreRuntimeTest < Minitest::Test
       end
 
       _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info",
-        extra_env: {"STAT_FORMAT_FLAG" => "--dereference", "STAT_MODE_FORMAT" => "%s", "PLATFORM" => "untrusted"})
+        extra_env: {"CLAUDE_EXPLORE_STAT_FORMAT_FLAG" => "--dereference", "CLAUDE_EXPLORE_STAT_MODE_FORMAT" => "%s", "CLAUDE_EXPLORE_STAT_PLATFORM" => "untrusted"})
       assert status.success?, stderr
       refute File.exist?(marker)
       counts = @harness.metadata_counts(log)
@@ -340,7 +340,10 @@ class ClaudeExploreRuntimeTest < Minitest::Test
       "GITHUB_TOKEN" => "secret-github",
       "AWS_ACCESS_KEY_ID" => "secret-aws",
       "PGHOST" => "remote.example",
-      "SAFE_PROJECT_VALUE" => "preserved"
+      "SAFE_PROJECT_VALUE" => "preserved",
+      "PLATFORM" => "project-platform",
+      "STAT_FORMAT_FLAG" => "project-format-flag",
+      "STAT_MODE_FORMAT" => "project-mode-format"
     }
     _stdout, stderr, status = @harness.runtime("--model", "sonnet", "inspect locally", extra_env: extra)
     assert status.success?, stderr
@@ -349,6 +352,10 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     refute_includes child_env, "secret-aws"
     refute_includes child_env, "PGHOST="
     assert_includes child_env, "SAFE_PROJECT_VALUE=preserved"
+    project_controls = child_env.lines(chomp: true).grep(/\A(?:PLATFORM|STAT_FORMAT_FLAG|STAT_MODE_FORMAT)=/)
+    assert_includes project_controls, "PLATFORM=project-platform"
+    assert_includes project_controls, "STAT_FORMAT_FLAG=project-format-flag"
+    assert_includes project_controls, "STAT_MODE_FORMAT=project-mode-format"
     assert_includes child_env, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
     assert_includes child_env, "CLAUDE_CODE_DISABLE_ARTIFACT=1"
     assert_includes child_env, "GIT_TERMINAL_PROMPT=0"
