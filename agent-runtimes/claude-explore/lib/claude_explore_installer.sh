@@ -24,8 +24,8 @@ case "$($REALPATH_BIN "$POLICY_FILE")" in "$SOURCE_ROOT"/*) ;; *) die "source po
 
 # Select stat syntax once from trusted platform information, never from a path.
 case "$(/usr/bin/uname -s)" in
-  Darwin) PLATFORM=macos; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-f; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%Lp ;;
-  Linux) PLATFORM=linux; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-c; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%a ;;
+  Darwin) CLAUDE_EXPLORE_STAT_PLATFORM=macos; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-f; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%Lp ;;
+  Linux) CLAUDE_EXPLORE_STAT_PLATFORM=linux; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-c; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%a ;;
   *) printf '%s\n' 'ads-claude-explore installer: unsupported platform; expected macOS or Linux' >&2; exit 1 ;;
 esac
 [ "$BASH_VERSINFO" -gt 3 ] || { [ "$BASH_VERSINFO" -eq 3 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; } || die "/bin/bash >= 3.2 is required"
@@ -201,7 +201,7 @@ path_exists() { [ -e "$1" ] || [ -L "$1" ]; }
 # lstat identity also captures owner/mode. Renames within one destination
 # filesystem retain this identity; a replacement is never cleanup authority.
 file_identity() {
-  case "$PLATFORM" in
+  case "$CLAUDE_EXPLORE_STAT_PLATFORM" in
     macos) stat -f '%d:%i:%u:%Lp' "$1" ;;
     linux) stat -c '%d:%i:%u:%a' "$1" ;;
   esac

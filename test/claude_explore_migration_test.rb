@@ -20,9 +20,21 @@ class ClaudeExploreMigrationTest < Minitest::Test
       reset_harness
       source = @harness.copy_runtime_source
       log = @harness.instrument_metadata_tools(source, platform: platform)
+      # Capture only this synthetic project control from each external version probe.
+      @harness.write_executable(@harness.claude_target, <<~SH)
+        #!/bin/sh
+        if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
+          printf '%s\\n' "${PLATFORM-unset}" >> "$FAKE_VERSION_ENV_LOG"
+          printf '%s\\n' 'Claude Code 2.1.224'
+          exit 0
+        fi
+        exit 97
+      SH
 
-      _stdout, stderr, status = @harness.install_from(File.join(source, "install.sh"))
+      _stdout, stderr, status = @harness.install_from(File.join(source, "install.sh"),
+        extra_env: {"PLATFORM" => "project-platform", "CLAUDE_EXPLORE_STAT_PLATFORM" => "untrusted-platform"})
       assert status.success?, stderr
+      assert_equal ["project-platform"], @harness.read(@harness.claude_version_env_log).lines(chomp: true).uniq
       counts = @harness.metadata_counts(log)
       flavor = ((platform || native) == "Darwin") ? "bsd" : "gnu"
       %w[install.sh claude_explore_installer.sh].each do |family|
