@@ -42,12 +42,23 @@ require_realpath() {
   fi
 }
 
+# Select stat syntax once from trusted platform information, never from a path.
+case "$(/usr/bin/uname -s)" in
+  Darwin) CLAUDE_EXPLORE_STAT_PLATFORM=macos; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-f; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%Lp ;;
+  Linux) CLAUDE_EXPLORE_STAT_PLATFORM=linux; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-c; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%a ;;
+  *) printf '%s\n' 'ads-claude-explore: unsupported platform; expected macOS or Linux' >&2; exit 1 ;;
+esac
+
 file_mode() {
-  if /usr/bin/stat -f '%Lp' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%Lp' "$1"; else /usr/bin/stat -c '%a' "$1"; fi
+  stat_value=$(/usr/bin/stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" "$CLAUDE_EXPLORE_STAT_MODE_FORMAT" "$1") || return 1
+  case "$stat_value" in ''|*[!0-7]*|?????*) return 1 ;; esac
+  printf '%s\n' "$stat_value"
 }
 
 file_uid() {
-  if /usr/bin/stat -f '%u' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%u' "$1"; else /usr/bin/stat -c '%u' "$1"; fi
+  stat_value=$(/usr/bin/stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" '%u' "$1") || return 1
+  case "$stat_value" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$stat_value"
 }
 
 safe_owned_file_kind() {
@@ -727,7 +738,7 @@ runtime_info() {
   printf 'runtime_id=%s\nruntime_version=%s\npolicy_schema_version=%s\npolicy_version=%s\n' "$CLAUDE_EXPLORE_RUNTIME_ID" "$CLAUDE_EXPLORE_RUNTIME_VERSION" "$CLAUDE_EXPLORE_POLICY_SCHEMA_VERSION" "$CLAUDE_EXPLORE_POLICY_VERSION"
   printf 'public_launcher_path=%s\n' "$HOME/.local/bin/ads-claude-explore"
   printf 'installed_runtime_path=%s\nrecorded_claude_launcher_path=%s\nresolved_current_claude_path=%s\nclaude_version=%s\n' "$RUNTIME_ROOT" "$META_CLAUDE_LAUNCHER" "$CLAUDE_TARGET" "$CLAUDE_VERSION"
-  case "$(uname -s)" in Darwin) printf 'supported_platform=macos\n' ;; Linux) printf 'supported_platform=linux\n' ;; *) printf 'supported_platform=unsupported\n' ;; esac
+  printf 'supported_platform=%s\n' "$CLAUDE_EXPLORE_STAT_PLATFORM"
   printf 'sandbox_required=%s\nunsandboxed_retry_allowed=%s\nguarded_commands=%s\n' "$CLAUDE_EXPLORE_SANDBOX_ENABLED" "$CLAUDE_EXPLORE_SANDBOX_ALLOW_UNSANDBOXED_COMMANDS" "$(printf '%s' "$CLAUDE_EXPLORE_GUARDED_EXECUTABLES" | tr '\n' ',')"
   printf 'stripped_environment=%s\ncredential_file_denies=%s\n' "$(printf '%s' "$CLAUDE_EXPLORE_ENV_UNSET" | tr '\n' ',')" "$(printf '%s' "$CLAUDE_EXPLORE_CREDENTIAL_PATHS" | tr '\n' ',')"
   printf 'known_limitations=same-user-bypass,absolute-path-bypass,finite-command-list,sandbox-permitted-network,application-mediated-services\n'

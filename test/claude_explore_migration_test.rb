@@ -14,6 +14,42 @@ class ClaudeExploreMigrationTest < Minitest::Test
     @harness.cleanup
   end
 
+  def test_real_install_metadata_queries_select_native_and_alternate_stat_syntax_once
+    native = RbConfig::CONFIG["host_os"].include?("darwin") ? "Darwin" : "Linux"
+    [nil, (native == "Darwin") ? "Linux" : "Darwin"].each do |platform|
+      reset_harness
+      source = @harness.copy_runtime_source
+      log = @harness.instrument_metadata_tools(source, platform: platform)
+      # Capture only this synthetic project control from each external version probe.
+      @harness.write_executable(@harness.claude_target, <<~SH)
+        #!/bin/sh
+        if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
+          printf '%s\\n' "${PLATFORM-unset}" >> "$FAKE_VERSION_ENV_LOG"
+          printf '%s\\n' 'Claude Code 2.1.224'
+          exit 0
+        fi
+        exit 97
+      SH
+
+      _stdout, stderr, status = @harness.install_from(File.join(source, "install.sh"),
+        extra_env: {"PLATFORM" => "project-platform", "CLAUDE_EXPLORE_STAT_PLATFORM" => "untrusted-platform"})
+      assert status.success?, stderr
+      assert_equal ["project-platform"], @harness.read(@harness.claude_version_env_log).lines(chomp: true).uniq
+      counts = @harness.metadata_counts(log)
+      flavor = ((platform || native) == "Darwin") ? "bsd" : "gnu"
+      %w[install.sh claude_explore_installer.sh].each do |family|
+        assert_equal 1, counts.fetch("#{family}:platform", 0)
+        %w[mode uid].each do |query|
+          assert_operator counts.fetch("#{family}:query:#{query}"), :>, 0
+          assert_equal counts.fetch("#{family}:query:#{query}"), counts.fetch("#{family}:stat:#{flavor}-#{query}", 0)
+          assert_equal 0, counts.fetch("#{family}:stat:#{(flavor == "bsd") ? "gnu" : "bsd"}-#{query}", 0)
+        end
+      end
+      assert_operator counts.fetch("claude_explore_installer.sh:stat:#{flavor}-identity"), :>, 0
+      assert @harness.runtime("--claude-explore-runtime-info").fetch(2).success?
+    end
+  end
+
   def test_prepared_fixture_matches_real_installation_and_is_isolated
     _stdout, stderr, status = @harness.install
     assert status.success?, stderr

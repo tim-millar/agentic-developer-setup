@@ -23,8 +23,24 @@ case "$OUTCOME_SOURCE" in "$SOURCE_ROOT"/*) ;; *)
   echo "ads-claude-explore installer: outcome reconciler source resolves outside runtime" >&2
   exit 1
 esac
-file_mode() { if /usr/bin/stat -f '%Lp' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%Lp' "$1"; else /usr/bin/stat -c '%a' "$1"; fi; }
-file_uid() { if /usr/bin/stat -f '%u' "$1" >/dev/null 2>&1; then /usr/bin/stat -f '%u' "$1"; else /usr/bin/stat -c '%u' "$1"; fi; }
+# Select stat syntax once from trusted platform information, never from a path.
+case "$(/usr/bin/uname -s)" in
+  Darwin) CLAUDE_EXPLORE_STAT_PLATFORM=macos; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-f; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%Lp ;;
+  Linux) CLAUDE_EXPLORE_STAT_PLATFORM=linux; CLAUDE_EXPLORE_STAT_FORMAT_FLAG=-c; CLAUDE_EXPLORE_STAT_MODE_FORMAT=%a ;;
+  *) printf '%s\n' 'ads-claude-explore installer: unsupported platform; expected macOS or Linux' >&2; exit 1 ;;
+esac
+
+file_mode() {
+  stat_value=$(/usr/bin/stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" "$CLAUDE_EXPLORE_STAT_MODE_FORMAT" "$1") || return 1
+  case "$stat_value" in ''|*[!0-7]*|?????*) return 1 ;; esac
+  printf '%s\n' "$stat_value"
+}
+
+file_uid() {
+  stat_value=$(/usr/bin/stat "$CLAUDE_EXPLORE_STAT_FORMAT_FLAG" '%u' "$1") || return 1
+  case "$stat_value" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$stat_value"
+}
 trusted_file() {
   trusted_path=$1 trusted_kind=$2
   [ -f "$trusted_path" ] && [ ! -L "$trusted_path" ] || return 1
