@@ -4,6 +4,7 @@ require "fileutils"
 require "json"
 require "open3"
 require "rbconfig"
+require "shellwords"
 require "tmpdir"
 
 class ClaudeExploreHarness
@@ -223,6 +224,66 @@ class ClaudeExploreHarness
     destination
   end
 
+  # Instrument only a disposable copy. Logs contain fixed query categories, never
+  # paths, arguments, metadata values or environment contents. Native delegates
+  # exec the real tools with the original argv; alternate syntax is a format fixture.
+  def instrument_metadata_tools(directory, platform: nil)
+    log = File.join(root, "metadata-counts.log")
+    Dir[File.join(directory, "{bin,lib}", "*"), File.join(directory, "install.sh")].each do |path|
+      next unless File.file?(path)
+
+      contents = File.read(path)
+      next unless contents.include?("file_mode()")
+
+      family = File.basename(path)
+      delegate = File.join(root, "metadata-delegates", family)
+      stat = "#{delegate}-stat"
+      uname = "#{delegate}-uname"
+      id = "#{delegate}-id"
+      write_executable(stat, <<~SH)
+        #!/bin/sh
+        [ "$#" -eq 3 ] || exit 97
+        case "$1:$2" in
+          -f:%Lp) category=bsd-mode ;;
+          -f:%u) category=bsd-uid ;;
+          -c:%a) category=gnu-mode ;;
+          -c:%u) category=gnu-uid ;;
+          -f:%d:%i:%u:%Lp) category=bsd-identity ;;
+          -c:%d:%i:%u:%a) category=gnu-identity ;;
+          *) exit 97 ;;
+        esac
+        printf '%s\\n' "#{family}:stat:$category" >> #{Shellwords.escape(log)}
+        #{metadata_format_translation(platform)}
+        exec /usr/bin/stat "$@"
+      SH
+      write_executable(uname, <<~SH)
+        #!/bin/sh
+        [ "$#" -eq 1 ] && [ "$1" = -s ] || exit 97
+        printf '%s\\n' '#{family}:platform' >> #{Shellwords.escape(log)}
+        #{platform ? "printf '%s\\n' #{Shellwords.escape(platform)}" : 'exec /usr/bin/uname "$@"'}
+      SH
+      write_executable(id, <<~SH)
+        #!/bin/sh
+        [ "$#" -eq 1 ] && [ "$1" = -u ] || exit 97
+        printf '%s\\n' '#{family}:id' >> #{Shellwords.escape(log)}
+        exec /usr/bin/id "$@"
+      SH
+      {"stat" => stat, "uname" => uname, "id" => id}.each do |tool, replacement|
+        contents = contents.gsub("/usr/bin/#{tool}", Shellwords.escape(replacement))
+        contents = contents.gsub(/(?<![\w\/-])#{tool} (?=[-"'])/, "#{Shellwords.escape(replacement)} ")
+      end
+      contents = contents.gsub(/file_(mode|uid)\(\) \{/) do |definition|
+        "#{definition} printf '%s\\n' '#{family}:query:#{$1}' >> #{Shellwords.escape(log)};"
+      end
+      File.write(path, contents)
+    end
+    log
+  end
+
+  def metadata_counts(log)
+    read(log).lines(chomp: true).tally
+  end
+
   def replace_installed_runtime_text(file, before, after)
     path = File.join(current_runtime, file)
     contents = File.read(path)
@@ -262,6 +323,21 @@ class ClaudeExploreHarness
   end
 
   private
+
+  # Only alternate-platform fixtures translate known formats. Both formats still
+  # obtain fresh native lstat results, including symlink identity and ownership.
+  def metadata_format_translation(platform)
+    return "" unless platform
+
+    flag, mode, identity = RbConfig::CONFIG["host_os"].include?("darwin") ? ["-f", "%Lp", "%d:%i:%u:%Lp"] : ["-c", "%a", "%d:%i:%u:%a"]
+    <<~SH
+      case "$category" in
+        *-mode) set -- #{flag} '#{mode}' "$3" ;;
+        *-uid) set -- #{flag} '%u' "$3" ;;
+        *-identity) set -- #{flag} '#{identity}' "$3" ;;
+      esac
+    SH
+  end
 
   def fake_claude(default_version)
     <<~SH

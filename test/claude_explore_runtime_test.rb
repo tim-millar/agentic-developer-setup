@@ -16,6 +16,137 @@ class ClaudeExploreRuntimeTest < Minitest::Test
     @harness.cleanup
   end
 
+  def test_metadata_queries_select_native_and_alternate_stat_syntax_once
+    native = RbConfig::CONFIG["host_os"].include?("darwin") ? "Darwin" : "Linux"
+    [nil, (native == "Darwin") ? "Linux" : "Darwin"].each do |platform|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      @harness.prepare_installed_fixture
+      log = @harness.instrument_metadata_tools(@harness.current_runtime, platform: platform)
+      marker = File.join(@harness.root, "hostile-metadata-tool")
+      %w[uname stat].each do |tool|
+        @harness.write_executable(File.join(@harness.fake_bin, tool), "#!/bin/sh\n: > #{Shellwords.escape(marker)}\nexit 97\n")
+      end
+
+      _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info",
+        extra_env: {"STAT_FORMAT_FLAG" => "--dereference", "STAT_MODE_FORMAT" => "%s", "PLATFORM" => "untrusted"})
+      assert status.success?, stderr
+      refute File.exist?(marker)
+      counts = @harness.metadata_counts(log)
+      flavor = ((platform || native) == "Darwin") ? "bsd" : "gnu"
+      %w[ads-claude-explore claude_explore_runtime.sh].each do |family|
+        assert_equal 1, counts.fetch("#{family}:platform", 0)
+        %w[mode uid].each do |query|
+          assert_operator counts.fetch("#{family}:query:#{query}"), :>, 0
+          assert_equal counts.fetch("#{family}:query:#{query}"), counts.fetch("#{family}:stat:#{flavor}-#{query}", 0)
+          assert_equal 0, counts.fetch("#{family}:stat:#{(flavor == "bsd") ? "gnu" : "bsd"}-#{query}", 0)
+        end
+      end
+    end
+  end
+
+  def test_later_mode_owner_and_symlink_changes_are_rejected_in_the_same_runtime_shell
+    %i[mode owner symlink].each do |mutation|
+      @harness.cleanup
+      @harness = ClaudeExploreHarness.new
+      @harness.prepare_installed_fixture
+      @harness.instrument_metadata_tools(@harness.current_runtime)
+      target = File.join(@harness.current_runtime, "lib/claude_explore_guard.sh")
+      marker = File.join(@harness.root, "later-owner-change")
+      if mutation == :owner
+        delegate = File.join(@harness.root, "metadata-delegates/claude_explore_runtime.sh-stat")
+        @harness.write_executable(delegate, <<~SH)
+          #!/bin/sh
+          if [ "$2" = '%u' ] && [ "$3" = #{Shellwords.escape(target)} ] && [ -f #{Shellwords.escape(marker)} ]; then
+            printf '%s\\n' '#{Process.uid + 1}'
+          else
+            exec /usr/bin/stat "$@"
+          fi
+        SH
+      end
+      change = case mutation
+      when :mode then "/bin/chmod 0722 #{Shellwords.escape(target)}"
+      when :owner then ": > #{Shellwords.escape(marker)}"
+      when :symlink
+        copy = File.join(@harness.root, "guard-copy")
+        FileUtils.cp(target, copy, preserve: true)
+        "/bin/rm #{Shellwords.escape(target)}; /bin/ln -s #{Shellwords.escape(copy)} #{Shellwords.escape(target)}"
+      end
+      @harness.replace_installed_runtime_text("lib/claude_explore_runtime.sh",
+        "initialize_runtime_source || exit 1", "initialize_runtime_source || exit 1\n#{change}")
+
+      _stdout, stderr, status = @harness.runtime("--claude-explore-runtime-info")
+      assert_equal 1, status.exitstatus, "#{mutation}: #{stderr}"
+      assert_includes stderr, "installed executable runtime file is missing or unsafe"
+    end
+  end
+
+  def test_each_metadata_helper_rejects_unsupported_missing_failed_and_malformed_queries
+    source = @harness.copy_runtime_source
+    @harness.instrument_metadata_tools(source)
+    %w[bin/ads-claude-explore install.sh lib/claude_explore_runtime.sh lib/claude_explore_installer.sh].each do |relative|
+      program = metadata_query_program(File.join(source, relative))
+      delegate = File.join(@harness.root, "metadata-delegates", "#{File.basename(relative)}-stat")
+      shell = relative.start_with?("lib/") ? ["/bin/bash", "--noprofile", "--norc", "-p"] : ["/bin/sh"]
+      # Malformed output and a nonzero result must fail without arithmetic or eval.
+      @harness.write_executable(delegate, <<~SH)
+        #!/bin/sh
+        printf '%s\\n' "$FAKE_STAT_VALUE"
+        exit "$FAKE_STAT_EXIT"
+      SH
+      cases = {"mode" => ["", "8", "600 extra", "600\n700", "10000"], "uid" => ["", "-1", "1x", "1\n2"]}
+      cases.each do |query, values|
+        values.each do |value|
+          _stdout, stderr, status = @harness.run([*shell, "-c", "#{program}\n! file_#{query} \"$1\"", "test", "unused"],
+            extra_env: {"FAKE_STAT_VALUE" => value, "FAKE_STAT_EXIT" => "0"})
+          assert status.success?, "#{relative} #{query}: #{value.inspect}: #{stderr}"
+        end
+        _stdout, stderr, status = @harness.run([*shell, "-c", "#{program}\n! file_#{query} \"$1\"", "test", "unused"],
+          extra_env: {"FAKE_STAT_VALUE" => "600", "FAKE_STAT_EXIT" => "1"})
+        assert status.success?, "#{relative} #{query} failed lookup: #{stderr}"
+      end
+      FileUtils.rm(delegate)
+      _stdout, _stderr, status = @harness.run([*shell, "-c", "#{program}\n! file_mode \"$1\" && ! file_uid \"$1\"", "test", "unused"])
+      assert status.success?, "#{relative} missing stat"
+      uname = File.join(@harness.root, "metadata-delegates", "#{File.basename(relative)}-uname")
+      ["Unsupported", ""].each do |platform|
+        @harness.write_executable(uname, "#!/bin/sh\nprintf '%s\\n' #{Shellwords.escape(platform)}\n")
+        _stdout, stderr, status = @harness.run([*shell, "-c", "#{program}\nexit 0"])
+        assert_equal 1, status.exitstatus, "#{relative}: #{stderr}"
+        assert_includes stderr, "unsupported platform; expected macOS or Linux"
+      end
+    end
+  end
+
+  def test_each_metadata_helper_reads_fresh_native_modes_and_symlink_metadata
+    source = @harness.copy_runtime_source
+    log = @harness.instrument_metadata_tools(source)
+    file = File.join(@harness.root, "quoted path * [file]")
+    link = File.join(@harness.root, "metadata-link")
+    @harness.write_executable(file, "#!/bin/sh\nexit 0\n")
+    File.symlink(file, link)
+    %w[bin/ads-claude-explore install.sh lib/claude_explore_runtime.sh lib/claude_explore_installer.sh].each do |relative|
+      File.chmod(0o700, file)
+      program = metadata_query_program(File.join(source, relative))
+      program += <<~SH
+        [ "$(file_mode "$1")" = 700 ] &&
+          [ "$(file_uid "$1")" = #{Process.uid} ] || exit 90
+        /bin/chmod 0722 "$1" || exit 91
+        [ "$(file_mode "$1")" = 722 ] || exit 92
+        [ "$(file_mode "$2")" = #{(File.lstat(link).mode & 0o7777).to_s(8)} ] || exit 93
+        [ "$(file_uid "$2")" = #{File.lstat(link).uid} ] || exit 94
+        /bin/rm "$1" || exit 95
+        ! file_mode "$1" && ! file_uid "$1"
+      SH
+      shell = relative.start_with?("lib/") ? ["/bin/bash", "--noprofile", "--norc", "-p"] : ["/bin/sh"]
+      _stdout, stderr, status = @harness.run([*shell, "-c", program, "test", file, link])
+      assert status.success?, "#{relative}: #{stderr}"
+      @harness.write_executable(file, "#!/bin/sh\nexit 0\n")
+      counts = @harness.metadata_counts(log)
+      assert_equal 1, counts.fetch("#{File.basename(relative)}:platform")
+    end
+  end
+
   def test_install_runtime_info_idempotence_and_uninstall
     stdout, stderr, status = @harness.install
     assert status.success?, stderr
@@ -1090,6 +1221,15 @@ class ClaudeExploreRuntimeTest < Minitest::Test
   end
 
   private
+
+  def metadata_query_program(path)
+    contents = File.read(path)
+    selection = contents[/^# Select stat syntax[^\n]*\ncase .*?^esac/m]
+    functions = contents.scan(/^file_(?:mode|uid)\(\) \{.*?^\}/m)
+    raise "metadata selection/functions not found in #{path}" unless selection && functions.length == 2
+
+    "#{selection}\n#{functions.join("\n")}\n"
+  end
 
   def prepare_runtime!
     @harness.prepare_installed_fixture

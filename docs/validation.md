@@ -54,6 +54,8 @@ Run only the focused Claude runtime tests with:
 make test-claude-runtime
 ```
 
+The Claude metadata regressions instrument isolated copies with strict, category-only delegates that preserve native tool arguments and results. They compare each mode/uid query with exactly one stat subprocess after independent platform selection, retain separate transaction-identity lookups, and exercise both Darwin and Linux formats (the other format is translated to fresh native metadata on a single-platform host). Fresh-mode/symlink queries, later runtime mode/owner/symlink mutations, unsupported platforms, missing tools and failed/malformed results remain covered. Timing is diagnostic only, with no latency thresholds in functional tests.
+
 Run the authoritative local and CI sequence—lint, tests, then validation of the live repository—with:
 
 ```sh
