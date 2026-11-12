@@ -127,6 +127,18 @@ class AdapterCLITest < AdapterTest
     end
   end
 
+  def test_credential_bearing_provider_command_is_not_emitted_by_cli
+    credential = "Bearer synthetic_cli_value_123456"
+    register("ruby", contributions: {"commands" => [command(argv: ["tool", credential])]})
+    selection = File.join(@temporary, "selection.yml")
+    File.write(selection, YAML.dump(selected(["ecosystem", "ruby"])))
+    stdout, stderr, status = run_cli(@target, "--selection", selection)
+    assert_equal 1, status
+    assert_empty stdout
+    refute_includes stderr, credential
+    assert_match(/recognised credential material/, stderr)
+  end
+
   def test_duplicate_yaml_keys_are_rejected_in_all_selection_mappings
     register("ruby")
     command_yaml = YAML.dump(command("repository")).delete_prefix("---\n").lines.map { |line| "      #{line}" }.join
