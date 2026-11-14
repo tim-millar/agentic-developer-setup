@@ -156,6 +156,79 @@ class AdapterEdgeContractTest < AdapterTest
     refute_includes error.message, "synthetic-secret"
   end
 
+  def test_base_command_values_use_shared_credential_policy_without_disclosure
+    credential = "Bearer synthetic_bearer_value_123456"
+    register("ruby", contributions: {"commands" => [command(argv: ["tool", credential])]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"])) }
+    assert_match(/recognised credential material/, error.message)
+    refute_includes error.full_message, credential
+
+    register("python", contributions: {"commands" => [command("python-test", argv: ["pytest"], env: {"BUILD_MODE" => credential})]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "python"])) }
+    assert_match(/recognised credential material/, error.message)
+    refute_includes error.full_message, credential
+  end
+
+  def test_command_arguments_reject_representative_shared_credential_formats
+    credentials = ["ghp_#{"SyntheticValue" * 3}",
+      "-----BEGIN RSA PRIVATE KEY-----\nsynthetic\n-----END RSA PRIVATE KEY-----",
+      "https://user:synthetic-password@example.invalid/service",
+      "API_TOKEN=synthetic-sensitive-assignment"]
+    credentials.each do |credential|
+      error = assert_raises(A::Error) { A::Contributions.tokens!(["tool", credential]) }
+      refute_includes error.full_message, credential
+    end
+    assert_equal ["tool", "tokenization"], A::Contributions.tokens!(%w[tool tokenization])
+  end
+
+  def test_wrapper_prefix_argument_uses_shared_credential_policy
+    credential = "Bearer synthetic_wrapper_value_123456"
+    register("ruby", contributions: {"commands" => [command]})
+    register("docker", "runtime", contributions: {"command_wrappers" => [wrapper(prefix_argv: [credential])]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"], ["runtime", "docker"])) }
+    refute_includes error.full_message, credential
+  end
+
+  def test_wrapper_suffix_argument_uses_shared_credential_policy
+    credential = "Bearer synthetic_wrapper_value_123456"
+    register("ruby", contributions: {"commands" => [command]})
+    register("docker", "runtime", contributions: {"command_wrappers" => [wrapper(suffix_argv: [credential])]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"], ["runtime", "docker"])) }
+    refute_includes error.full_message, credential
+  end
+
+  def test_wrapper_environment_value_uses_shared_credential_policy
+    credential = "Bearer synthetic_wrapper_value_123456"
+    register("ruby", contributions: {"commands" => [command]})
+    register("docker", "runtime", contributions: {"command_wrappers" => [wrapper(env: {"BUILD_MODE" => credential})]})
+    error = assert_raises(A::Error) { assess(selected(["ecosystem", "ruby"], ["runtime", "docker"])) }
+    assert_match(/recognised credential material/, error.message)
+    refute_includes error.full_message, credential
+  end
+
+  def test_explicit_command_override_argument_cannot_bypass_credential_validation
+    register("ruby", contributions: {"commands" => [command]})
+    register("rails", "framework", contributions: {"commands" => [command("rails-test", argv: %w[bin rails test])]})
+    document = selected(["ecosystem", "ruby"], ["framework", "rails"])
+    blocked = assess(document)
+    credential = "Bearer synthetic_override_value_123456"
+    document["resolutions"] = [decision(blocked, "override_command", {"command" => command("repository-override", argv: ["tool", credential])})]
+    error = assert_raises(A::Error) { assess(document) }
+    refute_includes error.full_message, credential
+  end
+
+  def test_explicit_command_override_environment_cannot_bypass_credential_validation
+    register("ruby", contributions: {"commands" => [command]})
+    register("rails", "framework", contributions: {"commands" => [command("rails-test", argv: %w[bin rails test])]})
+    document = selected(["ecosystem", "ruby"], ["framework", "rails"])
+    blocked = assess(document)
+    credential = "Bearer synthetic_override_value_123456"
+    override = command("repository-override", env: {"BUILD_MODE" => credential})
+    document["resolutions"] = [decision(blocked, "override_command", {"command" => override})]
+    error = assert_raises(A::Error) { assess(document) }
+    refute_includes error.full_message, credential
+  end
+
   def test_manifest_version_cannot_have_a_trailing_newline
     register("ruby", version: "1.0.0\n")
     assert_raises(A::Error) { registry }

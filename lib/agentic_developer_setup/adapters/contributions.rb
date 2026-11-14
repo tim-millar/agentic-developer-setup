@@ -87,6 +87,7 @@ module AgenticDeveloperSetup
 
       def self.tokens!(tokens)
         raise Error, "command argument contains NUL" if tokens.any? { |token| token.include?("\0") }
+        tokens.each { |token| InputValues.validate_non_secret!(token) }
         # Reject shell-evaluation forms even when buried inside an execution
         # wrapper (for example env bash -c). No command is executed here.
         tokens.each_with_index do |token, index|
@@ -109,6 +110,7 @@ module AgenticDeveloperSetup
             raise Error, "secret values must be represented as requirements"
           end
           raise Error, "command environment contains NUL" if value.include?("\0")
+          InputValues.validate_non_secret!(value)
         end
       end
     end

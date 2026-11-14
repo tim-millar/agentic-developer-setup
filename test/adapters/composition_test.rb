@@ -25,6 +25,20 @@ class AdapterCompositionTest < AdapterTest
     assert_equal result, assess(document)
   end
 
+  def test_final_effective_command_reuses_common_validation_after_composition
+    register("ruby", contributions: {"commands" => [command(argv: ["bundle", "exec", "rspec"], env: {"MODE" => "test"})]})
+    register("docker", "runtime", contributions: {"command_wrappers" => [wrapper(prefix: ["runner"], suffix_argv: ["--verbose"], env: {"LANG" => "C"})]})
+    calls = []
+    trace = TracePoint.new(:call) do |event|
+      calls << event.binding.local_variable_get(:command) if event.self == A::Contributions && event.method_id == :command!
+    end
+    result = trace.enable { assess(selected(["ecosystem", "ruby"], ["runtime", "docker"])) }
+    assert_equal "ready", result.dig("composition", "status")
+    assert_equal 2, calls.length
+    assert_equal ["runner", "bundle", "exec", "rspec", "--verbose"], calls.last["argv"]
+    assert_equal({"MODE" => "test", "LANG" => "C"}, calls.last["env"])
+  end
+
   {"sinatra" => "ruby", "phoenix" => "elixir", "hydrogen" => "node", "fastapi" => "python"}.each do |framework, ecosystem|
     define_method("test_synthetic_#{ecosystem}_#{framework}_composition") do
       register(ecosystem, contributions: {"commands" => [command("#{ecosystem}-test")]})
