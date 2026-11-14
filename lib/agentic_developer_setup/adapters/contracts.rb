@@ -59,7 +59,12 @@ module AgenticDeveloperSetup
       end
 
       def load_yaml(path)
-        raw = File.binread(path)
+        parse_yaml(File.binread(path).freeze)
+      rescue SystemCallError
+        raise Error, "cannot read adapter YAML", cause: nil
+      end
+
+      def parse_yaml(raw)
         # Match adoption's AST-first interpretation: Psych otherwise keeps the
         # last occurrence of a repeated key before schema validation can see it.
         validate_yaml_keys!(Psych.parse_stream(raw))
@@ -68,8 +73,6 @@ module AgenticDeveloperSetup
         document
       rescue Psych::Exception, ArgumentError
         raise Error, "invalid adapter YAML", cause: nil
-      rescue SystemCallError
-        raise Error, "cannot read adapter YAML", cause: nil
       end
 
       def validate_yaml_keys!(node)

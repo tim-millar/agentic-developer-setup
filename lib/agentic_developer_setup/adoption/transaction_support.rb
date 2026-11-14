@@ -18,8 +18,8 @@ module AgenticDeveloperSetup
 
     module TransactionSupport
       ROOT = Pathname.new(__dir__).join("../../..").realpath
-      OPERATIONS = %w[initial_adoption add_components update_inherited reconcile_inherited].freeze
-      WRITES = %w[create_inherited create_specialised update_inherited].freeze
+      OPERATIONS = %w[initial_adoption add_components update_inherited reconcile_inherited adopt_adapters update_adapters].freeze
+      WRITES = %w[create_inherited create_specialised update_inherited replace_reviewed_specialisation].freeze
 
       module_function
 
@@ -52,7 +52,10 @@ module AgenticDeveloperSetup
 
       def load_yaml(path)
         # Inspect the AST before safe_load: Psych otherwise silently accepts duplicate keys.
-        raw = File.binread(path)
+        parse_yaml(File.binread(path).freeze)
+      end
+
+      def parse_yaml(raw)
         ast = Psych.parse_stream(raw)
         walk_yaml(ast)
         data = YAML.safe_load(raw, permitted_classes: [], permitted_symbols: [], aliases: false)
@@ -72,7 +75,10 @@ module AgenticDeveloperSetup
       end
 
       def schema!(kind, document)
-        errors = Schema.load(ROOT.join("schemas/framework-adoption-#{kind}-v1.schema.json")).validate(document)
+        version = document.is_a?(Hash) ? document["schema_version"] : nil
+        fail!("invalid_document", "unsupported #{kind} schema version", 2) unless [1, 2].include?(version) && version.is_a?(Integer)
+        filename = (kind == "adapter-decisions") ? "adapter-adoption-decisions-v#{version}" : "framework-adoption-#{kind}-v#{version}"
+        errors = Schema.load(ROOT.join("schemas/#{filename}.schema.json")).validate(document)
         fail!("invalid_document", errors.join("; "), 2) unless errors.empty?
         document
       end
@@ -157,9 +163,10 @@ module AgenticDeveloperSetup
         format("%04o", path.lstat.mode & 0o7777)
       end
 
-      def safe_path(root, relative)
+      def safe_path(root, relative, snapshot: nil)
         fail!("unsafe_path", "invalid repository-relative path: #{relative.inspect}") unless PathSafety.safe_relative?(relative, allow_dot: relative == ".") && !relative.end_with?("/") && relative.split("/").none? { |part| part.downcase == ".git" }
-        gitlinks = git!(root, "ls-files", "--stage", "-z").split("\0").filter_map do |entry|
+        snapshot&.assert_root!(root)
+        gitlinks = snapshot ? snapshot.gitlinks : git!(root, "ls-files", "--stage", "-z").split("\0").filter_map do |entry|
           entry.split("\t", 2).last if entry.start_with?("160000 ")
         end
         if gitlinks.any? { |path| relative.downcase == path.downcase || relative.downcase.start_with?("#{path.downcase}/") }
@@ -220,13 +227,13 @@ module AgenticDeveloperSetup
         end
       end
 
-      def committed_regular_file!(root, relative)
-        path = safe_path(root, relative)
+      def committed_regular_file!(root, relative, snapshot: nil)
+        path = safe_path(root, relative, snapshot: snapshot)
         fail!("local_modification", "reconciliation requires an existing regular target: #{relative}") unless path.file?
-        committed = git_tree(root)[relative]
+        committed = (snapshot ? snapshot.tree : git_tree(root))[relative]
         supported = committed && {"100644" => "0644", "100755" => "0755"}[committed.first]
         fail!("provenance_unavailable", "reconciliation target must be a regular file committed in target HEAD: #{relative}") unless supported
-        fail!("plan_stale", "reconciliation target index differs from HEAD: #{relative}") unless git_index(root)[relative] == committed
+        fail!("plan_stale", "reconciliation target index differs from HEAD: #{relative}") unless (snapshot ? snapshot.index : git_index(root))[relative] == committed
         blob = git!(root, "cat-file", "blob", committed.last).b
         unless File.binread(path) == blob && mode(path) == supported
           fail!("local_modification", "reconciliation target bytes/mode differ from committed HEAD; commit or discard local changes: #{relative}")
@@ -236,6 +243,56 @@ module AgenticDeveloperSetup
 
       def git_state(root)
         git!(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+      end
+    end
+
+    # A single preflight's immutable Git identities; working files are never cached.
+    class GitIdentitySnapshot
+      include TransactionSupport
+
+      attr_reader :root, :head, :tree, :index, :gitlinks
+
+      def initialize(root, expected_head: nil)
+        @root = Pathname.new(root).realpath.freeze
+        @head = GitCommand.revision(@root)&.freeze
+        valid_head = @head && (!expected_head || @head == expected_head)
+        fail!("plan_stale", "snapshot repository HEAD is unavailable or changed") unless valid_head
+        @index_path = index_path
+        @index_digest = index_digest
+        @tree = freeze_map(git_tree(@root, @head))
+        @index = freeze_map(git_index(@root))
+        fail!("plan_stale", "snapshot index differs from committed HEAD") unless @index == @tree
+        @gitlinks = @index.filter_map { |path, identity| path if identity.first == "160000" }.freeze
+        verify!
+        freeze
+      end
+
+      def assert_root!(root)
+        fail!("plan_stale", "Git snapshot belongs to a different repository") unless Pathname.new(root).realpath == @root
+      end
+
+      def verify!
+        valid = GitCommand.revision(@root) == @head && index_path == @index_path && index_digest == @index_digest
+        fail!("plan_stale", "Git HEAD or index changed during preflight") unless valid
+        true
+      end
+
+      private
+
+      def freeze_map(map)
+        map.each { |path, identity|
+          path.freeze
+          identity.each(&:freeze)
+          identity.freeze
+        }.freeze
+      end
+
+      def index_path
+        Pathname.new(git!(@root, "rev-parse", "--git-path", "index").strip).expand_path(@root).freeze
+      end
+
+      def index_digest
+        @index_path.file? ? Digest::SHA256.file(@index_path).hexdigest : nil
       end
     end
   end

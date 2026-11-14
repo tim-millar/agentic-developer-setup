@@ -72,7 +72,7 @@ check-reference-service:
 
 .PHONY: test-adoption
 test-adoption:
-	bundle exec ruby -Ilib -Itest test/manage_adoption_test.rb
+	bundle exec ruby -Ilib -Itest -e '["test/manage_adoption_test.rb", *Dir["test/adoption/**/*_test.rb"]].sort.each { |file| require File.expand_path(file) }'
 
 .PHONY: demo-adoption
 demo-adoption:

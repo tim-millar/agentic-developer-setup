@@ -22,6 +22,7 @@ module AgenticDeveloperSetup
       end
 
       def check!(allow_blocked: false)
+        return check_v2!(allow_blocked: allow_blocked) if plan["schema_version"] == 2
         @context = TransactionContext.new(target: plan.dig("target", "root"), source: plan.dig("source", "root"),
           operation: plan["operation"], scope: plan.dig("target", "scope", "path"),
           components: plan.dig("selection", "requested_components"), tier: plan.dig("selection", "requested_tier"),
@@ -57,7 +58,15 @@ module AgenticDeveloperSetup
           plan["actions"].filter_map { |action| action.dig("reviewed_content", "path") }
       end
 
+      def metadata_changed?
+        return changed? if plan["schema_version"] == 1
+        plan.dig("proposed_metadata", "digest") != plan.dig("inputs", "metadata", "digest")
+      end
+
       def changed?
+        if plan["schema_version"] == 2
+          return plan["actions"].any? { |action| WRITES.include?(action["action"]) } || plan.dig("proposed_metadata", "digest") != plan.dig("inputs", "metadata", "digest")
+        end
         plan["actions"].any? { |action| action["action"] != "no_change" }
       end
 
@@ -73,13 +82,55 @@ module AgenticDeveloperSetup
           fail!("preflight_failed", "applied file identity differs: #{file["path"]}") unless path.file? && digest(File.binread(path)) == file["result_digest"] && mode(path) == file["result_mode"]
         end
         metadata = safe_path(roots.first, METADATA_PATH)
-        fail!("preflight_failed", "applied metadata identity differs") unless metadata.file? && digest(File.binread(metadata)) == metadata_expected_digest
-        diagnostics = Validator.new(root: roots.first, framework_root: roots.last, schema_path: ROOT.join("schemas/framework-adoption-v1.schema.json")).validate(plan.dig("proposed_metadata", "document"))
+        expected_mode = (plan["schema_version"] == 2 && metadata_changed?) ? "0644" : nil
+        valid_metadata = metadata.file? && digest(File.binread(metadata)) == metadata_expected_digest
+        valid_metadata &&= mode(metadata) == expected_mode if expected_mode
+        fail!("preflight_failed", "applied metadata identity differs") unless valid_metadata
+        diagnostics = Validator.new(root: roots.first, framework_root: roots.last, schema_path: ROOT.join("schemas/framework-adoption-v#{plan["schema_version"]}.schema.json")).validate(plan.dig("proposed_metadata", "document"))
         fail!("invalid_metadata", "applied metadata failed semantic validation") if diagnostics.any? { |item| item.severity == "error" }
         true
       end
 
       private
+
+      def check_v2!(allow_blocked:)
+        adapter = %w[adopt_adapters update_adapters].include?(plan["operation"])
+        assert!(adapter == !plan["adapter_transaction"].nil?, "adapter transaction does not match declared operation")
+        options = {target: plan.dig("target", "root"), source: plan.dig("source", "root"), operation: plan["operation"],
+                   scope: plan.dig("target", "scope", "path"), effective_date: plan["effective_date"],
+                   components: plan.dig("selection", "requested_components"), tier: plan.dig("selection", "requested_tier"),
+                   exclusions: plan.dig("selection", "excluded_components"), decisions: plan.dig("inputs", "decisions", "path"),
+                   assessment: plan.dig("inputs", "assessment", "path"), validation_spec: plan.dig("inputs", "validation_spec", "path"),
+                   adapter_selection: plan.dig("inputs", "adapter_selection", "path"), adapter_decisions: plan.dig("inputs", "adapter_decisions", "path")}
+        # Reject stale identities before a changed source/provider or input can participate in assessment.
+        source_root, revision = repository(plan.dig("source", "root"), "source")
+        target_root, head = repository(plan.dig("target", "root"), "target")
+        stale!("source identity or HEAD changed") unless source_root.to_s == plan.dig("source", "root") && revision == plan.dig("source", "revision")
+        stale!("target identity or HEAD changed") unless target_root.to_s == plan.dig("target", "root") && head == plan.dig("target", "head")
+        catalogue = safe_path(source_root, "framework.yml")
+        stale!("catalogue bytes changed") unless catalogue.file? && digest(File.binread(catalogue)) == plan.dig("source", "catalogue_digest")
+        input_paths.each { |path| external(path.to_s, roots, present: true) }
+        plan["inputs"].values.each do |input|
+          next unless input.is_a?(Hash) && input["path"]
+          stale!("external input bytes changed") unless digest(File.binread(input["path"])) == input["digest"]
+        end
+        plan["actions"].each do |action|
+          file = action["reviewed_content"]
+          next unless file
+          stale!("reviewed bytes/mode changed") unless digest(File.binread(file["path"])) == file["digest"] && mode(Pathname.new(file["path"])) == file["mode"]
+        end
+        # Rebuild all effects independently; a recalculated checksum cannot bless a fabricated projection.
+        planner = Planner.new(**options)
+        @context = planner.context
+        expected = planner.build
+        stale!("source, target, inputs or approved transaction effects changed") unless expected.except("created_at", "plan_id") == plan.except("created_at", "plan_id")
+        identities_distinct!(input_paths)
+        if blocked?
+          return self if allow_blocked
+          fail!("preflight_failed", "plan contains blocking diagnostics")
+        end
+        self
+      end
 
       def stale!(message)
         fail!("plan_stale", message)
@@ -209,7 +260,7 @@ module AgenticDeveloperSetup
         end
         assert!(expected == document, "metadata contains undeclared changes")
         outputs = plan["actions"].filter_map { |a| [a["target_file"]["path"], a["target_file"]["result_digest"]] if WRITES.include?(a["action"]) }.to_h
-        validator = ProposedMetadataValidator.new(root: context.target, framework_root: context.source, schema_path: ROOT.join("schemas/framework-adoption-v1.schema.json"), outputs: outputs)
+        validator = ProposedMetadataValidator.new(root: context.target, framework_root: context.source, schema_path: ROOT.join("schemas/framework-adoption-v#{plan["schema_version"]}.schema.json"), outputs: outputs)
         fail!("invalid_metadata", "proposed metadata semantic validation failed") if validator.validate(document).any? { |d| d.severity == "error" }
         paths = document["components"].filter_map { |item| item["target_path"] }
         paths.combination(2) { |a, b| assert!(a.downcase != b.downcase && !a.downcase.start_with?("#{b.downcase}/") && !b.downcase.start_with?("#{a.downcase}/"), "managed path collision") }

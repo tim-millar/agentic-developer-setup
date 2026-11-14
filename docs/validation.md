@@ -194,3 +194,25 @@ optional `--selection PATH` and `--output PATH`. It uses the existing external
 output safeguards and leaves generic assessment v2 and adoption v1 unchanged.
 See [adapter architecture](adapter-architecture.md) for extension interfaces and
 all contribution/resolution contracts.
+
+
+## Adapter transaction compatibility
+
+`make test-adoption` runs legacy CLI regressions and the focused synthetic
+`test/adoption/adapter_transaction_test.rb` suite. It reuses #13's public fixture
+providers for migration, reviewed file creation/replacement, adapter updates,
+retirement/retention decisions, provider drift, independent semantic preflight,
+metadata-only journalling, manual recovery, validation and inspection. The tests
+run offline without production adapters, package installation or target execution
+during planning/application. Run focused coverage directly with:
+
+```sh
+bundle exec ruby -Ilib -Itest test/adoption/adapter_transaction_test.rb
+```
+
+V1 schemas retain their original meanings. Metadata/plan/application and
+validation-result v2 are separately dispatched and validated; explicit validation
+specifications remain v1. Raw-byte input digests remain part of plan identity even
+when equivalent embedded collections canonicalise to the same representation.
+Adapters never automatically populate validation commands. Command bindings are
+reviewed declarations, not evidence of safety, availability or successful tests.

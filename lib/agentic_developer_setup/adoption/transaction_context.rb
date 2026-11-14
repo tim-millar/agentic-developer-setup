@@ -11,21 +11,33 @@ module AgenticDeveloperSetup
         :metadata, :metadata_input, :inputs, :decisions, :commands, :selection, :diagnostics, :reviewed_files
 
       def initialize(target:, source:, operation:, effective_date:, scope: nil, components: [], tier: nil, exclusions: [],
-        decisions: nil, assessment: nil, validation_spec: nil, clean: true)
+        decisions: nil, assessment: nil, validation_spec: nil, clean: true, adapter_selection: nil, adapter_decisions: nil)
         @operation = operation
+        @adapter_selection_path, @adapter_decisions_path = adapter_selection, adapter_decisions
+        if adapter_operation?
+          fail!("invalid_invocation", "adapter operations require selection and decisions and reject baseline selection flags", 2) unless adapter_selection && adapter_decisions && components.empty? && tier.nil? && exclusions.empty? && decisions.nil? && assessment.nil?
+        elsif adapter_selection || adapter_decisions
+          fail!("invalid_invocation", "adapter inputs require an adapter operation", 2)
+        end
         fail!("unsupported_operation", "unsupported operation: #{operation}", 2) unless OPERATIONS.include?(operation)
         fail!("invalid_invocation", "effective date must be an ISO calendar date", 2) unless effective_date.is_a?(String) && effective_date.match?(DATE_PATTERN) && Date.iso8601(effective_date).iso8601 == effective_date
         @target, @target_head = repository(target, "target", clean: clean)
         @source, @revision = repository(source, "source")
+        if adapter_operation?
+          @source_snapshot = GitIdentitySnapshot.new(@source, expected_head: @revision)
+          @target_snapshot = GitIdentitySnapshot.new(@target, expected_head: @target_head)
+        end
         fail!("unsafe_path", "source and target must be distinct and non-overlapping", 3) if inside?(@target, @source) || inside?(@source, @target)
         @roots = [@target, @source]
-        catalogue_path = safe_path(@source, "framework.yml")
+        catalogue_path = safe_path(@source, "framework.yml", snapshot: @source_snapshot)
         fail!("invalid_catalogue", "framework.yml must be a regular tracked file", 3) unless catalogue_path.file?
         catalogue_entry = git!(@source, "ls-files", "--stage", "-z", "--", "framework.yml").split("\0")
         fail!("invalid_catalogue", "catalogue must be tracked as a regular Git file", 3) unless catalogue_entry.length == 1 && catalogue_entry.first.match?(/\A100(?:644|755) /)
         catalogue_blob = git!(@source, "cat-file", "blob", catalogue_entry.first.split(/\s+/)[1])
-        fail!("invalid_catalogue", "catalogue differs from committed source snapshot", 3) unless catalogue_blob.b == File.binread(catalogue_path)
-        @catalogue = load_yaml(catalogue_path)
+        catalogue_bytes = File.binread(catalogue_path).freeze
+        fail!("invalid_catalogue", "catalogue differs from committed source snapshot", 3) unless catalogue_blob.b == catalogue_bytes
+        @catalogue_digest = digest(catalogue_bytes)
+        @catalogue = parse_yaml(catalogue_bytes)
         errors = FrameworkCatalogue.document_errors(@source, @catalogue)
         fail!("invalid_catalogue", errors.join("; "), 3) unless errors.empty?
         @entries = @catalogue.fetch("baseline").values_at("required", "recommended").flatten.to_h { |item| [item["name"], item] }
@@ -34,20 +46,56 @@ module AgenticDeveloperSetup
         end
         @diagnostics = []
         load_metadata(scope)
+        if adapter_operation? || (metadata && metadata["schema_version"] == 2)
+          metadata_path = safe_path(@target, METADATA_PATH)
+          @metadata_input["content"] = metadata ? [File.binread(metadata_path)].pack("m0") : nil
+          @metadata_input["mode"] = metadata ? mode(metadata_path) : nil
+          @target_snapshot ||= GitIdentitySnapshot.new(@target, expected_head: @target_head)
+          committed_regular_file!(@target, METADATA_PATH, snapshot: @target_snapshot) if metadata
+        end
+        @adapter_decision_document = load_adapter_decision_document if adapter_operation?
         @selection = resolve_selection(components, tier, exclusions)
         @inputs = {"metadata" => @metadata_input}
         @decisions = load_decisions(decisions)
         @reviewed_files = @decisions.values.select { |item| item["disposition"] == "specialised" }.to_h { |item| [item["id"], reviewed_file(item)] }
+        if adapter_operation? || (metadata && metadata["schema_version"] == 2)
+          paths = (metadata ? metadata["components"] : []).filter_map do |component|
+            component["target_path"] if component["status"] == "active" && %w[inherited specialised].include?(component["ownership"])
+          end
+          if adapter_operation?
+            inventory = Assessment::Inventory.new(safe_path(@target, @scope["path"])).discover
+            paths.concat(inventory.files.keys.filter_map do |path|
+              relative = (@scope["path"] == ".") ? path : "#{@scope["path"]}/#{path}"
+              existing = PathSafety.existing(@target, relative)
+              relative if existing.is_a?(Pathname) && existing.file?
+            end)
+          end
+          @inputs["target_files"] = paths.uniq.sort.map { |path| committed_regular_file!(@target, path, snapshot: @target_snapshot).merge("path" => path) }
+        end
+        load_adapter_inputs if adapter_operation?
         load_assessment(assessment)
         @commands = load_commands(validation_spec)
+        if !adapter_operation? && metadata && metadata["schema_version"] == 2
+          @inputs["adapter_selection"] = nil
+          @inputs["adapter_decisions"] = nil
+          if metadata.dig("adapters", "source", "revision") != revision
+            @diagnostics << diagnostic("adapter_source_differs", "Baseline source differs from approved adapter source; adapter configuration is preserved.", severity: "warning")
+          end
+        end
         identities_distinct!(@inputs.values.filter_map { |input| input.is_a?(Hash) && input["path"] })
         validate_current_metadata
+        @source_snapshot&.verify!
+        @target_snapshot&.verify!
       rescue Date::Error
         fail!("invalid_invocation", "effective date must be an ISO calendar date", 2)
       end
 
+      def adapter_operation?
+        %w[adopt_adapters update_adapters].include?(@operation)
+      end
+
       def source_identity
-        {"root" => source.to_s, "revision" => revision, "version" => catalogue.dig("framework", "framework_version"), "catalogue_digest" => digest(File.binread(source.join("framework.yml")))}
+        {"root" => source.to_s, "revision" => revision, "version" => catalogue.dig("framework", "framework_version"), "catalogue_digest" => @catalogue_digest}
       end
 
       def target_identity
@@ -55,6 +103,7 @@ module AgenticDeveloperSetup
       end
 
       def source_required?(id)
+        return true if adapter_operation?
         @operation == "update_inherited" ||
           (%w[initial_adoption add_components].include?(@operation) && %w[inherited specialised].include?(decisions.fetch(id)["disposition"]))
       end
@@ -96,16 +145,18 @@ module AgenticDeveloperSetup
           walk_yaml(Psych.parse_stream(File.binread(path)))
           @metadata = Metadata.load(target).document
           fail!("invalid_metadata", "metadata could not be read", 3) unless @metadata.is_a?(Hash)
-          schema_errors = Schema.load(ROOT.join("schemas/framework-adoption-v1.schema.json")).validate(@metadata)
+          version = @metadata["schema_version"]
+          fail!("invalid_metadata", "unsupported metadata schema version", 3) unless [1, 2].include?(version) && version.is_a?(Integer)
+          schema_errors = Schema.load(ROOT.join("schemas/framework-adoption-v#{version}.schema.json")).validate(@metadata)
           fail!("invalid_metadata", schema_errors.join("; "), 3) unless schema_errors.empty?
           @scope = @metadata["scope"]
           @metadata_input = {"status" => "present", "digest" => digest(File.binread(path))}
           fail!("ownership_conflict", "existing scope cannot change") if requested_scope && requested_scope != @scope&.fetch("path", nil)
-          if %w[add_components reconcile_inherited].include?(@operation) && @metadata.dig("framework", "revision") != revision
+          if (%w[add_components reconcile_inherited].include?(@operation) || (@operation == "adopt_adapters" && @metadata["schema_version"] == 1)) && @metadata.dig("framework", "revision") != revision
             fail!("provenance_unavailable", "source HEAD must equal the recorded framework revision")
           end
         else
-          fail!("invalid_metadata", "operation requires existing adoption metadata", 3) unless @operation == "initial_adoption"
+          fail!("invalid_metadata", "operation requires existing adoption metadata", 3) unless %w[initial_adoption adopt_adapters].include?(@operation)
           fail!("invalid_invocation", "--scope is required for initial adoption", 2) unless requested_scope
           @scope = {"type" => (requested_scope == ".") ? "repository" : "workspace", "path" => requested_scope}
           @metadata_input = {"status" => "absent", "digest" => nil}
@@ -116,6 +167,7 @@ module AgenticDeveloperSetup
       end
 
       def resolve_selection(components, tier, exclusions)
+        return adapter_component_selection if adapter_operation?
         [components, exclusions].each do |ids|
           fail!("duplicate_component", "selection IDs must not repeat", 2) unless ids.uniq == ids
           ids.each { |id| fail!("unknown_component", "unknown component #{id}", 2) unless entries.key?(id) }
@@ -156,6 +208,7 @@ module AgenticDeveloperSetup
       end
 
       def load_decisions(path)
+        return adapter_component_decisions if adapter_operation?
         document = input("decisions", path)
         if document.nil? && @operation == "update_inherited"
           return selection["resolved_components"].to_h { |id| [id, {"id" => id, "disposition" => "update_inherited"}] }
@@ -201,7 +254,7 @@ module AgenticDeveloperSetup
 
       def validate_current_metadata
         return unless metadata
-        validator = Validator.new(root: target, framework_root: source, schema_path: ROOT.join("schemas/framework-adoption-v1.schema.json"))
+        validator = Validator.new(root: target, framework_root: source, schema_path: ROOT.join("schemas/framework-adoption-v#{metadata["schema_version"]}.schema.json"))
         diagnostics = validator.validate(metadata)
         diagnostics.each do |item|
           next if @operation == "reconcile_inherited" && item.code == "inherited_digest_mismatch" && selection["resolved_components"].include?(item.component_id)
@@ -213,3 +266,5 @@ module AgenticDeveloperSetup
     end
   end
 end
+
+require_relative "adapter_transaction"

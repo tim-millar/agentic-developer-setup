@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "transaction_context"
+require_relative "adapter_transaction"
 
 module AgenticDeveloperSetup
   module Adoption
@@ -36,23 +37,26 @@ module AgenticDeveloperSetup
       end
 
       def build
-        actions = context.selection["resolved_components"].map { |id| action_for(id) }
+        actions = context.selection["resolved_components"].map { |id| context.adapter_operation? ? adapter_action_for(id) : action_for(id) }
         document = proposed_document(actions)
+        transaction = context.adapter_operation? ? context.adapter_transaction(actions, document, @date) : nil
+        version = document["schema_version"]
         outputs = actions.filter_map do |action|
           file = action["target_file"]
           [file["path"], file["result_digest"]] if WRITES.include?(action["action"])
         end.to_h
-        validator = ProposedMetadataValidator.new(root: context.target, framework_root: context.source, schema_path: ROOT.join("schemas/framework-adoption-v1.schema.json"), outputs: outputs)
+        validator = ProposedMetadataValidator.new(root: context.target, framework_root: context.source, schema_path: ROOT.join("schemas/framework-adoption-v#{version}.schema.json"), outputs: outputs)
         @diagnostics.concat(validator.validate(document).map { |item| item.to_h.merge("code" => "invalid_metadata") })
         check_managed_paths(document)
         plan = {
-          "schema_version" => 1, "plan_id" => "sha256:#{"0" * 64}",
+          "schema_version" => version, "plan_id" => "sha256:#{"0" * 64}",
           "operation" => @operation, "created_at" => now, "effective_date" => @date,
           "target" => context.target_identity, "source" => context.source_identity,
           "inputs" => context.inputs, "selection" => context.selection,
-          "actions" => actions, "proposed_metadata" => {"document" => document, "digest" => digest(metadata_bytes(document))},
+          "actions" => actions, "proposed_metadata" => {"document" => document, "digest" => (version == 2 && document == context.metadata) ? context.metadata_input["digest"] : digest(metadata_bytes(document))},
           "validation_commands" => context.commands, "diagnostics" => sorted_diagnostics(@diagnostics)
         }
+        plan["adapter_transaction"] = transaction if version == 2
         plan["plan_id"] = plan_id(plan)
         schema!("plan", plan)
       end
@@ -72,6 +76,34 @@ module AgenticDeveloperSetup
       end
 
       private
+
+      def adapter_action_for(id)
+        decision = context.decisions.fetch(id)
+        previous = context.metadata && context.metadata["components"].find { |item| item["id"] == id }
+        source_file = context.source_file(id)
+        committed_source = committed_regular_file!(context.source, source_file["path"])
+        fail!("invalid_source", "component source differs from committed identity") unless committed_source == source_file.slice("digest", "mode")
+        action = {"component_id" => id, "action" => "no_change", "rationale" => decision["rationale"],
+                  "before" => state(previous), "after" => state(previous), "source_file" => source_file,
+                  "target_file" => nil, "reviewed_content" => context.reviewed_files.fetch(id), "metadata_record" => previous}
+        if decision["adapter_disposition"] == "create_specialised"
+          adopt(action, previous, decision)
+        else
+          fail!("ownership_conflict", "replacement requires an active specialised manual_merge component") unless previous && previous["status"] == "active" && previous["ownership"] == "specialised" && previous["update_policy"] == "manual_merge"
+          fail!("path_migration_unsupported", "specialisation mapping changed") unless source_file["path"] == previous["source_path"] && context.effective_target(id) == previous["target_path"]
+          committed_regular_file!(context.target, previous["target_path"])
+          path = safe_path(context.target, previous["target_path"])
+          reviewed = context.reviewed_files.fetch(id)
+          record = previous.merge("local_ownership" => decision["local_ownership"])
+          action.merge!("action" => "replace_reviewed_specialisation", "before" => state(previous, path),
+            "after" => state(record, Pathname.new(reviewed["path"])), "metadata_record" => record,
+            "target_file" => target_file(previous["target_path"], path, reviewed))
+          if digest(File.binread(path)) == reviewed["digest"] && mode(path) == reviewed["mode"] && record == previous
+            action["action"] = "no_change"
+          end
+        end
+        action
+      end
 
       def action_for(id)
         previous = context.metadata && context.metadata["components"].find { |item| item["id"] == id }

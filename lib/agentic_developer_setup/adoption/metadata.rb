@@ -98,15 +98,18 @@ module AgenticDeveloperSetup
           )
         end
 
+        raw = path.read
+        require_relative "../adapters" unless defined?(Adapters::Contracts)
+        Adapters::Contracts.validate_yaml_keys!(Psych.parse_stream(raw))
         document = YAML.safe_load(
-          path.read,
+          raw,
           permitted_classes: [Date],
           permitted_symbols: [],
           aliases: false,
           filename: path.to_s
         )
         new(status: "loaded", document: normalise_dates(document))
-      rescue Psych::Exception => e
+      rescue Psych::Exception, Assessment::Error => e
         new(
           status: "invalid",
           diagnostics: [Diagnostic.new(severity: "error", code: "malformed_yaml", path: METADATA_PATH, message: "adoption metadata could not be parsed: #{e.message.lines.first.strip}")]

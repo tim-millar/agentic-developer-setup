@@ -379,4 +379,33 @@ class AdapterAssessmentTest < AdapterTest
     assert_equal 1, scopes.count { |record| record["subject"].start_with?("contradictory ecosystems:") }
     assert_equal "blocked", result.dig("composition", "status")
   end
+
+  def test_injected_registry_preserves_selected_and_unselected_public_assessment
+    register("ruby", contributions: {"commands" => [command]})
+    register("docker", "runtime")
+    reg = registry
+    [nil, selected(["ecosystem", "ruby"])].each do |selection|
+      expected = assess(selection)
+      loads = 0
+      around = ->(original, **kwargs) {
+        loads += 1
+        original.call(**kwargs)
+      }
+      with_replaced_method(A::Registry.singleton_class, :load, around) do
+        actual = A::Assessor.new(target: @target, framework_root: @framework, selection: selection, registry: reg).assess
+        assert_equal expected, actual
+        assert_equal expected["composition"], actual["composition"]
+        assert_equal 0, loads
+      end
+    end
+  end
+
+  def test_injected_registry_must_be_valid_and_match_the_canonical_root
+    register("ruby")
+    [false, 0, "registry", Object.new, A::Registry.allocate].each do |invalid|
+      assert_raises(A::Error) { A::Assessor.new(target: @target, framework_root: @framework, registry: invalid) }
+    end
+    assert_raises(A::Error) { A::Assessor.new(target: @target, framework_root: @target, registry: registry) }
+    refute_nil A::Assessor.new(target: @target, framework_root: @framework).assess
+  end
 end

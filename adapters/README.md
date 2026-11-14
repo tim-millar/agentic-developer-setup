@@ -44,7 +44,8 @@ make test-adapters
 Commands remain structured argument vectors and are never executed. Assessment
 recommendations do not modify baseline components, repository commands,
 permissions, files, adoption plans or ownership metadata. Adapter-aware
-transactional adoption is reserved for a separately versioned follow-on task.
+transactional adoption uses separately approved v2 plans and canonical adoption
+metadata; see [the workflow](../docs/adoption-workflow.md).
 
 Generic project markers and positive provider candidates share one canonical
 root collection. A project found by each source in different workspaces blocks
@@ -62,3 +63,17 @@ selectable input-key inventory. Provider input contributions cannot introduce
 new keys; compatible restatements are allowed and incompatible definitions block
 composition. Add a legitimate new input to its adapter manifest before supplying
 it through selection or direct composition.
+
+
+Composition remains a recommendation boundary. The adoption engine consumes the
+public #13 assessment, records exact adapter identities/source digests, approved
+non-secret inputs/resolutions and explicitly approved structured command bindings,
+and applies only externally reviewed canonical component specialisations.
+Adoption decisions, exact immutable plan acceptance and separately approved
+validation remain independent. No provider can authorise a command or target
+write. Source verification covers every supported provider assessment loads,
+including unselected ones. Updates require explicit identity changes, command
+retirement and affected-file retention/replacement decisions. Category removal,
+automatic cleanup, general configuration rendering and production adapters remain
+deferred. Support does not prove a command safe, executable, comprehensive or
+appropriate for a repository.

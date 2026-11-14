@@ -169,4 +169,23 @@ class AdapterTest < Minitest::Test
       end
     PROVIDER
   end
+
+  # Scoped, synchronous seams: replacements always restore the original method/visibility.
+  def with_replaced_method(owner, name, around)
+    original = owner.instance_method(name)
+    own = owner.method_defined?(name, false) || owner.private_method_defined?(name, false)
+    visibility = owner.private_method_defined?(name) ? :private : :public
+    owner.define_method(name) do |*args, **kwargs, &block|
+      around.call(original.bind(self), *args, **kwargs, &block)
+    end
+    owner.send(visibility, name)
+    yield
+  ensure
+    if own
+      owner.define_method(name, original)
+      owner.send(visibility, name)
+    else
+      owner.remove_method(name)
+    end
+  end
 end

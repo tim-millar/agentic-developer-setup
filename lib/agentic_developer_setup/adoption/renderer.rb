@@ -16,6 +16,9 @@ module AgenticDeveloperSetup
         @result["components"].each do |component|
           lines << "| #{markdown_table_code(component["id"])} | #{markdown_table_code(component["status"])} | #{markdown_table_code(component["ownership"] || "—")} | #{markdown_table_code(component["local_state"])} | #{markdown_table_code(component["update_state"])} | #{markdown_table_code(component["target_path"] || "—")} |"
         end
+        if @result["adapters"]
+          lines.concat(["", "## Adopted adapters and candidate comparison", "", "```yaml", YAML.dump(@result["adapters"]), "```"])
+        end
         lines.concat(["", "## Diagnostics", ""])
         diagnostics = @result["diagnostics"]
         lines << (if diagnostics.empty?

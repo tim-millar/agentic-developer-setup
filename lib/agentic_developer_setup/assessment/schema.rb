@@ -273,7 +273,7 @@ module AgenticDeveloperSetup
           relative_path(metadata["path"], "framework_adoption.metadata.path")
           if metadata["schema_version"]
             integer(metadata["schema_version"], "framework_adoption.metadata.schema_version")
-            @errors << "framework_adoption.metadata.schema_version must be 1" unless metadata["schema_version"] == 1
+            @errors << "framework_adoption.metadata.schema_version must be 1 or 2" unless [1, 2].include?(metadata["schema_version"])
           end
         end
         framework = adoption["framework"]

@@ -401,3 +401,18 @@ independent v1 contract. Provider contributions may restate registered inputs;
 unknown provider keys are controlled errors, while incompatible restatements
 remain blocking `input_definition_conflict` records. A new selectable key must be
 declared in its originating manifest before it can be supplied.
+
+
+## Adapter adoption inspection
+
+Generic assessment v2 accepts v1/v2 adoption metadata internally and retains its
+closed existing output shape and ownership semantics. Adapter details remain in
+the independent #13 assessment and in v2 adoption inspection, rather than adding
+unversioned generic assessment fields. `inspect_adoption.rb` emits its original
+v1 output for v1 metadata and v2 with adopted identities, approved commands,
+reviewed-file provenance and explicit candidate comparison for v2 metadata.
+An optional `--adapter-selection` with `--framework-source` requests read-only
+proposed compatibility assessment. No selection is invented. Candidate
+unavailability is distinct from a missing adapter in an available registry, and
+historically retained files remain visibly attributed to their original source.
+See [framework adoption](framework-adoption.md) for local/candidate states.
