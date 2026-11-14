@@ -1,0 +1,1068 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/framework-adoption-v2.schema.json",
+  "title": "Framework adoption metadata v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "framework",
+    "scope",
+    "components",
+    "adapters"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "framework": {
+      "$ref": "#/$defs/framework"
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "adapters": {
+      "$ref": "#/$defs/adapters"
+    }
+  },
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.($|/))(?!.*(^|/)\\.\\.($|/)).+$"
+    },
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "version",
+        "revision",
+        "adopted_at",
+        "updated_at"
+      ],
+      "properties": {
+        "source": {
+          "const": "https://github.com/tim-millar/agentic-developer-setup"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "adopted_at": {
+          "$ref": "#/$defs/date"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "repository"
+            },
+            "path": {
+              "const": "."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "workspace"
+            },
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      ]
+    },
+    "non_empty_strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "equivalent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "commands": {
+          "$ref": "#/$defs/non_empty_strings"
+        }
+      },
+      "minProperties": 1
+    },
+    "base_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "deferred",
+            "declined",
+            "removed",
+            "blocked"
+          ]
+        },
+        "ownership": {
+          "enum": [
+            "inherited",
+            "specialised",
+            "repository_owned"
+          ]
+        },
+        "update_policy": {
+          "enum": [
+            "review_required",
+            "manual_merge",
+            "pinned",
+            "repository_managed"
+          ]
+        },
+        "source_path": {
+          "$ref": "#/$defs/path"
+        },
+        "target_path": {
+          "$ref": "#/$defs/path"
+        },
+        "adopted_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "adopted_source_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "local_ownership": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "equivalent": {
+          "$ref": "#/$defs/equivalent"
+        }
+      }
+    },
+    "inherited": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "source_path",
+            "target_path",
+            "adopted_revision",
+            "adopted_source_digest"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "inherited"
+            },
+            "update_policy": {
+              "enum": [
+                "review_required",
+                "pinned"
+              ]
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              },
+              {
+                "required": [
+                  "equivalent"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "specialised": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "source_path",
+            "target_path",
+            "adopted_revision",
+            "adopted_source_digest",
+            "local_ownership"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "specialised"
+            },
+            "update_policy": {
+              "enum": [
+                "manual_merge",
+                "pinned"
+              ]
+            }
+          },
+          "not": {
+            "required": [
+              "equivalent"
+            ]
+          }
+        }
+      ]
+    },
+    "repository_owned": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "ownership",
+            "update_policy",
+            "equivalent",
+            "rationale"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "ownership": {
+              "const": "repository_owned"
+            },
+            "update_policy": {
+              "const": "repository_managed"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "source_path"
+                ]
+              },
+              {
+                "required": [
+                  "target_path"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_revision"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_source_digest"
+                ]
+              },
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "inactive": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_component"
+        },
+        {
+          "required": [
+            "rationale"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "deferred",
+                "declined",
+                "removed",
+                "blocked"
+              ]
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "ownership"
+                ]
+              },
+              {
+                "required": [
+                  "update_policy"
+                ]
+              },
+              {
+                "required": [
+                  "source_path"
+                ]
+              },
+              {
+                "required": [
+                  "target_path"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_revision"
+                ]
+              },
+              {
+                "required": [
+                  "adopted_source_digest"
+                ]
+              },
+              {
+                "required": [
+                  "local_ownership"
+                ]
+              },
+              {
+                "required": [
+                  "equivalent"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "component": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/inherited"
+        },
+        {
+          "$ref": "#/$defs/specialised"
+        },
+        {
+          "$ref": "#/$defs/repository_owned"
+        },
+        {
+          "$ref": "#/$defs/inactive"
+        }
+      ]
+    },
+    "selection_resolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "conflict_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "kind": {
+              "type": "string",
+              "const": "choose_command"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "contribution_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "contribution_id"
+              ],
+              "additionalProperties": false
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "kind",
+            "value",
+            "rationale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conflict_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "kind": {
+              "type": "string",
+              "const": "override_command"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "base"
+                    },
+                    "capability": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "argv": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    },
+                    "cwd": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "profiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "fast",
+                          "standard",
+                          "extended"
+                        ]
+                      },
+                      "uniqueItems": true
+                    },
+                    "preconditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "uniqueItems": true
+                    },
+                    "classification": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "capability",
+                    "scope",
+                    "argv",
+                    "cwd",
+                    "env",
+                    "profiles",
+                    "preconditions",
+                    "classification"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "kind",
+            "value",
+            "rationale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conflict_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "kind": {
+              "type": "string",
+              "const": "choose_wrapper"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "contribution_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "contribution_id"
+              ],
+              "additionalProperties": false
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "kind",
+            "value",
+            "rationale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "conflict_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "kind": {
+              "type": "string",
+              "const": "choose_path_owner"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "owner"
+              ],
+              "additionalProperties": false
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "kind",
+            "value",
+            "rationale"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "adopted_adapter": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "ecosystem",
+            "framework",
+            "runtime",
+            "app-shape"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$(?![\\s\\S])"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$(?![\\s\\S])"
+        },
+        "manifest_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "provider_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "selection_source": {
+          "enum": [
+            "explicit",
+            "accepted_detection"
+          ]
+        }
+      },
+      "required": [
+        "category",
+        "id",
+        "version",
+        "manifest_digest",
+        "provider_digest",
+        "selection_source"
+      ],
+      "additionalProperties": false
+    },
+    "command_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "scope",
+        "argv",
+        "cwd",
+        "env",
+        "profiles",
+        "preconditions",
+        "classification",
+        "provenance",
+        "command_id",
+        "rationale"
+      ],
+      "properties": {
+        "capability": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "fast",
+              "standard",
+              "extended"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "classification": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+          },
+          "uniqueItems": true
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "ecosystem",
+                  "framework",
+                  "runtime",
+                  "app-shape"
+                ]
+              },
+              "adapter_id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9-]*$(?![\\s\\S])"
+              },
+              "adapter_version": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$(?![\\s\\S])"
+              },
+              "contribution_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "repository",
+                      "workspace"
+                    ]
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "category",
+              "adapter_id",
+              "adapter_version",
+              "contribution_id",
+              "scope"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$(?![\\s\\S])"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    },
+    "reviewed_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component_id",
+        "target_path",
+        "approved_content_digest",
+        "approved_mode",
+        "source_adapter_provenance",
+        "contribution_ids",
+        "approved_command_ids",
+        "review_state"
+      ],
+      "properties": {
+        "component_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "target_path": {
+          "$ref": "#/$defs/path"
+        },
+        "approved_content_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "approved_mode": {
+          "enum": [
+            "0644",
+            "0755"
+          ]
+        },
+        "source_adapter_provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "ecosystem",
+                  "framework",
+                  "runtime",
+                  "app-shape"
+                ]
+              },
+              "adapter_id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9-]*$(?![\\s\\S])"
+              },
+              "adapter_version": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$(?![\\s\\S])"
+              },
+              "contribution_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "repository",
+                      "workspace"
+                    ]
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "category",
+              "adapter_id",
+              "adapter_version",
+              "contribution_id",
+              "scope"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "minItems": 0
+        },
+        "contribution_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "approved_command_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "review_state": {
+          "enum": [
+            "current",
+            "retained_after_adapter_change"
+          ]
+        }
+      }
+    },
+    "adapters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "selected",
+        "inputs",
+        "resolutions",
+        "command_bindings",
+        "reviewed_files",
+        "adapter_set_digest",
+        "composition_digest",
+        "adopted_at",
+        "updated_at"
+      ],
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "revision",
+            "catalogue_digest"
+          ],
+          "properties": {
+            "revision": {
+              "$ref": "#/$defs/revision"
+            },
+            "catalogue_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        },
+        "selected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/adopted_adapter"
+          },
+          "minItems": 1
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "boolean",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "resolutions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selection_resolution"
+          }
+        },
+        "command_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command_binding"
+          }
+        },
+        "reviewed_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reviewed_file"
+          }
+        },
+        "adapter_set_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "adopted_at": {
+          "$ref": "#/$defs/date"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    }
+  }
+}

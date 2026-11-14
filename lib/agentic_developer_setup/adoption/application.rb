@@ -28,7 +28,7 @@ module AgenticDeveloperSetup
           @prepared = @plan["actions"].to_h { |action| [action["component_id"], WRITES.include?(action["action"]) ? bytes(action["after"]) : nil] }
           persist!(initial: true)
           @plan["actions"].each_with_index { |action, index| perform_action(action, index) }
-          write_metadata if @validator.changed?
+          write_metadata if @validator.metadata_changed?
           @validator.verify_outputs!
           @journal["metadata"]["verified"] = true
           @journal["metadata"]["actual_digest"] = digest(File.binread(@validator.roots.first.join(METADATA_PATH)))
@@ -47,8 +47,8 @@ module AgenticDeveloperSetup
       private
 
       def new_journal
-        {
-          "schema_version" => 1, "plan_id" => @plan["plan_id"], "operation" => @plan["operation"],
+        result = {
+          "schema_version" => @plan["schema_version"], "plan_id" => @plan["plan_id"], "operation" => @plan["operation"],
           "target" => @plan["target"], "source" => @plan["source"], "started_at" => now, "finished_at" => nil,
           "status" => "in_progress", "actions" => @plan["actions"].map do |action|
             file = action["target_file"]
@@ -60,6 +60,11 @@ module AgenticDeveloperSetup
           "metadata" => {"attempted" => false, "written" => false, "verified" => false, "expected_digest" => @validator.metadata_expected_digest, "actual_digest" => nil},
           "diagnostics" => [], "recovery" => {"mutation_occurred" => false, "inspect_paths" => [], "metadata_written" => false, "fresh_plan_required" => false, "interruption_uncertainty" => true}
         }
+        if @plan["schema_version"] == 2
+          result["plan_schema_version"] = 2
+          result["adapter_transaction_digest"] = @plan["adapter_transaction"] && digest(JSON.generate(canonical(@plan["adapter_transaction"])))
+        end
+        result
       end
 
       def persist!(initial: false)

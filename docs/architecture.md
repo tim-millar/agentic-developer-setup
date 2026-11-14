@@ -197,3 +197,16 @@ execution-environment adapters retain the `runtime` machine category and remain
 separate from coding-agent runtimes and the host toolchain. Synthetic providers
 under `test/adapters/` exercise these public interfaces without registering
 production ecosystem support.
+
+
+Adapter-aware adoption extends the existing transaction engine with explicitly
+versioned metadata, plans and results; the manifest, selection and detailed
+assessment contracts remain #13 v1. Detection, selection, composition, adoption
+decisions, exact plan acceptance and validation approval remain separate authority
+boundaries. Only reviewed canonical component specialisations may produce file
+effects; metadata-only transactions use the same metadata-last durable journal.
+The approved adapter source is independent of baseline provenance. Historical
+reviewed-file origins survive replacement adapter selections. See
+[adoption workflow](adoption-workflow.md) for lifecycle, source trust, staleness and
+manual-recovery contracts. No rendering engine, ecosystem branches, automatic
+retirement, execution or rollback is introduced.

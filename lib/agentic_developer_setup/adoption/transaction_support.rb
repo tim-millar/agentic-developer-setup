@@ -18,8 +18,8 @@ module AgenticDeveloperSetup
 
     module TransactionSupport
       ROOT = Pathname.new(__dir__).join("../../..").realpath
-      OPERATIONS = %w[initial_adoption add_components update_inherited reconcile_inherited].freeze
-      WRITES = %w[create_inherited create_specialised update_inherited].freeze
+      OPERATIONS = %w[initial_adoption add_components update_inherited reconcile_inherited adopt_adapters update_adapters].freeze
+      WRITES = %w[create_inherited create_specialised update_inherited replace_reviewed_specialisation].freeze
 
       module_function
 
@@ -72,7 +72,10 @@ module AgenticDeveloperSetup
       end
 
       def schema!(kind, document)
-        errors = Schema.load(ROOT.join("schemas/framework-adoption-#{kind}-v1.schema.json")).validate(document)
+        version = document.is_a?(Hash) ? document["schema_version"] : nil
+        fail!("invalid_document", "unsupported #{kind} schema version", 2) unless [1, 2].include?(version) && version.is_a?(Integer)
+        filename = (kind == "adapter-decisions") ? "adapter-adoption-decisions-v#{version}" : "framework-adoption-#{kind}-v#{version}"
+        errors = Schema.load(ROOT.join("schemas/#{filename}.schema.json")).validate(document)
         fail!("invalid_document", errors.join("; "), 2) unless errors.empty?
         document
       end

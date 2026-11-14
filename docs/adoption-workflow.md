@@ -3,7 +3,7 @@
 > Mechanical adoption safety does not establish architectural suitability, organisational approval or safe agent execution permissions.
 
 `scripts/manage_adoption.rb` implements a local, deterministic transaction over
-explicitly selected baseline components. It does not fetch releases, call models,
+explicitly selected baseline components and separately approved adapter configurations. It does not fetch releases, call models,
 execute repository code during plan/apply, or change Git configuration, index,
 branches, commits, remotes or GitHub state. The separate demonstrations create
 and commit disposable repositories as fixture preparation.
@@ -22,7 +22,7 @@ Every selected component needs an explicit disposition or operation decision. Fo
 decision when no decision file is given. Unselected components stay
 absent from metadata. An existing inactive record cannot be reactivated by add.
 Unsupported transitions, automatic merges, automatic unpinning, removal,
-restoration of missing targets, source/target path migration, adapters, dependency
+restoration of missing targets, source/target path migration, general adapter retirement, dependency
 installation and repository/domain generation remain deferred. Specialised,
 pinned and repository-owned components are never updated by inherited update.
 
@@ -343,6 +343,167 @@ The second creates two committed local source revisions and verifies exact chang
 bytes, selected provenance advancement, and untouched specialised/native records.
 They print Git review evidence and delete only their own disposable directories.
 
-Future adapters require an explicitly designed extension of this contract;
-existing catalogue adapter taxonomy does not grant composition or mutation
-support to this v1 workflow.
+Legacy v1 plans retain their original schema, identity algorithm and authority.
+Adapter adoption uses the separate v2 transaction contracts described below.
+
+
+## Adapter adoption and reviewed updates (v2)
+
+Detection supplies evidence. An explicit `adapter-selection-v1` document selects
+supported adapters, non-secret inputs and permitted conflict resolutions. The
+public #13 assessor recomputes compatibility and composition; `ready` is a
+recommendation, not authorisation. A separate external
+`adapter-adoption-decisions-v1` document supplies adoption decisions. Planning
+creates an immutable proposal; only exact `--accept-plan-id` approval authorises
+application. An independent validation specification authorises command
+execution. None of these steps imply another step's authority.
+
+All named production adapters in this checkout remain planned. Use the synthetic
+fixtures under `test/adapters/` and `test/adoption/` to exercise adoption. Once a
+supported adapter is available, its provider participates through the same public
+registry/assessor interfaces; the transaction engine has no ecosystem branches.
+
+Prepare existing external directories and explicit selection and decision files:
+
+```yaml
+# /tmp/adoption/adapter-decisions.yml
+schema_version: 1
+selection_reviewed: true
+adapter_changes: []
+commands: []
+components: []
+retained_files: []
+```
+
+Empty `commands` approves no bindings. To approve a recommendation, add a record
+with its exact `command_id`, `disposition: approve`, `reviewed: true` and nonblank
+`rationale`. The planner copies scope, argv, cwd, env, profiles, preconditions,
+classification and provenance from the effective composed command. Wrappers and
+repository overrides retain #13 provenance and applied conflict resolutions.
+These are approved declarations, not evidence of installation, execution,
+completeness, suitability or safety. Bindings do not create Make targets.
+
+```sh
+ruby scripts/manage_adoption.rb plan /path/to/target \
+  --operation adopt_adapters \
+  --framework-source /path/to/clean/framework-source \
+  --scope . \
+  --adapter-selection /tmp/adoption/selection.yml \
+  --adapter-decisions /tmp/adoption/adapter-decisions.yml \
+  --effective-date 2026-11-07 \
+  --output /tmp/adoption/adapter-plan.yml
+ruby scripts/manage_adoption.rb preview /tmp/adoption/adapter-plan.yml
+ruby scripts/manage_adoption.rb check /tmp/adoption/adapter-plan.yml
+ruby scripts/manage_adoption.rb apply /tmp/adoption/adapter-plan.yml --dry-run
+ruby scripts/manage_adoption.rb apply /tmp/adoption/adapter-plan.yml \
+  --accept-plan-id sha256:REPLACE_WITH_REVIEWED_PLAN_ID \
+  --result /tmp/adoption/adapter-result.yml
+```
+
+Adapter operations reject legacy `--tier`, `--component`, `--exclude`,
+`--decisions` and `--assessment` inputs. Component-file effects come exclusively
+from adapter decisions. No baseline component is copied implicitly. Scope is
+required when metadata is absent; existing scope is authoritative and cannot
+change. A blocked composition cannot pass check/dry-run/apply. Invalid selection
+or decisions are errors, rather than approval to weaken safeguards.
+
+`adopt_adapters` creates metadata v2 from absent metadata or explicitly migrates
+valid v1 metadata. Migration preserves each component record and historical
+framework adoption date. The selected source HEAD must equal v1's recorded
+framework revision; reconcile source/version relationships first when they
+differ. Reading, inspecting and ordinary v1 baseline operations never migrate.
+A v1 plan becomes stale if its metadata later migrates.
+
+`update_adapters` requires existing v2 adapter metadata and a complete proposed
+selection. Every changed/added adapter category needs one `adapter_changes`
+record containing `category`, exact complete `previous` identity (or null for an
+addition), complete `proposed` identity, `reviewed: true` and `rationale`.
+Identity includes version, manifest/provider digests and selection source.
+An unchanged adapter needs no change record. Every retained or new binding needs
+an `approve` decision; every omitted prior binding needs an explicit `retire`
+decision. An unapproved recommendation never becomes a binding. Removing an
+entire selected category is unsupported. No file deletion or command regeneration
+is inferred from updates or version ordering.
+
+### Reviewed component files
+
+Only canonical baseline component mappings may be used. Each component decision
+has `id`, `disposition`, external absolute `content_path`, nonempty unique
+`local_ownership`, literal `reviewed: true`, `rationale`, `contribution_ids` and
+`approved_command_ids`. References must resolve to composed contributions and
+explicitly approved commands. Empty references are suitable only for a reviewed
+specialisation whose rationale explains its independence from recommendations.
+The tool copies exact approved bytes and mode; it performs no rendering or merge.
+
+`create_specialised` requires an unrecorded component and absent canonical target.
+`replace_reviewed_specialisation` requires an active specialised/manual-merge
+component at unchanged source/target mappings. Its target must be a regular
+tracked committed file whose HEAD, stage-zero index, working bytes and mode agree.
+Inherited, pinned, repository-owned, unowned, moved, unsafe, missing or locally
+modified targets cannot be replaced. Framework lineage remains separate from
+reviewed target digest/mode and is preserved during replacement.
+
+Potentially affected prior reviewed files require replacement or a
+`retained_files` decision with `component_id`, `reviewed: true` and `rationale`.
+Retained records keep their original digest, mode and adapter provenance, with
+`review_state: retained_after_adapter_change`. They are not attributed to the new
+adapter. Existing v1 specialisations gain no fabricated reviewed-file history.
+
+### Integrity, source trust and recovery
+
+V2 binds exact source root/HEAD/catalogue, target root/HEAD/scope, initial metadata,
+managed target and bounded assessment-file identities, raw external selection/decision/spec digests and reviewed
+content bytes/modes. Every supported manifest/provider the assessor may load is
+checked against HEAD, stage-zero index, working bytes/mode and registry digests
+before provider execution, including unselected supported adapters. Provider Ruby
+belongs to the explicitly selected ADS source trust boundary; it is not a sandboxed
+target plugin. No provider is loaded from the target. Source/provider drift without
+a version bump still stales the transaction.
+
+Check, dry-run and apply independently rebuild the authoritative assessment,
+approved contribution projection, decisions, actions and metadata. Recomputing a
+checksum after fabricating an embedded field cannot make the plan applicable.
+Plan identity includes raw input digests; changing YAML bytes, including comments
+or reordering external entries, changes that identity and invalidates old plans.
+Semantically unordered embedded identities and decisions are canonicalised.
+Equivalent semantic representations have stable order when raw identities remain
+unchanged. Only `plan_id` and informational `created_at` are excluded from the
+existing byte-sorted compact-JSON SHA-256 algorithm. The plan ID is an integrity
+and exact-acceptance mechanism, not a cryptographic signature or proof of reviewer
+identity.
+
+A plan may have zero file actions and still change metadata. The existing durable
+journal handles that write, verifies it, and reports `applied_unvalidated`.
+`no_changes` requires no file or metadata effect. An equivalent reviewed update
+preserves `updated_at` and exact existing metadata bytes even if a later effective
+date was supplied. File effects
+remain deterministic by component ID; canonical metadata is written last.
+Completed result files remain external, private and immutable by this workflow.
+
+The transaction is not globally atomic. Pre-mutation failures are `refused`;
+failures after mutation are `partially_applied`; interruption may leave
+`in_progress` evidence. Inspect completed/uncertain actions, recorded paths,
+metadata state and the last durable journal. Manually restore a coherent clean
+state before creating a fresh plan. There is no rollback, resume or Git cleanup.
+
+The existing explicit validation spec v1 remains the only execution authority:
+
+```sh
+ruby scripts/manage_adoption.rb validate /tmp/adoption/adapter-plan.yml \
+  --application-result /tmp/adoption/adapter-result.yml \
+  --output /tmp/adoption/validation-result.yml
+```
+
+Supply `--validation-spec` during planning to approve actual validation commands.
+An adapter binding or `fast`/`standard`/`extended` recommendation does not populate
+it. V2 validation requires matching completed v2 evidence, exact outputs and
+unchanged HEAD/index with no unexpected tracked/untracked files. Execution uses
+direct argv with the existing restricted environment, bounded capture and
+stop-on-failure checks. With no approved commands, validation reports `skipped`.
+No validation step edits metadata or application evidence.
+
+The existing `add_components`, `update_inherited` and `reconcile_inherited`
+operations use v2 plans/results for v2 metadata and preserve its adapter block,
+including its independently approved source identity. A baseline candidate may
+advance top-level framework provenance without updating adapters. A differing
+adapter source is reported for review. V1 targets retain v1 plans and results.
