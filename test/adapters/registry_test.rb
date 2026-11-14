@@ -224,4 +224,59 @@ class AdapterRegistryTest < AdapterTest
       assert_raises(Object.const_get(name)) { reg.provider(reg.supported.first) }
     end
   end
+
+  def test_manifest_parse_and_digest_use_one_immutable_read
+    register("ruby")
+    path = File.join(@framework, "adapters/ecosystems/ruby/adapter.yml")
+    original_bytes = File.binread(path)
+    alternate = YAML.safe_load(original_bytes).merge("version" => "9.0.0")
+    reads = 0
+    around = lambda do |original, file, *args, **kwargs|
+      bytes = original.call(file, *args, **kwargs)
+      if File.realpath(file) == File.realpath(path)
+        reads += 1
+        File.binwrite(path, (reads == 1) ? YAML.dump(alternate) : original_bytes)
+      end
+      bytes
+    end
+    with_replaced_method(File.singleton_class, :binread, around) do
+      definition = registry.supported.first
+      assert_equal "1.0.0", definition.version
+      assert_equal "sha256:#{Digest::SHA256.hexdigest(original_bytes)}", definition.manifest_digest
+      assert_equal 1, reads
+    end
+  end
+
+  def test_catalogue_snapshot_and_definitions_are_immutable
+    register("ruby")
+    bytes = File.binread(File.join(@framework, "framework.yml"))
+    reg = registry
+    assert reg.frozen?
+    assert_equal File.realpath(@framework), reg.framework_root.to_s
+    assert_equal "sha256:#{Digest::SHA256.hexdigest(bytes)}", reg.catalogue_digest
+    assert_raises(FrozenError) { reg.catalogue.data["adapters"]["available"].clear }
+    assert_raises(FrozenError) { reg.catalogue.components.clear }
+  end
+
+  def test_provider_evaluates_the_exact_string_whose_digest_was_checked
+    register("ruby")
+    reg = registry
+    path = File.join(@framework, "adapters/ecosystems/ruby/adapter.rb")
+    sentinel = File.join(@temporary, "replacement-provider-evaluated")
+    replacement = "File.write(#{sentinel.inspect}, 'unverified')\n" + File.binread(path)
+    reads = 0
+    around = lambda do |original, file, *args, **kwargs|
+      source = original.call(file, *args, **kwargs)
+      if File.realpath(file) == File.realpath(path)
+        reads += 1
+        File.binwrite(path, replacement)
+      end
+      source
+    end
+    with_replaced_method(File.singleton_class, :binread, around) do
+      assert reg.provider(reg.supported.first).respond_to?(:detect)
+      assert_equal 1, reads
+      refute File.exist?(sentinel)
+    end
+  end
 end

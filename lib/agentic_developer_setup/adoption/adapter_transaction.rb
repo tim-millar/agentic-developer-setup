@@ -9,16 +9,20 @@ module AgenticDeveloperSetup
       include TransactionSupport
 
       # Verify every provider the public assessor will load, before any Ruby is evaluated.
-      def verify_adapter_sources!(framework_source)
-        committed_regular_file!(framework_source, "framework.yml")
+      def verify_adapter_sources!(framework_source, snapshot: nil)
+        snapshot ||= GitIdentitySnapshot.new(framework_source)
+        snapshot.assert_root!(framework_source)
         registry = Adapters::Registry.load(framework_root: framework_source)
+        catalogue = committed_regular_file!(framework_source, "framework.yml", snapshot: snapshot)
+        fail!("invalid_source", "registry catalogue differs from committed source") unless registry.catalogue_digest == catalogue["digest"]
         registry.supported.each do |definition|
           %w[manifest provider].each do |kind|
             name = (kind == "manifest") ? "adapter.yml" : "adapter.rb"
-            identity = committed_regular_file!(framework_source, "#{definition.source_path}/#{name}")
+            identity = committed_regular_file!(framework_source, "#{definition.source_path}/#{name}", snapshot: snapshot)
             fail!("invalid_source", "adapter #{kind} digest differs from committed source") unless identity["digest"] == definition.public_send("#{kind}_digest")
           end
         end
+        snapshot.verify!
         registry
       rescue Adapters::Error => e
         fail!("invalid_adapter_source", e.message, 3)
@@ -123,8 +127,10 @@ module AgenticDeveloperSetup
         document = input("adapter_decisions", @adapter_decisions_path)
         fail!("plan_stale", "adapter decisions changed while reading") unless canonical_decisions(document) == adapter_decision_document
         @adapter_selection_document = input("adapter_selection", @adapter_selection_path)
-        verify_adapter_sources!(source)
-        @adapter_assessment = Adapters::Assessor.new(target: target, framework_root: source, selection: @adapter_selection_document).assess
+        registry = verify_adapter_sources!(source, snapshot: @source_snapshot)
+        fail!("invalid_source", "assessment catalogue differs from transaction source") unless registry.catalogue_digest == @catalogue_digest
+        @source_snapshot.verify!
+        @adapter_assessment = Adapters::Assessor.new(target: target, framework_root: source, selection: @adapter_selection_document, registry: registry).assess
         fail!("invalid_decision", "selected adapter scope differs from adoption scope", 2) unless @adapter_assessment["scope"] == scope
         @adapter_selection_document = Adapters::Contracts.copy(@adapter_selection_document)
         @adapter_selection_document["selected"].sort_by! { |item| [item["category"], item["id"]] }

@@ -6,10 +6,10 @@ require "yaml"
 module AgenticDeveloperSetup
   module Assessment
     class Catalogue
-      def initialize(root)
+      def initialize(root, document: nil)
         @root = Pathname.new(root).expand_path
         @path = @root.join("framework.yml")
-        @data = YAML.safe_load(
+        @data = document || YAML.safe_load(
           @path.read,
           permitted_classes: [],
           permitted_symbols: [],

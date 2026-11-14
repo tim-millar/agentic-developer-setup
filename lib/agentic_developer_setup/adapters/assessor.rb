@@ -6,10 +6,13 @@ module AgenticDeveloperSetup
       PROJECT_MARKERS = {"package.json" => "node", "pyproject.toml" => "python", "Gemfile" => "ruby", "mix.exs" => "elixir",
                          "Cargo.toml" => "rust", "go.mod" => "go", "composer.json" => "php", "pom.xml" => "java"}.freeze
 
-      def initialize(target:, framework_root: File.expand_path("../../..", __dir__), selection: nil)
+      def initialize(target:, framework_root: File.expand_path("../../..", __dir__), selection: nil, registry: nil)
         @root = Pathname.new(target).expand_path.realpath
         raise Error, "target must be a directory" unless @root.directory?
-        @registry = Registry.load(framework_root: framework_root)
+        if !registry.nil? && (!registry.is_a?(Registry) || !registry.frozen? || registry.framework_root != Pathname.new(framework_root).realpath)
+          raise Error, "supplied adapter registry must match the canonical framework root"
+        end
+        @registry = registry.nil? ? Registry.load(framework_root: framework_root) : registry
         @selection = selection && Selection.new(selection, registry: @registry, root: @root)
         @scope = @selection ? @selection.scope : {"type" => "repository", "path" => "."}
       rescue SystemCallError => e

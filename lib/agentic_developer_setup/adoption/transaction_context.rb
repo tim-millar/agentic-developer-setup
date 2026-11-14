@@ -23,15 +23,21 @@ module AgenticDeveloperSetup
         fail!("invalid_invocation", "effective date must be an ISO calendar date", 2) unless effective_date.is_a?(String) && effective_date.match?(DATE_PATTERN) && Date.iso8601(effective_date).iso8601 == effective_date
         @target, @target_head = repository(target, "target", clean: clean)
         @source, @revision = repository(source, "source")
+        if adapter_operation?
+          @source_snapshot = GitIdentitySnapshot.new(@source, expected_head: @revision)
+          @target_snapshot = GitIdentitySnapshot.new(@target, expected_head: @target_head)
+        end
         fail!("unsafe_path", "source and target must be distinct and non-overlapping", 3) if inside?(@target, @source) || inside?(@source, @target)
         @roots = [@target, @source]
-        catalogue_path = safe_path(@source, "framework.yml")
+        catalogue_path = safe_path(@source, "framework.yml", snapshot: @source_snapshot)
         fail!("invalid_catalogue", "framework.yml must be a regular tracked file", 3) unless catalogue_path.file?
         catalogue_entry = git!(@source, "ls-files", "--stage", "-z", "--", "framework.yml").split("\0")
         fail!("invalid_catalogue", "catalogue must be tracked as a regular Git file", 3) unless catalogue_entry.length == 1 && catalogue_entry.first.match?(/\A100(?:644|755) /)
         catalogue_blob = git!(@source, "cat-file", "blob", catalogue_entry.first.split(/\s+/)[1])
-        fail!("invalid_catalogue", "catalogue differs from committed source snapshot", 3) unless catalogue_blob.b == File.binread(catalogue_path)
-        @catalogue = load_yaml(catalogue_path)
+        catalogue_bytes = File.binread(catalogue_path).freeze
+        fail!("invalid_catalogue", "catalogue differs from committed source snapshot", 3) unless catalogue_blob.b == catalogue_bytes
+        @catalogue_digest = digest(catalogue_bytes)
+        @catalogue = parse_yaml(catalogue_bytes)
         errors = FrameworkCatalogue.document_errors(@source, @catalogue)
         fail!("invalid_catalogue", errors.join("; "), 3) unless errors.empty?
         @entries = @catalogue.fetch("baseline").values_at("required", "recommended").flatten.to_h { |item| [item["name"], item] }
@@ -44,7 +50,8 @@ module AgenticDeveloperSetup
           metadata_path = safe_path(@target, METADATA_PATH)
           @metadata_input["content"] = metadata ? [File.binread(metadata_path)].pack("m0") : nil
           @metadata_input["mode"] = metadata ? mode(metadata_path) : nil
-          committed_regular_file!(@target, METADATA_PATH) if metadata
+          @target_snapshot ||= GitIdentitySnapshot.new(@target, expected_head: @target_head)
+          committed_regular_file!(@target, METADATA_PATH, snapshot: @target_snapshot) if metadata
         end
         @adapter_decision_document = load_adapter_decision_document if adapter_operation?
         @selection = resolve_selection(components, tier, exclusions)
@@ -63,7 +70,7 @@ module AgenticDeveloperSetup
               relative if existing.is_a?(Pathname) && existing.file?
             end)
           end
-          @inputs["target_files"] = paths.uniq.sort.map { |path| committed_regular_file!(@target, path).merge("path" => path) }
+          @inputs["target_files"] = paths.uniq.sort.map { |path| committed_regular_file!(@target, path, snapshot: @target_snapshot).merge("path" => path) }
         end
         load_adapter_inputs if adapter_operation?
         load_assessment(assessment)
@@ -77,6 +84,8 @@ module AgenticDeveloperSetup
         end
         identities_distinct!(@inputs.values.filter_map { |input| input.is_a?(Hash) && input["path"] })
         validate_current_metadata
+        @source_snapshot&.verify!
+        @target_snapshot&.verify!
       rescue Date::Error
         fail!("invalid_invocation", "effective date must be an ISO calendar date", 2)
       end
@@ -86,7 +95,7 @@ module AgenticDeveloperSetup
       end
 
       def source_identity
-        {"root" => source.to_s, "revision" => revision, "version" => catalogue.dig("framework", "framework_version"), "catalogue_digest" => digest(File.binread(source.join("framework.yml")))}
+        {"root" => source.to_s, "revision" => revision, "version" => catalogue.dig("framework", "framework_version"), "catalogue_digest" => @catalogue_digest}
       end
 
       def target_identity

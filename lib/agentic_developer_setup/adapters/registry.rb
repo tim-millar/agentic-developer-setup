@@ -28,16 +28,20 @@ module AgenticDeveloperSetup
     end
 
     class Registry
-      attr_reader :entries, :catalogue
+      attr_reader :entries, :catalogue, :framework_root, :catalogue_digest
 
       def self.load(framework_root:)
         new(framework_root)
       end
 
       def initialize(root)
-        @root = Pathname.new(root).realpath
-        Contracts.contained!(@root, "framework.yml", exists: true)
-        @catalogue = Assessment::Catalogue.new(@root)
+        @root = @framework_root = Pathname.new(root).realpath.freeze
+        catalogue_path = Contracts.contained!(@root, "framework.yml", exists: true)
+        catalogue_bytes = File.binread(catalogue_path).freeze
+        document = Contracts.parse_yaml(catalogue_bytes)
+        raise Error, "framework catalogue must be a mapping" unless document.is_a?(Hash)
+        @catalogue_digest = "sha256:#{Digest::SHA256.hexdigest(catalogue_bytes)}".freeze
+        @catalogue = Assessment::Catalogue.new(@root, document: document)
         errors = FrameworkCatalogue.document_errors(@root, @catalogue.data)
         raise Error, errors.sort.join("; ") unless errors.empty?
         taxonomy = @catalogue.data.fetch("adapters").fetch("taxonomy")
@@ -47,6 +51,10 @@ module AgenticDeveloperSetup
         @entries = @catalogue.data.fetch("adapters").fetch("available").map { |entry| definition(entry) }
           .sort_by { |entry| [entry.category, entry.id] }.freeze
         validate_dependencies!
+        Contracts.freeze_tree(@catalogue.data)
+        @catalogue.components.freeze
+        @catalogue.freeze
+        freeze
       rescue SystemCallError => e
         raise Error, "cannot load adapter registry: #{e.message.lines.first.strip}"
       end
@@ -62,7 +70,7 @@ module AgenticDeveloperSetup
       def provider(definition)
         raise Error, "unsupported adapter: #{definition.id}" unless supported.include?(definition)
         path = Contracts.contained!(@root, "#{definition.source_path}/adapter.rb", exists: true)
-        source = Adapters.provider_call(definition, "source loading") { File.binread(path) }
+        source = Adapters.provider_call(definition, "source loading") { File.binread(path).freeze }
         unless "sha256:#{Digest::SHA256.hexdigest(source)}" == definition.provider_digest
           raise Error, "provider changed after registry validation: #{definition.id}"
         end
@@ -168,8 +176,8 @@ module AgenticDeveloperSetup
         Contracts.contained!(@root, source, directory: true)
         manifest_path = Contracts.contained!(@root, "#{source}/adapter.yml", exists: true)
         provider_path = Contracts.contained!(@root, "#{source}/adapter.rb", exists: true)
-        bytes = File.binread(manifest_path)
-        manifest = Contracts.load_yaml(manifest_path)
+        bytes = File.binread(manifest_path).freeze
+        manifest = Contracts.parse_yaml(bytes)
         Contracts.validate!("manifest", manifest)
         unless manifest["id"] == id && manifest["category"] == category
           raise Error, "manifest/catalogue identity mismatch: #{category}/#{id}"

@@ -20,9 +20,14 @@ module AgenticDeveloperSetup
         if candidate
           begin
             source = Pathname.new(candidate).expand_path.realpath
-            registry = Adapters::Registry.load(framework_root: source)
+            if selection
+              snapshot = GitIdentitySnapshot.new(source)
+              registry = verify_adapter_sources!(source, snapshot: snapshot)
+            else
+              registry = Adapters::Registry.load(framework_root: source)
+            end
             comparison["status"] = "available"
-            comparison["source"] = {"root" => source.to_s, "revision" => GitCommand.revision(source), "catalogue_digest" => digest(File.binread(source.join("framework.yml")))}
+            comparison["source"] = {"root" => source.to_s, "revision" => snapshot ? snapshot.head : GitCommand.revision(source), "catalogue_digest" => registry.catalogue_digest}
             comparison["selected"] = state.fetch("selected").map do |item|
               definition = registry.fetch(category: item["category"], id: item["id"])
               {"adopted" => item, "status" => registry.compare(item), "candidate" => definition&.to_h&.slice("category", "id", "version", "manifest_digest", "provider_digest"),
@@ -37,11 +42,12 @@ module AgenticDeveloperSetup
         if selection && comparison["status"] == "available"
           begin
             # Use the transaction source verifier before the public assessor can execute a provider.
-            verify_adapter_sources!(source)
+            snapshot.verify!
+            proposed = Adapters::Assessor.new(target: @root, framework_root: source, selection: Adapters::Contracts.load_yaml(selection), registry: registry).assess
+            snapshot.verify!
           rescue TransactionError => e
             raise Assessment::InvocationError, "#{e.code}: #{e.message}"
           end
-          proposed = Adapters::Assessor.new(target: @root, framework_root: source, selection: Adapters::Contracts.load_yaml(selection)).assess
         end
         {"adopted" => state, "scope" => @document["scope"], "candidate" => comparison,
          "reviewed_files" => state.fetch("reviewed_files", []).map { |item| item.merge("local_state" => local_state(item)) },

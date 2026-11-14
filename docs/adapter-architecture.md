@@ -481,3 +481,24 @@ composition, coding-agent runtime integration and Markdown merging are outside
 this implementation. Downstream ecosystem adapters can register a supported
 manifest/provider and implement these public interfaces without changing the
 composition engine.
+
+
+### Verified registry continuity
+
+The ordinary `Adapters::Assessor` constructor still loads its registry from
+`framework_root`. An optional `registry:` keyword permits reuse of an immutable
+validated `Adapters::Registry` for that same canonical framework root; invalid or
+mismatched objects are rejected without a fallback reload. Supplying a registry
+is not itself evidence of committed provenance. Transaction planning and proposed
+adoption inspection first verify its actual catalogue, every supported manifest
+and every supported provider against committed Git identities, then retain that
+exact registry for comparison and assessment. Detection still runs every supported
+provider; contribution selection and composition semantics are unchanged.
+
+Catalogue and manifest parsing share the immutable raw bytes used for their
+recorded digests. The verified catalogue controls the supported-provider set.
+`Registry#provider` reads a provider into one frozen source string, checks its
+digest against the retained definition, and evaluates that same string. A file
+replacement cannot be accepted through a fresh registry reload or a second
+post-check source read. These are source-identity guarantees, not a sandbox or
+permission to execute recommended repository commands.

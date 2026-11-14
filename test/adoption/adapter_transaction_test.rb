@@ -723,4 +723,246 @@ class AdapterAdoptionTransactionTest < AdapterTest
     refute File.exist?(sentinel)
     refute File.exist?(File.join(@target, AD::METADATA_PATH))
   end
+
+  def test_transaction_reuses_verified_registry_and_refuses_post_verification_replacement
+    assert_post_verification_replacement_refused(inspection: false)
+  end
+
+  def test_proposed_inspection_reuses_verified_registry_and_refuses_post_verification_replacement
+    apply_plan(build)
+    commit(@target)
+    assert_post_verification_replacement_refused(inspection: true)
+  end
+
+  def assert_post_verification_replacement_refused(inspection:)
+    path = File.join(@framework, "adapters/ecosystems/ruby/adapter.rb")
+    sentinel = File.join(@temporary, "post-verification-provider-executed")
+    replacement = "File.write(#{sentinel.inspect}, 'unverified')\n" + File.binread(path)
+    before = git(@target, "status", "--porcelain=v1")
+    metadata_path = File.join(@target, AD::METADATA_PATH)
+    previous = File.binread(metadata_path) if File.file?(metadata_path)
+    changed = false
+    around = lambda do |original, source, **kwargs|
+      verified = original.call(source, **kwargs)
+      File.binwrite(path, replacement)
+      changed = true
+      verified
+    end
+    with_replaced_method(AD::AdapterSourceVerification, :verify_adapter_sources!, around) do
+      if inspection
+        error = assert_raises(A::Error) { AD::Inspector.new(@target, framework_root: @framework).inspect(framework_source: @framework, adapter_selection: @selection_path) }
+      else
+        File.unlink(@plan_path) if File.exist?(@plan_path)
+        error = assert_raises(AD::TransactionError) { build }
+        refute File.exist?(@plan_path)
+        refute File.exist?(@result_path)
+      end
+      assert changed
+      assert_match(/provider changed after registry validation/, error.message)
+    end
+    refute File.exist?(sentinel)
+    assert_equal before, git(@target, "status", "--porcelain=v1")
+    if previous
+      assert_equal previous, File.binread(metadata_path)
+    else
+      refute File.exist?(metadata_path)
+    end
+  end
+
+  def prepare_transient_catalogue
+    sentinel = File.join(@temporary, "transient-catalogue-provider-executed")
+    register("docker", "runtime")
+    install_provider("docker", construction: "File.write(#{sentinel.inspect}, 'unverified')")
+    @metadata["adapters"]["available"].find { |item| item["name"] == "docker" }["status"] = "planned"
+    save_catalogue
+    commit(@framework)
+    path = File.join(@framework, "framework.yml")
+    original = File.binread(path)
+    alternate = YAML.safe_load(original)
+    alternate["adapters"]["available"].find { |item| item["name"] == "docker" }["status"] = "supported"
+    [path, original, YAML.dump(alternate), sentinel]
+  end
+
+  def test_transient_catalogue_captured_by_registry_cannot_pass_committed_verification
+    path, original_bytes, alternate, sentinel = prepare_transient_catalogue
+    around = lambda do |original, **kwargs|
+      File.binwrite(path, alternate)
+      begin
+        original.call(**kwargs)
+      ensure
+        File.binwrite(path, original_bytes)
+      end
+    end
+    with_replaced_method(A::Registry.singleton_class, :load, around) do
+      error = assert_raises(AD::TransactionError) { build }
+      assert_match(/registry catalogue differs from committed source/, error.message)
+    end
+    refute File.exist?(sentinel)
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+    refute File.exist?(@plan_path)
+  end
+
+  def test_catalogue_parser_cannot_substitute_a_transient_disk_catalogue
+    path, original_bytes, alternate, sentinel = prepare_transient_catalogue
+    around = lambda do |original, root, **kwargs|
+      File.binwrite(path, alternate)
+      begin
+        original.call(root, **kwargs)
+      ensure
+        File.binwrite(path, original_bytes)
+      end
+    end
+    with_replaced_method(AgenticDeveloperSetup::Assessment::Catalogue, :initialize, around) do
+      plan = build
+      assert_equal "ready", plan.dig("adapter_transaction", "composition", "status")
+    end
+    refute File.exist?(sentinel)
+    assert_equal original_bytes, File.binread(path)
+  end
+
+  def test_committed_verified_registry_produces_the_same_public_assessment
+    verifier = Object.new.extend(AD::AdapterSourceVerification)
+    verified = verifier.verify_adapter_sources!(@framework)
+    ordinary = A::Assessor.new(target: @target, framework_root: @framework, selection: @selection_document).assess
+    actual = A::Assessor.new(target: @target, framework_root: @framework, selection: @selection_document, registry: verified).assess
+    assert_equal ordinary, actual
+  end
+
+  def test_hidden_supported_sources_are_rejected_with_both_index_flags
+    register("docker", "runtime")
+    sentinel = File.join(@temporary, "hidden-provider-executed")
+    install_provider("docker", construction: "File.write(#{sentinel.inspect}, 'unverified')")
+    commit(@framework)
+    %w[--assume-unchanged --skip-worktree].each do |flag|
+      %w[adapter.rb adapter.yml].each do |file|
+        path = File.join(@framework, "adapters/runtimes/docker", file)
+        original = File.binread(path)
+        git(@framework, "update-index", flag, path)
+        File.binwrite(path, original + "\n# hidden modified working bytes\n")
+        assert_equal "", git(@framework, "status", "--porcelain=v1")
+        assert_raises(AD::TransactionError) { build }
+        refute File.exist?(sentinel)
+        File.binwrite(path, original)
+        git(@framework, "update-index", flag.sub("--", "--no-"), path)
+      end
+    end
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+  end
+
+  def test_supported_source_index_modes_missing_and_symlinks_refuse_execution
+    register("docker", "runtime")
+    sentinel = File.join(@temporary, "unsafe-provider-executed")
+    install_provider("docker", construction: "File.write(#{sentinel.inspect}, 'unverified')")
+    commit(@framework)
+    path = File.join(@framework, "adapters/runtimes/docker/adapter.rb")
+    original = File.binread(path)
+    verifier = Object.new.extend(AD::AdapterSourceVerification)
+    File.binwrite(path, original + "\n# staged modification\n")
+    git(@framework, "add", path)
+    error = assert_raises(AD::TransactionError) { verifier.verify_adapter_sources!(@framework) }
+    assert_match(/index differs from committed HEAD/, error.message)
+    git(@framework, "read-tree", "HEAD")
+    File.binwrite(path, original)
+    git(@framework, "config", "core.filemode", "false")
+    File.chmod(0o755, path)
+    assert_equal "", git(@framework, "status", "--porcelain=v1")
+    assert_raises(AD::TransactionError) { verifier.verify_adapter_sources!(@framework) }
+    File.chmod(0o644, path)
+    File.unlink(path)
+    assert_raises(AD::TransactionError) { verifier.verify_adapter_sources!(@framework) }
+    File.symlink(File.join(@framework, "adapters/ecosystems/ruby/adapter.rb"), path)
+    assert_raises(AD::TransactionError) { verifier.verify_adapter_sources!(@framework) }
+    refute File.exist?(sentinel)
+  end
+
+  def count_preflight_git_scans
+    counts = Hash.new { |roots, root| roots[root] = Hash.new(0) }
+    around = lambda do |original, root, *args, **kwargs|
+      key = if args.first == "ls-tree"
+        "tree"
+      elsif args.first == "ls-files" && args.include?("--stage") && !args.include?("--")
+        "index"
+      end
+      counts[File.realpath(root)][key] += 1 if key
+      original.call(root, *args, **kwargs)
+    end
+    with_replaced_method(AgenticDeveloperSetup::GitCommand.singleton_class, :capture, around) do
+      AD::Planner.new(target: @target, source: @framework, operation: "adopt_adapters", effective_date: "2026-11-07", scope: ".",
+        adapter_selection: @selection_path, adapter_decisions: @decisions_path).build
+    end
+    counts
+  end
+
+  def test_full_git_enumeration_is_bounded_as_inventory_and_supported_source_counts_grow
+    small = count_preflight_git_scans
+    FileUtils.mkdir_p(File.join(@target, "docs"))
+    40.times { |n| File.write(File.join(@target, "docs/ADOPTION_#{n}.md"), "Synthetic native evidence #{n}\n") }
+    commit(@target)
+    8.times { |n| register("fixture-#{n}") }
+    commit(@framework)
+    large = count_preflight_git_scans
+    assert_equal small, large
+    [@target, @framework].each do |root|
+      counts = large.fetch(File.realpath(root))
+      assert_equal 1, counts["tree"]
+      assert_operator counts["index"], :<=, 6
+    end
+  end
+
+  def test_git_snapshot_is_scoped_fresh_and_still_reads_each_working_file
+    snapshot = AD::GitIdentitySnapshot.new(@target)
+    path = File.join(@target, "README.md")
+    identity = T.committed_regular_file!(@target, "README.md", snapshot: snapshot)
+    assert snapshot.tree.frozen?
+    assert snapshot.index.frozen?
+    assert_raises(AD::TransactionError) { T.committed_regular_file!(@framework, "framework.yml", snapshot: snapshot) }
+    git(@target, "update-index", "--skip-worktree", path)
+    File.write(path, "Hidden later bytes\n")
+    assert_raises(AD::TransactionError) { T.committed_regular_file!(@target, "README.md", snapshot: snapshot) }
+    assert_raises(AD::TransactionError) { snapshot.verify! }
+    File.write(path, "Synthetic public target\n")
+    fresh = AD::GitIdentitySnapshot.new(@target)
+    assert_equal identity, T.committed_regular_file!(@target, "README.md", snapshot: fresh)
+    git(@target, "config", "core.filemode", "false")
+    File.chmod(0o755, path)
+    assert_raises(AD::TransactionError) { T.committed_regular_file!(@target, "README.md", snapshot: fresh) }
+  end
+
+  def test_git_snapshot_rejects_changed_head_index_and_nonzero_stages
+    old = AD::GitIdentitySnapshot.new(@target)
+    path = File.join(@target, "README.md")
+    File.write(path, "New committed target identity\n")
+    git(@target, "add", path)
+    assert_raises(AD::TransactionError) { old.verify! }
+    assert_raises(AD::TransactionError) { AD::GitIdentitySnapshot.new(@target) }
+    git(@target, "commit", "-qm", "New synthetic HEAD")
+    assert_raises(AD::TransactionError) { old.verify! }
+    assert_raises(AD::TransactionError) { AD::GitIdentitySnapshot.new(@target, expected_head: old.head) }
+    fresh = AD::GitIdentitySnapshot.new(@target)
+    refute_equal old.head, fresh.head
+    assert fresh.verify!
+    blob = git(@target, "rev-parse", "HEAD:README.md").strip
+    update = AgenticDeveloperSetup::GitCommand.capture(@target, "update-index", "--index-info", stdin_data: "0 #{"0" * 40}\tREADME.md\n100644 #{blob} 1\tREADME.md\n")
+    assert update.success?
+    error = assert_raises(AD::TransactionError) { AD::GitIdentitySnapshot.new(@target) }
+    assert_match(/stage-zero/, error.message)
+  end
+
+  def test_preflight_detects_head_changes_during_source_verification
+    changed = false
+    around = lambda do |original, **kwargs|
+      reg = original.call(**kwargs)
+      unless changed
+        File.write(File.join(@framework, "concurrent-public-source.txt"), "Synthetic new source commit\n")
+        commit(@framework)
+        changed = true
+      end
+      reg
+    end
+    with_replaced_method(A::Registry.singleton_class, :load, around) do
+      assert_raises(AD::TransactionError) { build }
+    end
+    assert changed
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+  end
 end

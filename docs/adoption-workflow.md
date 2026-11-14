@@ -507,3 +507,21 @@ operations use v2 plans/results for v2 metadata and preserve its adapter block,
 including its independently approved source identity. A baseline candidate may
 advance top-level framework provenance without updating adapters. A differing
 adapter source is reported for review. V1 targets retain v1 plans and results.
+
+
+Source verification retains the exact immutable registry used for transactional
+assessment and proposed inspection. A catalogue temporarily changed and restored
+cannot alter the eligible provider set without failing its committed digest check.
+Manifest parsing is bound to its hashed bytes, and provider evaluation uses the
+same source string whose digest was checked. Candidate-only comparison continues
+to read identities without executing providers.
+
+Each adapter preflight captures fresh, repository/HEAD-bound Git tree and stage-zero
+index maps once per repository, and reuses their gitlink information for file path
+checks. Every relevant working file is still read and compared with its committed
+blob and supported mode. HEAD/index identity is rechecked at preflight boundaries
+using the captured index fingerprint; a changed index or HEAD refuses the operation.
+Snapshots are private to that preflight, never persisted in plans or reused by a
+later check/dry-run/apply. This removes repeated full Git enumeration without
+relying on status, timestamps or index flags for working-byte verification. Valid
+unchanged inputs retain the existing plan identity and metadata contracts.
