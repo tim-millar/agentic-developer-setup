@@ -51,8 +51,12 @@ module AgenticDeveloperSetup
         end
         verify_target_state!
         state_before = repository_snapshot
-        result = {"schema_version" => 1, "plan_id" => @plan["plan_id"], "application_status" => application["status"],
+        result = {"schema_version" => @plan["schema_version"], "plan_id" => @plan["plan_id"], "application_status" => application["status"],
                   "started_at" => now, "finished_at" => now, "status" => "passed", "commands" => [], "diagnostics" => []}
+        if @plan["schema_version"] == 2
+          result.merge!("plan_schema_version" => 2, "application_result_schema_version" => 2,
+            "adapter_transaction_digest" => application["adapter_transaction_digest"])
+        end
         if @plan["validation_commands"].empty?
           result["status"] = "skipped"
           result["diagnostics"] << diagnostic("validation_skipped", "No validation commands were approved.", severity: "warning")
@@ -108,6 +112,11 @@ module AgenticDeveloperSetup
       private
 
       def validate_application!(application)
+        fail!("invalid_document", "application/plan schema versions differ", 2) unless application["schema_version"] == @plan["schema_version"]
+        if @plan["schema_version"] == 2
+          identity = @plan["adapter_transaction"] && digest(JSON.generate(canonical(@plan["adapter_transaction"])))
+          fail!("invalid_document", "application adapter transaction identity differs", 2) unless application["plan_schema_version"] == 2 && application["adapter_transaction_digest"] == identity
+        end
         fail!("plan_identity_mismatch", "application evidence does not match plan") unless application["plan_id"] == @plan["plan_id"] && application["target"] == @plan["target"] && application["source"] == @plan["source"] && application["operation"] == @plan["operation"]
         fail!("preflight_failed", "validation requires completed matching application evidence") unless %w[applied_unvalidated no_changes].include?(application["status"]) && application["finished_at"] && application["metadata"]["verified"] && !application["recovery"]["interruption_uncertainty"]
         fail!("invalid_document", "application metadata identity differs", 2) unless application["metadata"]["actual_digest"] == @validator.metadata_expected_digest
@@ -139,7 +148,7 @@ module AgenticDeveloperSetup
           file = action["target_file"]
           [file["path"], [file["result_digest"], file["result_mode"]]] if WRITES.include?(action["action"])
         end.to_h
-        outputs[METADATA_PATH] = [@plan.dig("proposed_metadata", "digest"), "0644"] if @validator.changed?
+        outputs[METADATA_PATH] = [@plan.dig("proposed_metadata", "digest"), "0644"] if @validator.metadata_changed?
         tree.each do |relative, identity|
           next if outputs.key?(relative)
           verify_tracked_file!(root, relative, identity)

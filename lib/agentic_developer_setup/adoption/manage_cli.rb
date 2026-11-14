@@ -79,7 +79,7 @@ module AgenticDeveloperSetup
         options = (command == "plan") ? {components: [], exclusions: []} : {}
         parser = OptionParser.new do |opts|
           if command == "plan"
-            %w[operation framework-source scope decisions assessment validation-spec effective-date output tier].each do |key|
+            %w[operation framework-source scope decisions assessment validation-spec effective-date output tier adapter-selection adapter-decisions].each do |key|
               opts.on("--#{key} VALUE") { |value| options[key.tr("-", "_").to_sym] = value }
             end
             opts.on("--component ID") { |value| options[:components] << value }

@@ -1,0 +1,250 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "selection_reviewed",
+    "adapter_changes",
+    "commands",
+    "components",
+    "retained_files"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "selection_reviewed": {
+      "const": true
+    },
+    "adapter_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "previous",
+          "proposed",
+          "reviewed",
+          "rationale"
+        ],
+        "properties": {
+          "category": {
+            "enum": [
+              "ecosystem",
+              "framework",
+              "runtime",
+              "app-shape"
+            ]
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/adopted_adapter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposed": {
+            "$ref": "#/$defs/adopted_adapter"
+          },
+          "reviewed": {
+            "const": true
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "command_id",
+          "disposition",
+          "reviewed",
+          "rationale"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "disposition": {
+            "enum": [
+              "approve",
+              "retire"
+            ]
+          },
+          "reviewed": {
+            "const": true
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "disposition",
+          "content_path",
+          "local_ownership",
+          "reviewed",
+          "rationale",
+          "contribution_ids",
+          "approved_command_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "disposition": {
+            "enum": [
+              "create_specialised",
+              "replace_reviewed_specialisation"
+            ]
+          },
+          "content_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "local_ownership": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "minItems": 1
+          },
+          "reviewed": {
+            "const": true
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "contribution_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "approved_command_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
+        }
+      }
+    },
+    "retained_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component_id",
+          "reviewed",
+          "rationale"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "reviewed": {
+            "const": true
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tim-millar/agentic-developer-setup/schemas/adapter-adoption-decisions-v1.schema.json",
+  "$defs": {
+    "adopted_adapter": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "ecosystem",
+            "framework",
+            "runtime",
+            "app-shape"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$(?![\\s\\S])"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$(?![\\s\\S])"
+        },
+        "manifest_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "provider_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "selection_source": {
+          "enum": [
+            "explicit",
+            "accepted_detection"
+          ]
+        }
+      },
+      "required": [
+        "category",
+        "id",
+        "version",
+        "manifest_digest",
+        "provider_digest",
+        "selection_source"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "title": "Adapter adoption decisions v1"
+}

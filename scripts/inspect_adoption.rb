@@ -10,6 +10,7 @@ options = {no_report: false}
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: ruby scripts/inspect_adoption.rb TARGET [options]"
   opts.on("--framework-source PATH", "Compare with an explicit local framework source") { |value| options[:framework_source] = value }
+  opts.on("--adapter-selection PATH", "Inspect an explicit proposed selection against --framework-source") { |value| options[:adapter_selection] = value }
   opts.on("--output PATH", "Write structured YAML to PATH") { |value| options[:output] = value }
   opts.on("--report PATH", "Write Markdown report to PATH") { |value| options[:report] = value }
   opts.on("--no-report", "Suppress Markdown generation") { options[:no_report] = true }
@@ -22,7 +23,7 @@ begin
   raise AgenticDeveloperSetup::Assessment::InvocationError, "unexpected arguments: #{ARGV.join(" ")}" unless ARGV.empty?
   raise AgenticDeveloperSetup::Assessment::InvocationError, "--report cannot be combined with --no-report" if options[:report] && options[:no_report]
 
-  result = AgenticDeveloperSetup::Adoption::Inspector.new(target).inspect(framework_source: options[:framework_source])
+  result = AgenticDeveloperSetup::Adoption::Inspector.new(target).inspect(framework_source: options[:framework_source], adapter_selection: options[:adapter_selection])
   yaml = YAML.dump(result)
   output = options[:output] && AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(options[:output], target)
   report = options[:report] && AgenticDeveloperSetup::Assessment::PathSafety.validate_output!(options[:report], target)

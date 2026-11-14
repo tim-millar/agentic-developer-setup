@@ -469,12 +469,11 @@ A removed or no-longer-supported registration is missing. A change does not
 mean newer, safe or eligible for adoption.
 
 Framework metadata remains v2; generic assessment remains v2 with unchanged
-output and fixtures. Adoption metadata, plans, decisions, application and
-validation contracts remain v1. No adapter selection is inferred from adoption
-metadata and no adapter contribution reaches the transaction engine. The new
-selection/assessment schemas are independent v1 contracts. Adapter-aware
-persistence, approvals, staleness and transactional application require a
-separately specified versioned extension.
+output and fixtures. Legacy adoption contracts retain v1 semantics. The selection/assessment schemas
+remain independent v1 contracts. Adapter-aware persistence, approvals, staleness
+and transactional application use the explicit v2 extension documented in
+[adoption workflow](adoption-workflow.md); a ready assessment never itself
+authorises mutation or execution.
 
 Production adapters, automatic selection/adoption, target execution, shell
 scripts, service startup, dependency installation, credentials, cross-scope

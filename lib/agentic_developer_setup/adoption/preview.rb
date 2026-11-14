@@ -36,10 +36,36 @@ module AgenticDeveloperSetup
           after = bytes(action["after"])
           lines << diff(file["path"], before, after)
         end
-        previous = @plan["actions"].first.dig("before", "metadata_content")
+        previous = @plan.dig("inputs", "metadata", "content") || @plan["actions"].first&.dig("before", "metadata_content")
+        if @plan["schema_version"] == 2 && @plan.dig("inputs", "metadata", "status") == "present"
+          metadata_path = @validator.roots.first.join(METADATA_PATH)
+          previous = [File.binread(metadata_path)].pack("m0") if metadata_path.file? && digest(File.binread(metadata_path)) == @plan.dig("inputs", "metadata", "digest")
+        end
+        if @plan["adapter_transaction"]
+          transaction = @plan["adapter_transaction"]
+          previous_bindings = transaction.dig("previous_adapters", "command_bindings") || []
+          proposed_bindings = transaction.dig("proposed_adapters", "command_bindings")
+          lines << "\nCommand binding effects (declarations only):"
+          (previous_bindings + proposed_bindings).map { |item| item["command_id"] }.uniq.sort.each do |id|
+            old = previous_bindings.find { |item| item["command_id"] == id }
+            proposed = proposed_bindings.find { |item| item["command_id"] == id }
+            state = if proposed.nil?
+              "retired"
+            elsif old.nil?
+              "added"
+            elsif old == proposed
+              "retained"
+            else
+              "replaced"
+            end
+            lines << "#{id}: #{state}"
+          end
+          lines << "\nAdapter transaction (approved declarations; no execution authority):"
+          lines << YAML.dump(canonical(@plan["adapter_transaction"]))
+        end
         before_metadata = previous ? previous.unpack1("m0") : "".b
         lines << "\nComplete metadata diff:"
-        lines << diff(METADATA_PATH, before_metadata, @validator.changed? ? metadata_bytes(@plan.dig("proposed_metadata", "document")) : before_metadata)
+        lines << diff(METADATA_PATH, before_metadata, @validator.metadata_changed? ? metadata_bytes(@plan.dig("proposed_metadata", "document")) : before_metadata)
         @plan["diagnostics"].each { |item| lines << "#{item["severity"]} #{item["code"]} #{item["component_id"]}: #{item["message"]}" }
         lines << "\nValidation commands (separate explicit invocation; repository code executes without an additional sandbox):"
         @plan["validation_commands"].each { |command| lines << JSON.generate(command) }

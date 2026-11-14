@@ -88,7 +88,7 @@ Adapters capture the assumptions needed to apply the framework to a specific rep
 
 The public registry, manifest/provider interfaces, compatibility checks and read-only composition are implemented. All named adapter implementations in `framework.yml` remain planned; executable demonstrations are synthetic test fixtures. See [`docs/adapter-architecture.md`](docs/adapter-architecture.md).
 
-Adapter assessment produces recommendations without changing baseline components or the existing adoption transaction workflow. Run `make assess-adapters REPO=/path/to/repository` to detect candidates without automatic selection.
+Adapter assessment produces read-only recommendations. Separate reviewed adapter decisions and explicitly approved v2 adoption transactions can persist adapter configuration and reviewed canonical component specialisations; see [`docs/adoption-workflow.md`](docs/adoption-workflow.md). Run `make assess-adapters REPO=/path/to/repository` to detect candidates without automatic selection.
 
 ### Agent runtime
 

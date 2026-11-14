@@ -30,11 +30,21 @@ module AgenticDeveloperSetup
         @diagnostics = []
         return sorted unless mapping(document, "document")
 
-        @schema.validate(document).each do |message|
+        schema = (document["schema_version"] == 2) ? Schema.load(Pathname.new(__dir__).join("../../../schemas/framework-adoption-v2.schema.json")) : @schema
+        schema_errors = schema.validate(document)
+        schema_errors.each do |message|
           error("schema_violation", nil, schema_location(message), message)
         end
         validate_top_level(document)
-        return sorted unless document["schema_version"] == 1
+        return sorted unless [1, 2].include?(document["schema_version"])
+        if document["schema_version"] == 2 && schema_errors.empty?
+          require_relative "adapter_metadata"
+          begin
+            AdapterMetadata.validate!(document)
+          rescue Adapters::Error => e
+            error("invalid_adapters", nil, "adapters", e.message)
+          end
+        end
 
         validate_framework(document["framework"])
         scope = validate_scope(document["scope"])
@@ -73,11 +83,12 @@ module AgenticDeveloperSetup
 
       def validate_top_level(document)
         expected = %w[schema_version framework scope components]
+        expected << "adapters" if document["schema_version"] == 2
         missing = expected - document.keys
         extra = document.keys - expected
         error("invalid_shape", nil, nil, "metadata missing fields: #{missing.join(", ")}") unless missing.empty?
         error("unknown_field", nil, nil, "metadata has unknown fields: #{extra.join(", ")}") unless extra.empty?
-        error("unsupported_schema_version", nil, nil, "schema_version must be 1") unless document["schema_version"] == 1
+        error("unsupported_schema_version", nil, nil, "schema_version must be 1 or 2") unless [1, 2].include?(document["schema_version"]) && document["schema_version"].is_a?(Integer)
       end
 
       def validate_framework(value)

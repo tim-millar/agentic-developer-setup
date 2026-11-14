@@ -18,7 +18,7 @@ module AgenticDeveloperSetup
         raise Assessment::InvocationError, "inspection target is not readable: #{e.message}"
       end
 
-      def inspect(framework_source: nil)
+      def inspect(framework_source: nil, adapter_selection: nil)
         metadata = Metadata.load(@root)
         validator = Validator.new(root: @root, framework_root: @framework_root)
         validation = (metadata.status == "loaded") ? validator.validate(metadata.document) : metadata.diagnostics
@@ -29,7 +29,7 @@ module AgenticDeveloperSetup
         results = components.filter_map { |component| inspect_component(component, validator, candidate, diagnostics) }.sort_by { |item| item["id"].to_s }
         diagnostics += local_diagnostics(results)
         diagnostics = normalize_diagnostics(diagnostics)
-        {
+        result = {
           "schema_version" => 1,
           "repository" => {"root" => @root.to_s},
           "metadata" => {
@@ -44,9 +44,25 @@ module AgenticDeveloperSetup
           "diagnostics" => diagnostics.map(&:to_h),
           "summary" => summary(diagnostics)
         }
+        if document.is_a?(Hash) && document["schema_version"] == 2
+          require_relative "adapter_inspection"
+          result["schema_version"] = 2
+          result["adapters"] = valid_adapter_metadata?(document) ? AdapterInspection.new(root: @root, document: document).inspect(candidate: framework_source, selection: adapter_selection) : nil
+        elsif adapter_selection
+          raise Assessment::InvocationError, "proposed adapter inspection requires v2 adoption metadata"
+        end
+        result["adapters"] ? Adapters::Contracts.copy(result) : result
       end
 
       private
+
+      def valid_adapter_metadata?(document)
+        schema = Schema.load(Pathname.new(__dir__).join("../../../schemas/framework-adoption-v2.schema.json"))
+        return false unless schema.validate(document).empty?
+        AdapterMetadata.validate!(document)
+      rescue Adapters::Error
+        false
+      end
 
       def default_framework_root
         Pathname.new(__dir__).join("../../..").to_s
