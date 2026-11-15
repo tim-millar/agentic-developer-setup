@@ -358,10 +358,14 @@ creates an immutable proposal; only exact `--accept-plan-id` approval authorises
 application. An independent validation specification authorises command
 execution. None of these steps imply another step's authority.
 
-All named production adapters in this checkout remain planned. Use the synthetic
-fixtures under `test/adapters/` and `test/adoption/` to exercise adoption. Once a
-supported adapter is available, its provider participates through the same public
-registry/assessor interfaces; the transaction engine has no ecosystem branches.
+The supported public `ecosystem/node` v1.0.0 adapter participates through the
+same registry/assessor interfaces; the transaction engine has no ecosystem
+branches. Its [complete Node selection/adoption example](../adapters/ecosystems/node/README.md#complete-reviewed-adoption-example)
+approves only an actual `node-test` binding and covers manager inputs, isolated
+workspace limits and metadata-only decisions. The genuine-provider lifecycle test
+is `test/adoption/node_transaction_test.rb`; generic synthetic fixtures continue
+to exercise the broader transaction contract. No recommendation executes during
+planning or adoption, and binding approval supplies no validation specification.
 
 Prepare existing external directories and explicit selection and decision files:
 

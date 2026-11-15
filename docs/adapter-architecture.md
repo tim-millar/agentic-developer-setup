@@ -7,9 +7,11 @@ recommendations for one repository scope. It is implemented under
 3.3 and the standard library. Detection and assessment never install dependencies,
 execute target commands, start services or modify the target.
 
-All named adapters in the production `framework.yml` remain **planned**. The
-executable examples under `test/adapters/` are synthetic fixtures, not Ruby,
-Rails, Docker, Node or Python production support.
+`ecosystem/node` v1.0.0 is the first **supported** public ecosystem adapter.
+Its [support matrix and reviewed adoption example](../adapters/ecosystems/node/README.md)
+describe bounded static detection, manager precedence, native script proposals,
+workspace isolation and CI limits. Other named registrations remain planned.
+Synthetic providers still exercise generic composition independently.
 
 ## Categories and authority
 
@@ -475,7 +477,7 @@ and transactional application use the explicit v2 extension documented in
 [adoption workflow](adoption-workflow.md); a ready assessment never itself
 authorises mutation or execution.
 
-Production adapters, automatic selection/adoption, target execution, shell
+Automatic selection/adoption, target execution, shell
 scripts, service startup, dependency installation, credentials, cross-scope
 composition, coding-agent runtime integration and Markdown merging are outside
 this implementation. Downstream ecosystem adapters can register a supported
@@ -502,3 +504,24 @@ digest against the retained definition, and evaluates that same string. A file
 replacement cannot be accepted through a fresh registry reload or a second
 post-check source read. These are source-identity guarantees, not a sandbox or
 permission to execute recommended repository commands.
+
+### Public Node provider
+
+The Node provider lives entirely in its catalogue-declared `adapter.rb`, so the
+existing manifest/provider digests cover its parsing and evidence interpretation.
+It declares only findings, base commands, validation profiles, conservative path
+classifications and documentation requirements. The sole optional input is
+`ecosystem/node.package_manager`, without a default. No shared schema, composition
+conflict code or adoption mechanism is added. Provider `blocking` findings
+withhold dependent commands without turning into composer conflicts.
+
+Inventory adds only `.nvmrc`, `.node-version`, `npm-shrinkwrap.json`. Existing
+traversal, exclusions and size limits remain unchanged. Two demonstrated malformed
+metadata cases require generic detector guards: non-object JSON must not become
+a package object, and non-string scripts must not be interpreted as executable
+definitions. At the adapter assessment boundary, generic evidence summaries
+containing recognised credentials are withheld using the existing shared #98
+validator; source/method links remain available without publishing the value.
+A bounded AST-depth check also precedes the generic workflow reader's recursive
+YAML construction, which otherwise runs before provider safety checks. These
+guards do not introduce a Node-specific scanner or alter command approval.

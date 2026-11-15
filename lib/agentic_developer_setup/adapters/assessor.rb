@@ -75,7 +75,16 @@ module AgenticDeveloperSetup
         generic.materialize.each do |item|
           path = item["path"]
           path = "#{@scope["path"]}/#{path}" if path && @scope["path"] != "."
-          @evidence.add(type: item["type"], method: item["method"], summary: item["summary"], path: path)
+          # Generic labels can include arbitrary script names or CI tokens.
+          # Reuse the shared recognised-value policy before exposing them in an
+          # adapter report; preserve the source/method without echoing the value.
+          summary = item["summary"]
+          begin
+            InputValues.validate_non_secret!(summary)
+          rescue Error
+            summary = "Static evidence summary withheld because it contains recognised credential-like content."
+          end
+          @evidence.add(type: item["type"], method: item["method"], summary: summary, path: path)
         end
       end
 

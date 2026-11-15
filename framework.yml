@@ -386,7 +386,7 @@ adapters:
     - name: node
       type: ecosystem
       path: adapters/ecosystems/node
-      status: planned
+      status: supported
 
     - name: ruby
       type: ecosystem

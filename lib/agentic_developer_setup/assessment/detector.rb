@@ -623,7 +623,7 @@ module AgenticDeveloperSetup
 
       def package_scripts
         scripts = @package.is_a?(Hash) ? @package["scripts"] : {}
-        scripts.is_a?(Hash) ? scripts.transform_keys(&:to_s) : {}
+        scripts.is_a?(Hash) ? scripts.select { |name, command| name.is_a?(String) && command.is_a?(String) } : {}
       end
 
       def declared_package_manager
@@ -708,7 +708,8 @@ module AgenticDeveloperSetup
         content = text(path)
         return nil unless content
 
-        JSON.parse(content)
+        document = JSON.parse(content, allow_duplicate_key: false)
+        document if document.is_a?(Hash)
       rescue JSON::ParserError
         nil
       end
@@ -722,6 +723,14 @@ module AgenticDeveloperSetup
       end
 
       def github_actions_run_values(content)
+        # Workflow data is visited before ecosystem providers. Bound AST depth
+        # before Psych's recursive safe construction can exhaust the Ruby stack.
+        pending = [[Psych.parse_stream(content.to_s), 0]]
+        until pending.empty?
+          node, depth = pending.pop
+          return [] if depth > 80
+          pending.concat(Array(node.children).map { |child| [child, depth + 1] }) if node.respond_to?(:children)
+        end
         parsed = YAML.safe_load(content.to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
         jobs = parsed.is_a?(Hash) ? parsed["jobs"] : nil
         return [] unless jobs.is_a?(Hash)

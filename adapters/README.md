@@ -6,9 +6,11 @@ structured composition, explicit conflict resolution and read-only assessment
 are documented in [the adapter architecture](../docs/adapter-architecture.md).
 
 `framework.yml` remains authoritative for identities, categories, paths and
-support status. **All named production adapters remain planned.** Supported
-executable demonstrations exist only in `test/adapters/` synthetic fixtures.
-Generic Node/TypeScript/Python detection does not confer supported adapter status.
+support status. **`ecosystem/node` v1.0.0 is supported** for bounded static
+Node.js/TypeScript assessment and native script recommendations. Other named
+production adapters remain planned. See [Node support, limits and complete
+reviewed adoption](ecosystems/node/README.md). Generic heuristic detection alone
+does not confer operational or adapter support.
 
 | Category | Source path | Responsibility |
 | --- | --- | --- |
@@ -74,6 +76,5 @@ validation remain independent. No provider can authorise a command or target
 write. Source verification covers every supported provider assessment loads,
 including unselected ones. Updates require explicit identity changes, command
 retirement and affected-file retention/replacement decisions. Category removal,
-automatic cleanup, general configuration rendering and production adapters remain
-deferred. Support does not prove a command safe, executable, comprehensive or
+automatic cleanup and general configuration rendering remain deferred. Support does not prove a command safe, executable, comprehensive or
 appropriate for a repository.
