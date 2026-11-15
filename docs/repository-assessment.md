@@ -92,12 +92,20 @@ run independent assessments for each workspace.
 
 Package-manager evidence uses this precedence: an explicit supported
 `packageManager` declaration, then a recognised lockfile, then npm as the
-fallback for a bare `package.json`. An explicit unsupported declaration is
-retained as unknown and never falls back to npm; if it also disagrees with a
+fallback for a valid bare `package.json` object. An explicit unsupported
+declaration is retained as unknown and never falls back to npm; if it also disagrees with a
 recognised lockfile, the ambiguity is retained as a conflict. A supported
 declaration that disagrees with a lockfile is likewise retained as a conflict.
-Multiple supported lockfiles are also reported as a conflict; no manager is
-silently preferred.
+Multiple supported lockfile families are also reported as a conflict; no manager
+is silently preferred. `package-lock.json` and `npm-shrinkwrap.json` both supply
+npm evidence and retain their separate source references, without implying
+installation, freshness or universal precedence between those files.
+
+Package metadata is interpreted only from a bounded JSON object with unique keys
+at every nesting level. Duplicate-key detection does not depend on optional JSON
+parser flags. Malformed, non-object or ambiguous documents retain file-presence
+evidence but contribute no field-derived manager, script or dependency facts and
+no manifest-default manager. Independent lockfile evidence remains usable.
 
 GitHub Actions command evidence comes only from scalar or multiline `run`
 values under job steps. Comments, step names, `env`, `with`, and arbitrary
@@ -106,7 +114,11 @@ filtered to validation commands before comparison using normalized command
 identity (for example, `make test` matches `make test`, but not
 `make test-destructive`; package script syntax may be normalized across npm,
 Yarn, and pnpm when the script identity is the same). Setup, development, and
-operational commands do not establish CI validation alignment.
+operational commands do not establish CI validation alignment. Workflow AST depth
+is checked before duplicate mapping keys and safe object construction. Repeated
+keys anywhere in a workflow, malformed YAML, aliases or unsafe tags prevent that
+file from supplying CI invocations; file-presence evidence and other valid
+workflows remain visible.
 
 ## Evidence and confidence
 

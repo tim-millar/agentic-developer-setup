@@ -8,6 +8,24 @@ module AgenticDeveloperSetup
     class Detector
       SUPPORTED_ECOSYSTEMS = %w[node typescript python].freeze
       NODE_PACKAGE_MANAGERS = %w[npm yarn pnpm].freeze
+      NODE_LOCKFILES = {"package-lock.json" => "npm", "npm-shrinkwrap.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm"}.freeze
+
+      # Older parsers may ignore allow_duplicate_key: false, but pass every
+      # decoded key to a non-Hash object. Newer parsers can reject duplicates
+      # before constructing objects. Keep both checks across JSON versions.
+      class PackageObject
+        attr_reader :values
+
+        def initialize
+          @values = {}
+        end
+
+        def []=(key, value)
+          raise JSON::ParserError, "duplicate package object key" if @values.key?(key)
+          @values[key] = value
+        end
+      end
+      private_constant :PackageObject
       DOCUMENT_COMMAND_PATTERN = /\b(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|uv\s+run\s+[^\s`]+|(?:pytest|ruff|mypy|tsc)\b)/
       CI_COMMAND_PATTERN = /(?:make\s+[A-Za-z0-9_.-]+|(?:npm|yarn|pnpm)\s+(?:run\s+)?[A-Za-z0-9_.:-]+|(?:uv\s+run\s+[^\s`]+|pytest|ruff|mypy|tsc)\b)/
       DIRECT_EVIDENCE_METHODS = %w[
@@ -138,7 +156,7 @@ module AgenticDeveloperSetup
         @inventory.files.keys.select { |path| File.basename(path) == "package.json" }.each do |path|
           keys << file(path, "package_json_project_metadata", "Node.js package manifest detected")
         end
-        @inventory.files.keys.select { |path| %w[package-lock.json yarn.lock pnpm-lock.yaml].include?(File.basename(path)) }.each do |path|
+        @inventory.files.keys.select { |path| NODE_LOCKFILES.key?(File.basename(path)) }.each do |path|
           keys << file(path, "package_manager_lockfile", "Node.js package-manager lockfile detected")
         end
         keys
@@ -181,7 +199,7 @@ module AgenticDeveloperSetup
       def package_managers
         managers = Hash.new { |hash, key| hash[key] = [] }
         declaration = package_manager_declaration
-        lockfiles = {"package-lock.json" => "npm", "yarn.lock" => "yarn", "pnpm-lock.yaml" => "pnpm"}.filter_map do |path, manager|
+        lockfiles = NODE_LOCKFILES.filter_map do |path, manager|
           [manager, path] if @inventory.exists?(path)
         end
 
@@ -189,7 +207,7 @@ module AgenticDeveloperSetup
           managers[declaration[:name]] << file("package.json", "package_json_manager", "Package manager declared in package manifest")
         elsif declaration[:state] == :unsupported
           managers[declaration[:name]] << file("package.json", "unsupported_package_manager_declaration", "Unsupported package manager declared in package manifest")
-        elsif lockfiles.empty? && @inventory.exists?("package.json")
+        elsif lockfiles.empty? && @package
           managers["npm"] << file("package.json", "package_json_default_manager", "npm-compatible package manifest detected")
         end
         lockfiles.each do |manager, path|
@@ -708,10 +726,18 @@ module AgenticDeveloperSetup
         content = text(path)
         return nil unless content
 
-        document = JSON.parse(content, allow_duplicate_key: false)
-        document if document.is_a?(Hash)
+        document = JSON.parse(content, object_class: PackageObject, max_nesting: 100, allow_duplicate_key: false)
+        plain_json(document) if document.is_a?(PackageObject)
       rescue JSON::ParserError
         nil
+      end
+
+      def plain_json(value)
+        case value
+        when PackageObject then value.values.transform_values { |item| plain_json(item) }
+        when Array then value.map { |item| plain_json(item) }
+        else value
+        end
       end
 
       def extract_commands(content, pattern)
@@ -726,10 +752,19 @@ module AgenticDeveloperSetup
         # Workflow data is visited before ecosystem providers. Bound AST depth
         # before Psych's recursive safe construction can exhaust the Ruby stack.
         pending = [[Psych.parse_stream(content.to_s), 0]]
+        mappings = []
         until pending.empty?
           node, depth = pending.pop
           return [] if depth > 80
+          mappings << node if node.is_a?(Psych::Nodes::Mapping)
           pending.concat(Array(node.children).map { |child| [child, depth + 1] }) if node.respond_to?(:children)
+        end
+        # Only inspect mapping keys after the entire AST passes the depth bound.
+        # Keep this generic reader independent of the adapter contract layer.
+        mappings.each do |mapping|
+          keys = mapping.children.each_slice(2).map(&:first)
+          return [] unless keys.all? { |key| key.is_a?(Psych::Nodes::Scalar) }
+          return [] unless keys.map(&:value).uniq.length == keys.length
         end
         parsed = YAML.safe_load(content.to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
         jobs = parsed.is_a?(Hash) ? parsed["jobs"] : nil
