@@ -498,4 +498,73 @@ class AssessmentDetectorTest < Minitest::Test
     assert_equal [], result.dig("tooling", "ci", "invocations")
     assert_schema(result)
   end
+
+  def test_ambiguous_yaml_mapping_keys_never_promote_ci_invocations
+    workflows = [
+      "jobs: {first: {steps: [{run: make test}]}}\njobs: {second: {steps: [{run: make lint}]}}\n",
+      "jobs:\n  check:\n    steps: [{run: make test}]\n    steps: [{run: make lint}]\n",
+      "jobs:\n  check:\n    steps:\n      - run: make test\n        run: make lint\n",
+      "jobs:\n  check:\n    steps: [{run: make test}]\n  check:\n    steps: [{run: make lint}]\n",
+      "jobs:\n  check:\n    steps:\n      - 'run': make test\n        run: make lint\n",
+      "jobs:\n  check:\n    steps: [{run: make test}]\n    env: {SYNTHETIC_MODE: first, SYNTHETIC_MODE: last}\n"
+    ]
+    workflows.each do |raw|
+      write(".github/workflows/ambiguous.yml", raw)
+      result = assess
+      assert_schema result
+      assert_empty result.dig("tooling", "ci", "invocations")
+      assert_empty result.dig("validation", "ci_commands")
+      refute result["evidence"].any? { |item| item["type"] == "ci_invocation" }
+      assert result["evidence"].any? { |item| item["path"] == ".github/workflows/ambiguous.yml" && item["method"] == "github_actions_workflow" }
+    end
+  end
+
+  def test_valid_workflow_jobs_and_steps_keep_literal_command_sources
+    write(".github/workflows/valid.yml", <<~YAML)
+      on: push
+      jobs:
+        checks:
+          steps:
+            - run: npm run test
+            - run: |
+                npm run lint
+                npm run typecheck
+        build:
+          steps:
+            - run: pnpm run build
+    YAML
+    result = assess
+    assert_equal ["npm run lint", "npm run test", "npm run typecheck", "pnpm run build"], result.dig("tooling", "ci", "invocations")
+    invocations = result["evidence"].select { |item| item["type"] == "ci_invocation" }
+    assert_equal 4, invocations.size
+    assert invocations.all? { |item| item["path"] == ".github/workflows/valid.yml" }
+    assert_schema result
+  end
+
+  def test_invalid_aliased_tagged_and_deep_workflows_do_not_contribute_commands
+    workflows = [
+      "jobs: [not: valid\n",
+      "jobs:\n  check:\n    steps:\n      - &step {run: make test}\n      - *step\n",
+      "jobs: !ruby/object:Object {check: {steps: [{run: make test}]}}\n",
+      "jobs: {check: {steps: [{run: make test}]}}\nmetadata: " + "[" * 5000 + "x" + "]" * 5000,
+      "jobs: [{steps: [{run: make test}]}]\n",
+      "jobs: {check: {steps: invalid}}\n"
+    ]
+    workflows.each do |raw|
+      write(".github/workflows/invalid.yml", raw)
+      result = assess
+      assert_schema result
+      assert_empty result.dig("tooling", "ci", "invocations")
+      refute result["evidence"].any? { |item| item["type"] == "ci_invocation" }
+    end
+  end
+
+  def test_invalid_workflow_does_not_erase_a_separate_valid_workflow
+    write(".github/workflows/invalid.yml", "jobs: {x: {steps: [{run: make test, run: make lint}]}}")
+    write(".github/workflows/valid.yml", "jobs: {x: {steps: [{run: make typecheck}]}}")
+    result = assess
+    assert_equal ["make typecheck"], result.dig("tooling", "ci", "invocations")
+    sources = result["evidence"].select { |item| item["type"] == "ci_invocation" }
+    assert_equal [".github/workflows/valid.yml"], sources.map { |item| item["path"] }
+  end
 end

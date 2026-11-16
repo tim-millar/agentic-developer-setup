@@ -1,0 +1,20 @@
+schema_version: 1
+id: node
+category: ecosystem
+version: "1.0.0"
+description: Bounded static Node.js and TypeScript evidence and native script recommendations.
+capabilities: [test, test_unit, test_e2e, lint, format_check, typecheck, build, verify]
+detection_signals: [package_manifest, typescript_configuration, node_toolchain_configuration, package_manager_lockfile]
+contribution_domains: [findings, commands, validation_profiles, paths, documentation_requirements]
+compatibility:
+  requires: []
+  incompatible: []
+inputs:
+  - key: ecosystem/node.package_manager
+    type: string
+    required: false
+    allowed_values: [npm, yarn, pnpm]
+    description: Explicitly reviewed package-manager choice when repository evidence does not establish an unambiguous supported manager.
+provider:
+  file: adapter.rb
+  constant: AgenticDeveloperSetup::Adapters::Providers::Node

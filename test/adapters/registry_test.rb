@@ -3,11 +3,11 @@
 require_relative "support"
 
 class AdapterRegistryTest < AdapterTest
-  def test_production_planned_adapters_remain_unimplemented
+  def test_production_node_is_supported_and_other_adapters_remain_planned
     live = A::Registry.load(framework_root: ROOT)
     assert_equal 6, live.entries.size
-    assert_empty live.supported
-    assert live.entries.all? { |entry| entry.status == "planned" && entry.version.nil? && entry.manifest_digest.nil? && entry.provider_digest.nil? }
+    assert_equal ["node"], live.supported.map(&:id)
+    assert live.entries.reject { |entry| entry.id == "node" }.all? { |entry| entry.status == "planned" && entry.version.nil? && entry.manifest_digest.nil? && entry.provider_digest.nil? }
   end
 
   def test_definition_is_immutable_and_serialisable
