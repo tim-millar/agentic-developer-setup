@@ -42,6 +42,56 @@ class CheckTimingTest < Minitest::Test
     assert_includes io.string, "CheckTimingTest#slow_fixture elapsed=31.0s"
   end
 
+  def test_delayed_watchdog_observation_is_reported_without_attributing_a_cause
+    io = StringIO.new
+    reporter = CheckTiming::Reporter.new(io)
+    clock = 0.0
+    reporter.define_singleton_method(:now) { clock }
+    reporter.prerecord(self.class, "paused_fixture")
+    clock = 367.0
+    reporter.send(:report_stalled_test)
+    reporter.report
+
+    assert_includes io.string, "paused_fixture elapsed=367.0s watchdog_gap=367.0s"
+    assert_match(/started_at=\d{4}-\d\d-\d\dT.*Z observed_at=\d{4}-\d\d-\d\dT.*Z/, io.string)
+    assert_includes io.string, "TEST TIMING watchdog max_gap=367.0s"
+    refute_match(/suspend|host load|environmental failure/i, io.string)
+  end
+
+  def test_running_watchdog_distinguishes_a_slow_test_from_an_observation_gap
+    io = StringIO.new
+    reporter = CheckTiming::Reporter.new(io)
+    clock = 0.0
+    reporter.define_singleton_method(:now) { clock }
+    reporter.prerecord(self.class, "running_fixture")
+    31.times do
+      clock += 1.0
+      reporter.send(:report_stalled_test)
+    end
+    reporter.report
+
+    assert_includes io.string, "running_fixture elapsed=30.0s watchdog_gap=1.0s"
+    assert_equal 1, io.string.lines.grep(/still running/).length
+    assert_includes io.string, "TEST TIMING watchdog max_gap=1.0s"
+  end
+
+  def test_completion_retains_a_gap_before_the_watchdog_resumes
+    io = StringIO.new
+    reporter = CheckTiming::Reporter.new(io)
+    clock = 0.0
+    reporter.define_singleton_method(:now) { clock }
+    reporter.prerecord(self.class, "completed_fixture")
+    clock = 11.0
+    result = Minitest::Result.new("completed_fixture")
+    result.klass = self.class.name
+    reporter.record(result)
+    reporter.report
+
+    assert_includes io.string, "TEST TIMING watchdog max_gap=11.0s"
+    assert_includes io.string, "CheckTimingTest#completed_fixture elapsed=11.000s"
+    refute_includes io.string, "still running"
+  end
+
   def test_timing_toggle_preserves_passing_and_failing_suite_outcomes
     [false, true].each do |failing|
       statuses = ["0", "1"].map do |enabled|

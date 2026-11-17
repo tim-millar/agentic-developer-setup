@@ -287,3 +287,44 @@ Ruby 3.3. The suite also assumes an ordinary supported Bash/Unix environment,
 Git, process signals, and standard filesystem permission semantics. Native
 Windows support and privileged network-isolation mechanisms are outside this
 test contract.
+
+## Timing failures and interrupted validation
+
+Keep the host awake, with the lid open, during acceptance timing checks. On
+macOS, `/usr/bin/caffeinate -i make check ADS_TEST_TIMING=1` can prevent idle
+sleep for that command; it does not prevent clamshell sleep or guarantee CPU
+scheduling. Ubuntu CI and an awake local run provide different environmental
+evidence. A passing rerun does not explain a previous failure.
+
+With `ADS_TEST_TIMING=1`, the reporter includes a UTC suite start, UTC case
+start/observation timestamps in stall notices, the interval since the previous
+watchdog tick, and the maximum watchdog observation gap. A long test with a
+roughly one-second watchdog gap differs from a test during which the watchdog
+also stopped making observations. A large gap alone cannot distinguish host
+sleep, process suspension, scheduler delay, or Ruby GVL contention. It never
+changes an assertion, subtracts elapsed time, retries, or waives failure. The
+report remains bounded to one notice per stalled case, every family's totals,
+the slowest 20 cases, and a constant-size watchdog summary.
+
+To reproduce the effect of absent scheduling on the real hanging-probe test:
+
+```sh
+bundle exec ruby test/support/launcher_pause_reproduction.rb
+```
+
+This manual diagnostic waits for the synthetic probe-created marker, stops only
+its own isolated test process group for 11 seconds, then resumes it. The pause
+is the injected condition, not a readiness sleep. The inner test must fail its
+original ten-second assertion. The driver succeeds only when that failure is
+observed and the probe/capture children and temporary probe resources are gone
+before fixture teardown removes the adopted repository. Outer deadlines and an
+ensure path resume/kill the owned group if the reproduction cannot complete.
+The driver prints only synthetic test output and owned process PID, parent,
+state, and executable basename; it neither inspects unrelated processes nor
+runs automatically as part of `make test`.
+
+See [the issue #102 investigation](launcher-timing-investigation.md) for the
+recovered incidents, causal reproduction, limits on classification, and the
+independent reference-fixture defect tracked in #103. Preserve the failed
+result and correlate timestamped observations before assigning a future timing
+failure to a familiar cause.
