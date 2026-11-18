@@ -57,6 +57,38 @@ module AssessmentTestSupport
     Open3.capture3("git", "-C", path, "commit", "-m", "initial")
   end
 
+  def isolated_reference_fixture
+    @isolated_reference_fixture_count = (@isolated_reference_fixture_count || 0) + 1
+    name = "reference-service-#{@isolated_reference_fixture_count}"
+    root = File.join(@temporary_root, name)
+    FileUtils.mkdir_p(root)
+
+    tracked_paths, error, status = Open3.capture3(
+      "git", "ls-files", "-z", "--", "examples/reference-service", chdir: ROOT
+    )
+    raise error unless status.success?
+
+    tracked_paths.split("\0").reject(&:empty?).each do |path|
+      relative_path = path.delete_prefix("examples/reference-service/")
+      source = File.join(ROOT, path)
+      destination = File.join(root, relative_path)
+      FileUtils.mkdir_p(File.dirname(destination))
+      FileUtils.copy_entry(source, destination, true, false, true)
+    end
+
+    git!(root, "init", "--separate-git-dir", File.join(@temporary_root, "#{name}.git"))
+    git!(root, "config", "user.name", "Assessment Test")
+    git!(root, "config", "user.email", "assessment@example.invalid")
+    git!(root, "add", "--all")
+    git!(root, "-c", "commit.gpgsign=false", "commit", "-m", "fixture")
+    root
+  end
+
+  def git!(directory, *arguments)
+    _out, error, status = Open3.capture3("git", "-C", directory, *arguments)
+    raise error unless status.success?
+  end
+
   def self.normalize_reference_assessment(result)
     ReferenceAssessmentSupport.normalize(result)
   end
