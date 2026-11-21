@@ -660,8 +660,8 @@ module AgenticDeveloperSetup
             if argv.size == 2 && %w[make task].include?(executable) && TASKS.key?(subcommand)
               return [TASKS[subcommand], nil, nil]
             end
-            if executable == "tox" && subcommand == "-e" && argv.size == 3 && TASK_NAME.match?(task) && TASKS.key?(task)
-              return [TASKS[task], nil, "tox"]
+            if executable == "tox" && subcommand == "-e" && argv.size == 3 && (capability = tox_capability(task))
+              return [capability, nil, "tox"]
             end
             if argv.size == 1 && (match = %r{\A\./scripts/([a-z-]+)\.sh\z}.match(executable)) && TASKS.key?(match[1])
               return [TASKS[match[1]], nil, nil]
@@ -821,6 +821,10 @@ module AgenticDeveloperSetup
             end
           end
 
+          def tox_capability(name)
+            TASKS[name] || ("test" if name.match?(/\Apy(?:3\d{1,2})?\z/))
+          end
+
           def discover_tox
             if @files.key?("noxfile.py")
               info("nox-presence", "validation", "Nox executable configuration is present. Session identities and execution semantics are unresolved.",
@@ -841,7 +845,7 @@ module AgenticDeveloperSetup
             @tox.each do |section, environment|
               next unless section.start_with?("testenv:")
               name = section.delete_prefix("testenv:")
-              capability = TASKS[name] || ("test" if name.match?(/\Apy(?:3\d{1,2})?\z/))
+              capability = tox_capability(name)
               next unless capability
               options = base.merge(environment)
               lines = options.fetch("commands", "").lines.map(&:strip).reject(&:empty?)

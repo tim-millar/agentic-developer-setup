@@ -222,6 +222,21 @@ class PublicPythonAdapterTest < AdapterTest
     assert_findings result, "tool-pytest", "tool-nox", "tool-tox", "tool-unittest", "nox-presence"
   end
 
+  def test_ci_aligns_with_a_locally_declared_tox_python_environment
+    write_target("requirements.txt", "pytest\ntox\n")
+    write_target("tox.ini", "[testenv:py312]\ncommands = pytest -q\n")
+    write_target(".github/workflows/tests.yml", <<~YAML)
+      jobs:
+        test:
+          steps:
+            - run: tox -e py312
+    YAML
+    result = assess(python_selection)
+    assert_equal [%w[tox -e py312]], invocations(result)
+    assert finding_ids(result).any? { |id| id.start_with?("python-ci-alignment-") }
+    refute finding_ids(result).any? { |id| id.start_with?("python-ci-missing-") }
+  end
+
   def test_distinct_validation_tools_and_make_aggregate
     write_target("requirements.txt", "ruff\nblack\nisort\nflake8\npylint\nmypy\npyright\nbasedpyright\n")
     %w[.ruff.toml .isort.cfg .flake8 .pylintrc mypy.ini pyrightconfig.json].each { |file| write_target(file) }

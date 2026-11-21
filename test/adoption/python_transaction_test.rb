@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "shellwords"
 require_relative "../adapters/python_support"
 require_relative "../../lib/agentic_developer_setup/adoption/manage_cli"
 
@@ -155,6 +156,87 @@ class PublicPythonAdoptionTest < AdapterTest
     cli("apply", @plan_file, "--accept-plan-id", plan["plan_id"], "--result", @result_file, expect: 4)
     assert_equal "refused", YAML.safe_load_file(@result_file)["status"]
     refute File.exist?(@sentinel)
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+  end
+
+  def test_python_assessment_and_adoption_skip_git_clean_filter
+    path = File.join(@target, "pyproject.toml")
+    sentinel = File.join(@temporary, "clean-filter-executed")
+    write_target(".gitattributes", "pyproject.toml filter=fixture\n")
+    git(@target, "config", "filter.fixture.clean", "touch #{Shellwords.escape(sentinel)} && cat")
+    commit(@target)
+    File.unlink(sentinel)
+
+    old = Time.now - 120
+    File.utime(old, old, path)
+    assert_empty git(@target, "--no-optional-locks", "status", "--porcelain")
+    assert File.exist?(sentinel), "ordinary Git status must exercise the filter on mtime drift"
+    File.unlink(sentinel)
+    File.utime(old, old, path)
+    before = snapshot_target
+    guard_static_operations do
+      assessment = AgenticDeveloperSetup::Assessment::GitInspector.new(@target).info
+      assert_equal "clean", assessment.fetch("working_tree")
+      assert_equal [%w[make test]], invocations
+      assert create_plan.fetch("plan_id")
+    end
+    assert_equal before, snapshot_target
+    refute File.exist?(sentinel)
+
+    File.open(path, "a") { |file| file.puts "# Changed Python project bytes" }
+    File.unlink(@plan_file)
+    guard_static_operations do
+      _, error = cli("plan", @target, "--operation", "adopt_adapters", "--framework-source", @framework, "--scope", ".",
+        "--adapter-selection", @selection_file, "--adapter-decisions", @decisions_file, "--effective-date", "2026-11-21",
+        "--output", @plan_file, expect: 3)
+      assert_includes error, "dirty_target"
+    end
+    refute File.exist?(@plan_file)
+    refute File.exist?(sentinel)
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+  end
+
+  def test_oversized_python_presence_is_not_interpreted_and_streams_integrity_bytes
+    relative = "setup.py"
+    path = File.join(@target, relative)
+    bytes = "raise AssertionError('must never execute')\n".ljust(300_000, "#")
+    write_target(relative, bytes)
+    commit(@target)
+
+    guard_static_operations(prohibited_reads: %r{/setup\.py\z}) do
+      assert_includes finding_ids(assess(python_selection)), "python-dynamic-metadata"
+    end
+
+    real_path = File.realpath(path)
+    chunks = []
+    record_stream_read = lambda do |original, *args|
+      if original.receiver.path == real_path
+        assert_operator args.fetch(0), :<=, 64 * 1024
+        chunks << args.fetch(0)
+      end
+      original.call(*args)
+    end
+    reject_binread = lambda do |original, filename, *args|
+      refute_equal real_path, filename.to_s
+      original.call(filename, *args)
+    end
+    plan = nil
+    with_replaced_method(File, :read, record_stream_read) do
+      with_replaced_method(File.singleton_class, :binread, reject_binread) do
+        guard_static_operations { plan = create_plan }
+      end
+    end
+    identity = plan.dig("inputs", "target_files").find { |file| file["path"] == relative }
+    assert_equal({"digest" => "sha256:#{Digest::SHA256.hexdigest(bytes)}", "mode" => "0644", "path" => relative}, identity)
+    assert_operator chunks.sum, :>=, bytes.bytesize
+
+    git(@target, "update-index", "--skip-worktree", relative)
+    File.binwrite(path, bytes.sub("never", "still"))
+    guard_static_operations do
+      _, error = cli("apply", @plan_file, "--dry-run", expect: 4)
+      assert_includes error, "local_modification"
+      assert_includes error, relative
+    end
     refute File.exist?(File.join(@target, AD::METADATA_PATH))
   end
 end

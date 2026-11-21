@@ -291,6 +291,11 @@ The fixtures use public synthetic data. Run `make test-adapters` and
 `make test-adoption` with the ADS Ruby bundle. The Python assessment suite
 covers F01–F22 and the CLI transaction suite covers F22–F24, including
 execution interception, exact acceptance, metadata verification and drift.
+The Python transaction tests also exercise [the shared adoption preflight](../../../docs/adoption-workflow.md#adapter-adoption-and-reviewed-updates-v2).
+They use an identity clean filter with a sentinel and a 300,000-byte `setup.py`
+to verify that preflight skips filter execution, checks file identity in
+bounded chunks and rejects changed evidence. Assessment uses `setup.py`
+presence without reading its contents.
 
 | Original #12 requirement | Disposition |
 | --- | --- |

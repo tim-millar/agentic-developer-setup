@@ -74,13 +74,20 @@ module PublicPythonFixture
   # tools and network clients before they can run.
   def guard_static_operations(prohibited_reads: nil, &body)
     git_read = ->(original, *args, **options, &block) {
-      allowed = args[1, 4] == ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"] &&
-        %w[rev-parse status symbolic-ref ls-files check-ignore ls-tree cat-file diff diff-index show].include?(args[5])
-      flunk "unexpected subprocess during static processing" unless allowed
+      command = args.drop(5).take_while { |argument| argument.is_a?(String) }
+      while command[0] == "-c" && command[1].is_a?(String) &&
+          command[1].match?(/\Afilter\.[\w.-]+\.(?:(?:clean|process)=|required=false)\z/)
+        command = command.drop(2)
+      end
+      read_only = %w[rev-parse status symbolic-ref ls-files check-ignore ls-tree cat-file diff diff-index show].include?(command[0]) ||
+        command == %w[config --null --name-only --list]
+      allowed = args[1, 4] == ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"] && read_only
+      flunk "unexpected subprocess during static processing (#{command.first.inspect})" unless allowed
       original.call(*args, **options, &block)
     }
     prohibited = ->(*) { flunk "process or network execution attempted during static processing" }
     seams = [[Open3.singleton_class, :capture3, git_read], [Open3.singleton_class, :popen3, git_read],
+      [Open3.singleton_class, :popen2, git_read],
       [Kernel, :spawn, git_read], [Process.singleton_class, :spawn, git_read],
       [Kernel, :system, prohibited], [Kernel, :exec, prohibited], [Kernel, :`, prohibited],
       [IO.singleton_class, :popen, prohibited], [Socket.singleton_class, :tcp, prohibited], [TCPSocket.singleton_class, :new, prohibited]]
