@@ -70,6 +70,8 @@ module AgenticDeveloperSetup
               relative if existing.is_a?(Pathname) && existing.file?
             end)
           end
+          # Inventory membership can be presence evidence. Bind its identity
+          # to the plan independently of what assessment interprets.
           @inputs["target_files"] = paths.uniq.sort.map { |path| committed_regular_file!(@target, path, snapshot: @target_snapshot).merge("path" => path) }
         end
         load_adapter_inputs if adapter_operation?

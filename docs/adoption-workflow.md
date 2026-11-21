@@ -523,11 +523,21 @@ Manifest parsing is bound to its hashed bytes, and provider evaluation uses the
 same source string whose digest was checked. Candidate-only comparison continues
 to read identities without executing providers.
 
+Adoption checks source and target worktree status with external Git clean and
+process filters disabled for that inspection. Staged, unstaged, untracked and
+submodule changes still block adoption. When a filter would otherwise make
+working bytes match the index, Git may report the file as changed and preflight
+reports that it skipped filter conversion. Git versions older than 2.31 may
+refuse preflight if a configured driver name contains `=` and the override
+cannot be applied.
+
 Each adapter preflight captures fresh, repository/HEAD-bound Git tree and stage-zero
 index maps once per repository, and reuses their gitlink information for file path
-checks. Every relevant working file is still read and compared with its committed
-blob and supported mode. HEAD/index identity is rechecked at preflight boundaries
-using the captured index fingerprint; a changed index or HEAD refuses the operation.
+checks. Preflight compares relevant working files with their committed blobs in
+bounded chunks, verifies their modes, and records their digests as plan inputs.
+This includes files whose presence alone serves as evidence. Assessment's 256 KiB
+limit on interpreting file contents still applies. Preflight rechecks HEAD and the
+captured index fingerprint at its boundaries. A changed index or HEAD refuses the operation.
 Snapshots are private to that preflight, never persisted in plans or reused by a
 later check/dry-run/apply. This removes repeated full Git enumeration without
 relying on status, timestamps or index flags for working-byte verification. Valid
