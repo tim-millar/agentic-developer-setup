@@ -396,7 +396,7 @@ adapters:
     - name: python
       type: ecosystem
       path: adapters/ecosystems/python
-      status: planned
+      status: supported
 
     - name: elixir
       type: ecosystem

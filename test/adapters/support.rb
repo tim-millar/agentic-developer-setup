@@ -27,6 +27,17 @@ class AdapterTest < Minitest::Test
     FileUtils.remove_entry_secure(@temporary)
   end
 
+  def install_public_ecosystems
+    catalogue = YAML.safe_load_file(File.join(ROOT, "framework.yml"))
+    @metadata["adapters"]["available"] = catalogue.fetch("adapters").fetch("available")
+    save_catalogue
+    @metadata["adapters"]["available"].select { |entry| entry["status"] == "supported" }.each do |entry|
+      relative = entry.fetch("path")
+      FileUtils.mkdir_p(File.join(@framework, File.dirname(relative)))
+      FileUtils.cp_r(File.join(ROOT, relative), File.join(@framework, relative))
+    end
+  end
+
   def save_catalogue
     File.write(File.join(@framework, "framework.yml"), YAML.dump(@metadata))
   end

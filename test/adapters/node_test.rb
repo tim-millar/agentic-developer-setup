@@ -8,16 +8,16 @@ class PublicNodeAdapterTest < AdapterTest
 
   def setup
     super
-    install_node
+    install_public_ecosystems
   end
 
   def test_registered_manifest_and_real_provider_interface
     live = A::Registry.load(framework_root: ROOT)
-    assert_equal ["node"], live.supported.map(&:id)
+    assert_equal %w[node python], live.supported.map(&:id)
     definition = live.fetch(category: "ecosystem", id: "node")
     assert_equal "1.0.0", definition.version
     assert_equal "supported", definition.status
-    assert_equal 5, live.entries.count { |entry| entry.status == "planned" }
+    assert_equal 4, live.entries.count { |entry| entry.status == "planned" }
     provider = live.provider(definition)
     assert_equal 1, provider.method(:detect).arity
     assert_includes provider.method(:contribute).parameters, [:keyreq, :inputs]

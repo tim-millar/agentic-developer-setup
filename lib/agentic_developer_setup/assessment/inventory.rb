@@ -18,6 +18,14 @@ module AgenticDeveloperSetup
         tmp
         cache
         .cache
+        __pycache__
+        .pytest_cache
+        .mypy_cache
+        .ruff_cache
+        .tox
+        .nox
+        .eggs
+        htmlcov
       ].freeze
       PROJECT_CONTAINERS = %w[apps packages services projects workspaces modules].freeze
       MAX_READ_BYTES = 256 * 1024
@@ -29,11 +37,14 @@ module AgenticDeveloperSetup
         /\AAGENTS\.md\z/i,
         /\ACLAUDE\.md\z/i,
         /\AREVIEW\.md\z/i,
-        /\AMakefile(?:\..*)?\z/i,
+        /\A(?:GNUmakefile|Makefile(?:\..*)?)\z/i,
+        /\ATaskfile\.ya?ml\z/i,
         /\Apackage\.json\z/i,
         /\A(?:\.nvmrc|\.node-version)\z/i,
         /\A(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)\z/i,
-        /\A(?:pyproject\.toml|uv\.lock|requirements[^\/]*\.txt)\z/i,
+        /\A(?:pyproject\.toml|(?:uv|poetry|pdm)\.lock|requirements[^\/]*\.(?:txt|in))\z/i,
+        /\A(?:\.python-version|\.mypy\.ini|pyrightconfig\.json|\.flake8|\.isort\.cfg|\.?pylintrc)\z/i,
+        /\A(?:setup\.py|noxfile\.py|\.coverage|coverage\.xml)\z/i,
         /\Atsconfig[^\/]*\.json\z/i,
         /\A(?:\.gitignore|CODEOWNERS|Dockerfile[^\/]*)\z/i,
         /\A(?:ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|OPERATIONS|DEPLOY|COMMITS)[^\/]*\.(?:md|markdown|rst|txt)\z/i,
@@ -43,6 +54,9 @@ module AgenticDeveloperSetup
         /\A(?:\.pre-commit-config\.ya?ml|lefthook\.ya?ml|nx\.json|turbo\.json|pnpm-workspace\.yaml)\z/i,
         /\A(?:Cargo\.toml|go\.mod|Gemfile|composer\.json|pom\.xml|mix\.exs)\z/i
       ].freeze
+
+      SHELL_WRAPPERS = %w[test tests lint format-check typecheck type-check build verify check].map { |name| "scripts/#{name}.sh" }.freeze
+      PRESENCE_ONLY_FILES = %w[setup.py noxfile.py .coverage coverage.xml].freeze
 
       attr_reader :files, :excluded_paths, :symlink_boundaries, :ignored_paths, :git
 
@@ -57,7 +71,7 @@ module AgenticDeveloperSetup
 
       def discover
         @tracked = @git.tracked_files
-        @git_detected = @git.info["detected"]
+        @git_detected = @git.detected?
         @ignored_set = @git_detected ? @git.ignored_files(@tracked).to_h { |path| [path, true] } : {}
         @tracked.each { |path| add_if_known(path) }
         Dir.children(@root).sort.each do |name|
@@ -71,6 +85,8 @@ module AgenticDeveloperSetup
             walk_project_container(name)
           elsif name == ".github"
             walk_known_tree(name, 0)
+          elsif name == "scripts"
+            SHELL_WRAPPERS.each { |file| add_if_known(file) }
           elsif name == "docs"
             walk_documentation_tree(name, 0)
           elsif known_root_file?(name)
@@ -83,8 +99,10 @@ module AgenticDeveloperSetup
         self
       end
 
-      def read(relative_path)
+      def read(relative_path, strict_encoding: false)
         return nil unless @files.key?(relative_path)
+        return nil if PRESENCE_ONLY_FILES.include?(File.basename(relative_path).downcase) || wrapper_path?(relative_path)
+        return nil unless safe_ancestors?(relative_path)
 
         path = @root.join(relative_path)
         return nil unless regular_non_symlink?(path)
@@ -92,7 +110,8 @@ module AgenticDeveloperSetup
         bytes = File.binread(path.to_s, MAX_READ_BYTES + 1)
         return nil if bytes.bytesize > MAX_READ_BYTES
 
-        bytes.force_encoding(Encoding::UTF_8).scrub
+        bytes.force_encoding(Encoding::UTF_8)
+        strict_encoding ? (bytes if bytes.valid_encoding?) : bytes.scrub
       rescue SystemCallError
         nil
       end
@@ -102,8 +121,12 @@ module AgenticDeveloperSetup
       end
 
       def directory?(relative_path)
-        path = @root.join(relative_path)
-        regular_directory?(path)
+        safe_relative?(relative_path) && safe_ancestors?(relative_path) && regular_directory?(@root.join(relative_path))
+      end
+
+      def visible_directory?(relative_path)
+        return false if excluded_path?(relative_path) || !directory?(relative_path)
+        !@git_detected || @tracked.any? { |file| file.start_with?("#{relative_path}/") } || !@git.ignored?(relative_path)
       end
 
       def candidate_project_files
@@ -189,6 +212,8 @@ module AgenticDeveloperSetup
           return
         end
 
+        return unless safe_ancestors?(relative_path, record: true)
+
         path = @root.join(relative_path)
         if symlink?(path)
           record_symlink_boundary(relative_path, path)
@@ -223,6 +248,7 @@ module AgenticDeveloperSetup
 
       def known_nested_file?(relative_path)
         basename = File.basename(relative_path)
+        return true if wrapper_path?(relative_path)
         return true if relative_path.match?(%r{\Ascripts/(?:run_codex|agent_run_telemetry|agent_run_usage|agent_run_outcomes|mint_gh_app_token)\.sh\z}i)
         return true if relative_path.casecmp?("scripts/agent_run_usage_collector.rb")
         return true if relative_path.match?(%r{\A\.github/(?:workflows/[^/]+\.(?:yml|yaml)|ISSUE_TEMPLATE/[^/]+\.(?:md|yml|yaml)|PULL_REQUEST_TEMPLATE(?:/[^/]+)?\.md)\z}i)
@@ -239,6 +265,22 @@ module AgenticDeveloperSetup
         relative_path.start_with?("docs/") && basename.match?(
           /\A(?:README|AGENT_PROMPT|ARCHITECTURE|DEVELOPMENT|DOMAIN|TESTING|SECURITY|DEPLOY|OPERATIONS|COMMITS|FRAMEWORK_ADOPTION|ADOPTION)[^\/]*\.(?:md|markdown|rst|txt)\z/i
         )
+      end
+
+      def wrapper_path?(relative_path)
+        SHELL_WRAPPERS.any? { |path| relative_path == path || relative_path.end_with?("/#{path}") }
+      end
+
+      def safe_ancestors?(relative_path, record: false)
+        parent = @root
+        prefix = []
+        relative_path.split(File::SEPARATOR)[0...-1].all? do |part|
+          prefix << part
+          parent = parent.join(part)
+          allowed = regular_directory?(parent)
+          record_symlink_boundary(prefix.join(File::SEPARATOR), parent) if record && !allowed
+          allowed
+        end
       end
 
       def safe_relative?(relative_path)

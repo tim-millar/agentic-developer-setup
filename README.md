@@ -5,7 +5,7 @@ A reusable framework for enabling safe, productive agent-assisted development ac
 This public framework source repository provides:
 
 - a **baseline set of repo artefacts** for agent-enabled development
-- an **ecosystem, framework, runtime, and app-shape adapter taxonomy**, with a supported public Node.js/TypeScript ecosystem adapter
+- an **ecosystem, framework, runtime, and app-shape adapter taxonomy**, with supported public Node.js/TypeScript and Python ecosystem adapters
 - **adoption prompts** for greenfield, existing, and legacy repositories
 - **prompt packs** for using the framework with LLMs and coding agents
 - public technical documentation for the framework architecture, evolution, and evidence boundaries
@@ -36,7 +36,7 @@ The framework is not a single application template. It is a reusable operating l
 ```text
 baseline/    Shared baseline artefacts used in agent-enabled repos
 agent-runtimes/ Globally distributed coding-agent runtimes and their policies
-adapters/    Adapter taxonomy, supported Node adapter and planned implementations
+adapters/    Adapter taxonomy, supported ecosystem adapters and planned implementations
 prompts/     Prompt packs for using the framework with agents/LLMs
 docs/        Documentation about the framework itself
 framework.yml  Machine-readable framework metadata
@@ -86,7 +86,7 @@ Adapters capture the assumptions needed to apply the framework to a specific rep
 - runtime adapters for execution, container, and local-development assumptions
 - app-shape adapters for architectural patterns such as API services, workers, monoliths, and static sites
 
-The public registry, manifest/provider interfaces, compatibility checks and read-only composition are implemented. The `ecosystem/node` adapter v1.0.0 provides bounded static Node.js/TypeScript assessment and native script recommendations; other named implementations remain planned. See [Node support and reviewed adoption](adapters/ecosystems/node/README.md). See [`docs/adapter-architecture.md`](docs/adapter-architecture.md).
+The public registry supports bounded static assessment and native command recommendations for Node.js/TypeScript and Python, both at adapter version 1.0.0. See [Node support](adapters/ecosystems/node/README.md), [Python support](adapters/ecosystems/python/README.md) and the [adapter architecture](docs/adapter-architecture.md).
 
 Adapter assessment produces read-only recommendations. Separate reviewed adapter decisions and explicitly approved v2 adoption transactions can persist adapter configuration and reviewed canonical component specialisations; see [`docs/adoption-workflow.md`](docs/adoption-workflow.md). Run `make assess-adapters REPO=/path/to/repository` to detect candidates without automatic selection.
 

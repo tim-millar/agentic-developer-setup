@@ -3,15 +3,21 @@
 The adapter subsystem registers, detects, explicitly selects and composes typed
 recommendations for one repository scope. It is implemented under
 `lib/agentic_developer_setup/adapters/` and exposed by
-`require "agentic_developer_setup/adapters"`. Its runtime dependencies are Ruby
-3.3 and the standard library. Detection and assessment never install dependencies,
-execute target commands, start services or modify the target.
+`require "agentic_developer_setup/adapters"`. The generic adapter runtime uses Ruby 3.3 and the
+standard library. Python manifest interpretation uses tomlrb from the locked
+ADS Ruby bundle. Detection and assessment are read-only and require no
+target-language runtime.
 
 `ecosystem/node` v1.0.0 is the first **supported** public ecosystem adapter.
 Its [support matrix and reviewed adoption example](../adapters/ecosystems/node/README.md)
 describe bounded static detection, manager precedence, native script proposals,
-workspace isolation and CI limits. Other named registrations remain planned.
-Synthetic providers still exercise generic composition independently.
+workspace isolation and CI limits.
+
+`ecosystem/python` v1.0.0 provides bounded manifest, interpreter, manager,
+packaging and native validation evidence. Its [support matrix and reviewed
+adoption example](../adapters/ecosystems/python/README.md) describe the command
+subset and non-executing assessment. Both ecosystem adapters use generic
+composition and transactional adoption. Other registrations remain planned.
 
 ## Categories and authority
 
@@ -141,7 +147,10 @@ Context exposes:
 - `scope`: selected `{ "type" => "repository", "path" => "." }` or explicit
   `{ "type" => "workspace", "path" => "apps/storefront" }`;
 - `inventory.files`, `inventory.read(path)`, `inventory.exists?(path)`: read-only,
-  bounded, repository-relative paths inside that scope;
+  bounded, repository-relative paths inside that scope. `files` includes known
+  presence-only paths. `read(path, strict_encoding: true)` requires valid UTF-8;
+- `inventory.directory?(path)` and `inventory.excluded_directories`: scoped
+  directory-presence evidence without listing or reading contained files;
 - `generic_evidence`: the existing generic detector's static evidence;
 - `add_evidence(type:, method:, summary:, path: nil)`: register evidence and
   obtain its stable ID;

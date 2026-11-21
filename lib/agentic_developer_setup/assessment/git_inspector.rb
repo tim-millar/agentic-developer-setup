@@ -9,9 +9,12 @@ module AgenticDeveloperSetup
         @root = root
       end
 
+      def detected?
+        capture("rev-parse", "--show-toplevel").success?
+      end
+
       def info
-        top_level = capture("rev-parse", "--show-toplevel")
-        unless top_level.success?
+        unless detected?
           return {
             "detected" => false,
             "commit" => "unknown",

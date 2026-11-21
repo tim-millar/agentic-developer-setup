@@ -16,13 +16,28 @@ module AgenticDeveloperSetup
           freeze
         end
 
-        def read(path)
+        def read(path, strict_encoding: false)
           local = @mapping[path]
           return nil unless local
           Contracts.contained!(@root, path, exists: true)
-          @inventory.read(local)
+          @inventory.read(local, strict_encoding: strict_encoding)
         rescue Error
           nil
+        end
+
+        def directory?(path)
+          Contracts.scoped_path!(path, @scope)
+          local = (@scope["path"] == ".") ? path : path.delete_prefix("#{@scope["path"]}/")
+          @inventory.visible_directory?(local)
+        rescue Error
+          false
+        end
+
+        def excluded_directories
+          @inventory.excluded_paths.sort.filter_map do |path|
+            next unless @inventory.directory?(path)
+            (@scope["path"] == ".") ? path : "#{@scope["path"]}/#{path}"
+          end
         end
 
         def exists?(path)
