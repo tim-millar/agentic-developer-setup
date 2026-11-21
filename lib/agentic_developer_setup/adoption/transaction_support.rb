@@ -195,8 +195,14 @@ module AgenticDeveloperSetup
         root = Pathname.new(path).expand_path.realpath
         head = GitCommand.revision(root)
         fail!("invalid_#{role}", "#{role} must be a Git worktree root with a commit", 3) unless root.directory? && head
-        status = git!(root, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-        fail!("dirty_#{role}", "#{role} worktree must be clean", 3) if clean && !status.empty?
+        if clean
+          status = git_status!(root)
+          unless status.stdout.empty?
+            message = "#{role} worktree must be clean"
+            message += " (Git clean/process filters were disabled during inspection)" if status.filters_disabled
+            fail!("dirty_#{role}", message, 3)
+          end
+        end
         [root, head]
       rescue SystemCallError, TypeError => e
         fail!("invalid_#{role}", e.message, 3)
@@ -234,15 +240,39 @@ module AgenticDeveloperSetup
         supported = committed && {"100644" => "0644", "100755" => "0755"}[committed.first]
         fail!("provenance_unavailable", "reconciliation target must be a regular file committed in target HEAD: #{relative}") unless supported
         fail!("plan_stale", "reconciliation target index differs from HEAD: #{relative}") unless (snapshot ? snapshot.index : git_index(root))[relative] == committed
-        blob = git!(root, "cat-file", "blob", committed.last).b
-        unless File.binread(path) == blob && mode(path) == supported
+        blob_digest = matching_blob_digest(root, path, committed.last)
+        unless blob_digest && mode(path) == supported
           fail!("local_modification", "reconciliation target bytes/mode differ from committed HEAD; commit or discard local changes: #{relative}")
         end
-        {"digest" => digest(blob), "mode" => supported}
+        {"digest" => blob_digest, "mode" => supported}
+      end
+
+      # Transaction inputs need a byte identity, even for files assessment
+      # only treats as presence evidence. Keep the comparison bounded in memory.
+      def matching_blob_digest(root, path, object)
+        File.open(path, "rb") do |working|
+          result = GitCommand.stream_stdout(root, "cat-file", "blob", object) do |blob|
+            hash = Digest::SHA256.new
+            matches = true
+            while (chunk = blob.read(64 * 1024))
+              matches &&= working.read(chunk.bytesize) == chunk
+              hash.update(chunk)
+            end
+            "sha256:#{hash.hexdigest}" if matches && working.eof?
+          end
+          fail!("preflight_failed", "Git inspection failed: cat-file", 3) unless result.success?
+          result.stdout
+        end
+      end
+
+      def git_status!(root)
+        status = GitCommand.status(root, "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+        fail!("preflight_failed", "Git could not inspect worktree status with clean/process filters disabled", 3) unless status.success?
+        status
       end
 
       def git_state(root)
-        git!(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+        git_status!(root).stdout
       end
     end
 

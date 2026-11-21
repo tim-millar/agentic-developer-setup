@@ -9,9 +9,13 @@ module AgenticDeveloperSetup
         @root = root
       end
 
+      def detected?
+        !GitCommand.worktree_root(@root).nil?
+      end
+
       def info
-        top_level = capture("rev-parse", "--show-toplevel")
-        unless top_level.success?
+        top_level = GitCommand.worktree_root(@root)
+        unless top_level
           return {
             "detected" => false,
             "commit" => "unknown",
@@ -20,7 +24,7 @@ module AgenticDeveloperSetup
           }
         end
 
-        status = capture("status", "--porcelain", "--untracked-files=normal")
+        status = GitCommand.status(top_level, "--porcelain", "--untracked-files=normal")
         {
           "detected" => true,
           "commit" => value_or_unknown(capture("rev-parse", "--verify", "HEAD^{commit}")),

@@ -57,7 +57,7 @@ module AgenticDeveloperSetup
 
       def discover
         @tracked = @git.tracked_files
-        @git_detected = @git.info["detected"]
+        @git_detected = @git.detected?
         @ignored_set = @git_detected ? @git.ignored_files(@tracked).to_h { |path| [path, true] } : {}
         @tracked.each { |path| add_if_known(path) }
         Dir.children(@root).sort.each do |name|
