@@ -524,7 +524,9 @@ Adoption checks source and target worktree status with external Git clean and
 process filters disabled for that inspection. Staged, unstaged, untracked and
 submodule changes still block adoption. When a filter would otherwise make
 working bytes match the index, Git may report the file as changed and preflight
-reports that it skipped filter conversion.
+reports that it skipped filter conversion. Git versions older than 2.31 may
+refuse preflight if a configured driver name contains `=` and the override
+cannot be applied.
 
 Each adapter preflight captures fresh, repository/HEAD-bound Git tree and stage-zero
 index maps once per repository, and reuses their gitlink information for file path

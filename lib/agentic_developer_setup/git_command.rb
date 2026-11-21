@@ -39,13 +39,29 @@ module AgenticDeveloperSetup
       # Empty commands disable Git's clean/process conversions. Clear required
       # too, so Git can compare bytes using its remaining built-in conversions.
       settings = drivers.flat_map { |driver| [["#{driver}.clean", ""], ["#{driver}.process", ""], ["#{driver}.required", "false"]] }
+      literal, standard = settings.partition { |key, _| key.include?("=") }
+      overrides = standard.flat_map { |key, value| ["-c", "#{key}=#{value}"] }
+      config = literal_filter_config(root, literal)
+      return Result.new("", "", false) unless config
+
+      capture(root, *overrides, "status", *arguments, config: config).tap { |result| result.filters_disabled = !drivers.empty? }
+    end
+
+    def literal_filter_config(root, settings)
+      return {} if settings.empty?
+
+      # -c splits at the first "=". Git 2.31 added environment overrides
+      # that can represent literal keys. Confirm Git applied them before status.
       config = {"GIT_CONFIG_COUNT" => settings.length.to_s}
       settings.each_with_index do |(key, value), index|
         config["GIT_CONFIG_KEY_#{index}"] = key
         config["GIT_CONFIG_VALUE_#{index}"] = value
       end
-      capture(root, "status", *arguments, config: config).tap { |result| result.filters_disabled = !drivers.empty? }
+      key, value = settings.first
+      probe = capture(root, "config", "--show-origin", "--get", key, config: config.merge("LC_ALL" => "C"))
+      config if probe.success? && probe.stdout == "command line:\t#{value}\n"
     end
+    private_class_method :literal_filter_config
 
     def filter_drivers(root)
       names = capture(root, "config", "--null", "--name-only", "--list")
