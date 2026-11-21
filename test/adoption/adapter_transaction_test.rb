@@ -946,7 +946,8 @@ class AdapterAdoptionTransactionTest < AdapterTest
   end
 
   def test_adoption_preflight_preserves_initialized_submodule_status_without_filters
-    submodule = File.join(@target, "dependency")
+    parent = File.join(@target, "dependencies")
+    submodule = File.join(parent, "dependency")
     FileUtils.mkdir_p(submodule)
     File.write(File.join(submodule, "fixture.txt"), "Synthetic submodule bytes\n")
     File.write(File.join(submodule, ".gitattributes"), "fixture.txt filter=nested\n")
@@ -965,6 +966,21 @@ class AdapterAdoptionTransactionTest < AdapterTest
     File.write(File.join(submodule, "untracked.txt"), "Synthetic untracked bytes\n")
     _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
     assert_includes error, "dirty_target"
+    refute File.exist?(sentinel)
+
+    external = File.join(@temporary, "external-dependencies")
+    File.rename(parent, external)
+    File.symlink(external, parent)
+    inspected = []
+    record_git_roots = lambda do |original, root, *args, **kwargs|
+      inspected << File.realpath(root)
+      original.call(root, *args, **kwargs)
+    end
+    with_replaced_method(AgenticDeveloperSetup::GitCommand.singleton_class, :capture, record_git_roots) do
+      _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
+      assert_includes error, "dirty_target"
+    end
+    refute_includes inspected, File.realpath(File.join(external, "dependency"))
     refute File.exist?(sentinel)
   end
 

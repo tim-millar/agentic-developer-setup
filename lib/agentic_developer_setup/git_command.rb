@@ -61,6 +61,7 @@ module AgenticDeveloperSetup
       gitlinks = entries.stdout.split("\0").filter_map { |entry| entry.split("\t", 2).last if entry.start_with?("160000 ") }
       gitlinks.uniq.each do |relative|
         child = root.join(relative)
+        next if child.ascend.take_while { |path| path != root }.any?(&:symlink?)
         next unless child.join(".git").exist? && worktree_root(child) == child.realpath
 
         child_drivers = filter_drivers(child)
