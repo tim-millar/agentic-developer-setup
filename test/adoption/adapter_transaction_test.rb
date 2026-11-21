@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "shellwords"
 require_relative "../adapters/support"
 require_relative "../../lib/agentic_developer_setup/adoption/manage_cli"
 
@@ -907,6 +908,132 @@ class AdapterAdoptionTransactionTest < AdapterTest
       assert_equal 1, counts["tree"]
       assert_operator counts["index"], :<=, 6
     end
+  end
+
+  def test_adoption_preflight_does_not_run_configured_clean_filters
+    [@target, @framework].each do |root|
+      path = File.join(root, "fixture.txt")
+      sentinel = File.join(@temporary, "filter-ran")
+      File.write(path, "Identical synthetic bytes\n")
+      File.write(File.join(root, ".gitattributes"), "fixture.txt filter=sentinel\n")
+      git(root, "config", "filter.sentinel.clean", "touch #{Shellwords.escape(sentinel)} && cat")
+      git(root, "config", "filter.sentinel.required", "true")
+      commit(root)
+      assert File.exist?(sentinel), "fixture must exercise the configured filter"
+      File.unlink(sentinel)
+
+      old = Time.now - 120
+      File.utime(old, old, path)
+      output, error = capture_io { assert_equal 0, AD::ManageCLI.run(adapter_plan_args) }
+      assert_includes output, "sha256:"
+      assert_empty error
+      refute File.exist?(sentinel), "mtime-only preflight executed a Git filter for #{root}"
+
+      File.write(path, "Modified synthetic bytes\n")
+      role = (root == @target) ? "target" : "source"
+      _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
+      assert_includes error, "dirty_#{role}"
+      refute File.exist?(sentinel), "dirty preflight executed a Git filter for #{root}"
+
+      git(root, "add", "fixture.txt")
+      File.unlink(sentinel) if File.exist?(sentinel)
+      _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
+      assert_includes error, "dirty_#{role}"
+      refute File.exist?(sentinel), "staged preflight executed a Git filter for #{root}"
+      commit(root)
+      File.unlink(sentinel) if File.exist?(sentinel)
+    end
+  end
+
+  def test_adoption_preflight_preserves_initialized_submodule_status_without_filters
+    submodule = File.join(@target, "dependency")
+    FileUtils.mkdir_p(submodule)
+    File.write(File.join(submodule, "fixture.txt"), "Synthetic submodule bytes\n")
+    File.write(File.join(submodule, ".gitattributes"), "fixture.txt filter=nested\n")
+    init_git(submodule)
+    commit(@target)
+    path = File.join(submodule, "fixture.txt")
+    sentinel = File.join(@temporary, "process-filter-ran")
+    git(submodule, "config", "filter.nested.process", "touch #{Shellwords.escape(sentinel)}")
+    git(submodule, "config", "filter.nested.required", "true")
+
+    old = Time.now - 120
+    File.utime(old, old, path)
+    capture_io { assert_equal 0, AD::ManageCLI.run(adapter_plan_args) }
+    refute File.exist?(sentinel)
+
+    File.write(File.join(submodule, "untracked.txt"), "Synthetic untracked bytes\n")
+    _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
+    assert_includes error, "dirty_target"
+    refute File.exist?(sentinel)
+  end
+
+  def test_dirty_diagnostic_explains_filter_conversion_is_unavailable
+    path = File.join(@target, "fixture.txt")
+    File.write(path, "lowercase fixture\n")
+    File.write(File.join(@target, ".gitattributes"), "fixture.txt filter=uppercase\n")
+    git(@target, "config", "filter.uppercase.clean", "tr '[:lower:]' '[:upper:]'")
+    commit(@target)
+
+    old = Time.now - 120
+    File.utime(old, old, path)
+    assert_empty git(@target, "--no-optional-locks", "status", "--porcelain")
+    _, error = capture_io { assert_equal 3, AD::ManageCLI.run(adapter_plan_args) }
+    assert_includes error, "Git clean/process filters were disabled during inspection"
+  end
+
+  def test_oversized_presence_evidence_is_bound_without_materialising_content
+    relative = "Cargo.toml" # Generic assessment only checks for its presence.
+    path = File.join(@target, relative)
+    bytes = "x" * 300_000
+    write_target(relative, bytes)
+    commit(@target)
+    real_path = File.realpath(path)
+    full_reads = []
+    chunk_sizes = []
+    interpreted = []
+    record_binread = lambda do |original, filename, *args|
+      value = original.call(filename, *args)
+      full_reads << value.bytesize if filename.to_s == real_path && args.empty?
+      value
+    end
+    record_stream_read = lambda do |original, *args|
+      value = original.call(*args)
+      chunk_sizes << value.bytesize if original.receiver.path == real_path && value
+      value
+    end
+    record_inventory_read = lambda do |original, filename|
+      interpreted << filename if filename == relative
+      original.call(filename)
+    end
+    with_replaced_method(File.singleton_class, :binread, record_binread) do
+      with_replaced_method(File, :read, record_stream_read) do
+        with_replaced_method(AgenticDeveloperSetup::Assessment::Inventory, :read, record_inventory_read) do
+          capture_io { assert_equal 0, AD::ManageCLI.run(adapter_plan_args) }
+        end
+      end
+    end
+
+    plan = YAML.safe_load_file(@plan_path)
+    identity = plan.dig("inputs", "target_files").find { |file| file["path"] == relative }
+    assert_equal({"digest" => T.digest(bytes), "mode" => "0644", "path" => relative}, identity)
+    assert_empty interpreted
+    assert_empty full_reads
+    assert_operator chunk_sizes.sum, :>=, bytes.bytesize
+    assert_operator chunk_sizes.max, :<, bytes.bytesize
+
+    git(@target, "update-index", "--skip-worktree", relative)
+    File.write(path, "y" * bytes.bytesize)
+    _, error = capture_io { assert_equal 4, AD::ManageCLI.run(["apply", @plan_path, "--dry-run"]) }
+    assert_includes error, "local_modification"
+    assert_includes error, relative
+    refute File.exist?(File.join(@target, AD::METADATA_PATH))
+  end
+
+  def adapter_plan_args
+    ["plan", @target, "--operation", "adopt_adapters", "--framework-source", @framework,
+      "--scope", ".", "--effective-date", "2026-11-07", "--output", @plan_path,
+      "--adapter-selection", @selection_path, "--adapter-decisions", @decisions_path]
   end
 
   def test_git_snapshot_is_scoped_fresh_and_still_reads_each_working_file
