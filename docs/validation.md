@@ -156,6 +156,23 @@ Schema version 2 deliberately does not validate these incidental or future relat
 
 After `make setup` has completed, `make lint`, `make test`, `make validate`, the focused launcher/runtime/usage/outcome targets, and all stages of `make check` initiate no network access and require no real AI model, Codex or Claude process, GitHub credentials, GitHub App, database, secrets, or external service. The Claude suite installs the runtime only into disposable test homes and uses synthetic executables. GitHub Actions uses normal checkout and Ruby setup with Bundler caching before it runs the same `make check` command used locally.
 
+## Optional global skill lifecycle
+
+`make test` and `make check` include offline lifecycle tests for the standalone
+`show-me` manager. To run them alone, use:
+
+```sh
+bundle exec ruby -Ilib -Itest test/ads_skills_test.rb
+```
+
+The suite verifies the pinned Git blob, independent installed bytes and
+digests, agent selection, read-only status, ownership conflicts, explicit
+updates, uninstall and recovery from injected write and rename failures. CLI
+subprocesses run with disposable homes, fixture checkouts and no development
+bundle. Use the separate [manual discovery procedure](../skills/README.md#verify-local-discovery-after-merging)
+after merging to verify that ordinary local Claude Code and Codex actually
+find and use the skill.
+
 ## Adoption transactions
 
 `make test` (and therefore `make check`) includes actual adoption CLI subprocess
