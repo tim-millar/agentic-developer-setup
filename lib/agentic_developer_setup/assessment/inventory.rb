@@ -132,11 +132,17 @@ module AgenticDeveloperSetup
       def candidate_project_files
         @files.keys.select do |path|
           basename = File.basename(path)
-          basename.match?(/\A(?:package\.json|pyproject\.toml|requirements[^\/]*\.txt|uv\.lock)\z/i)
+          basename.match?(/\A(?:package\.json|pyproject\.toml|requirements[^\/]*\.(?:txt|in)|uv\.lock)\z/i) ||
+            basename == "setup.py" || (basename == "setup.cfg" && named_setup_metadata?(path))
         end
       end
 
       private
+
+      def named_setup_metadata?(path)
+        name = Ini.parse(read(path, strict_encoding: true))&.dig("metadata", "name")
+        name&.match?(/\A[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?\z/)
+      end
 
       def walk_project_container(relative_path)
         directory = @root.join(relative_path)

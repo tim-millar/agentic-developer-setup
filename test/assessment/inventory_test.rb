@@ -13,6 +13,46 @@ class AssessmentInventoryTest < Minitest::Test
     assert_includes result.dig("scope", "project_roots"), "apps/api"
   end
 
+  def test_setup_cfg_metadata_establishes_a_candidate_root
+    write("setup.cfg", "[metadata]\nname = synthetic\n")
+
+    result = assess
+
+    assert_equal ["."], result.dig("scope", "project_roots")
+    assert_equal "single_project", result.dig("scope", "shape")
+  end
+
+  def test_requirements_inputs_and_legacy_setup_presence_discover_independent_roots
+    write("apps/api/requirements-dev.in", "pytest>=8\n")
+    assert_equal ["apps/api"], assess.dig("scope", "project_roots")
+
+    write("packages/legacy/setup.py", "raise AssertionError('presence only')\n")
+    write("packages/legacy/noxfile.py", "raise AssertionError('tooling only')\n")
+
+    result = assess
+
+    assert_equal %w[apps/api packages/legacy], result.dig("scope", "project_roots")
+    assert_equal "multiple_projects", result.dig("scope", "shape")
+  end
+
+  def test_only_existing_project_markers_create_roots_among_lock_and_tool_files
+    write("apps/node/package.json", '{"name":"app"}')
+    write("apps/python/pyproject.toml", "[project]\nname = 'app'\n")
+    write("apps/requirements/requirements.txt", "pytest\n")
+    write("apps/uv/uv.lock", "version = 1\n")
+    write("apps/poetry/poetry.lock", "lock-version = '2.1'\n")
+    write("apps/pdm/pdm.lock", "lock_version = '4.5.0'\n")
+    write("apps/tooling/setup.cfg", "[flake8]\nname = incidental\n")
+    write("apps/tooling/pytest.ini", "[pytest]\n")
+    write("apps/malformed/setup.cfg", "[metadata]\nname = first\nname = repeated\n")
+    write("apps/binary/setup.cfg", "[metadata]\nname = binary\ndescription = \0\n")
+
+    result = assess
+
+    assert_equal %w[apps/node apps/python apps/requirements apps/uv], result.dig("scope", "project_roots")
+    assert_equal %w[node python], result["ecosystem"].map { |item| item["name"] }.sort
+  end
+
   def test_external_project_container_symlink_is_reported_without_traversal
     outside = File.join(@temporary_root, "outside-api")
     FileUtils.mkdir_p(outside)

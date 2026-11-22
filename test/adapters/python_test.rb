@@ -154,6 +154,32 @@ class PublicPythonAdapterTest < AdapterTest
     assert_equal "not_detected", assess["candidates"].find { |item| item["id"] == "python" }["status"]
   end
 
+  def test_generic_roots_agree_with_positive_python_candidates
+    write_target("apps/metadata/setup.cfg", "[metadata]\nname = synthetic\n")
+    write_target("apps/requirements/requirements-dev.in", "pytest>=8\n")
+    write_target("apps/legacy/setup.py", "raise AssertionError('presence only')\n")
+    write_target("apps/poetry/poetry.lock", "lock-version = '2.1'\n")
+    write_target("apps/pdm/pdm.lock", "lock_version = '4.5.0'\n")
+    scope = {"type" => "workspace", "path" => "apps/requirements"}
+    generic, combined, narrowed = guard_static_operations(prohibited_reads: %r{/setup\.py\z}) do
+      [AgenticDeveloperSetup::Assessment::Assessor.new(@target).assess,
+        assess(python_selection), assess(python_selection(scope: scope))]
+    end
+
+    candidates = combined["candidates"].select { |candidate| candidate["id"] == "python" }
+    by_root = candidates.to_h { |candidate| [candidate.dig("scope", "path"), candidate] }
+    roots = %w[apps/legacy apps/metadata apps/requirements]
+    assert_equal roots, generic.dig("scope", "project_roots")
+    assert_equal roots, by_root.select { |_, candidate| candidate["status"] == "detected" }.keys.sort
+    assert_equal "medium", by_root.fetch("apps/legacy")["confidence"]
+    %w[apps/pdm apps/poetry].each { |path| assert_equal "ambiguous", by_root.fetch(path)["status"] }
+    conflict = combined["conflicts"].find { |entry| entry["code"] == "scope_conflict" }
+    assert_equal "project roots: #{JSON.generate(roots)}", conflict["subject"]
+    assert_equal "ready", narrowed.dig("composition", "status")
+    refute_includes finding_ids(narrowed), "python-distribution"
+    assert narrowed["evidence"].all? { |item| !item["path"] || item["path"].start_with?("apps/requirements/") }
+  end
+
   def test_multiple_python_roots_and_same_scope_mixed_ecosystem
     uv_project(prefix: "apps/one/")
     write_target("apps/two/setup.cfg", "[metadata]\nname = other\n")
@@ -175,6 +201,8 @@ class PublicPythonAdapterTest < AdapterTest
   def test_legacy_python_candidate_conflicts_with_node
     write_target("setup.py", "# Presence only\n")
     write_target("package.json", '{"name":"synthetic-mixed"}')
+    generic = AgenticDeveloperSetup::Assessment::Assessor.new(@target).assess
+    assert_equal ["."], generic.dig("scope", "project_roots")
     assert_includes codes(assess), "scope_conflict"
     assert_includes codes(assess(selected(["ecosystem", "node"]))), "repository_evidence_conflict"
   end

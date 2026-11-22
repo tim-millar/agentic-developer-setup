@@ -147,8 +147,10 @@ Context exposes:
 - `scope`: selected `{ "type" => "repository", "path" => "." }` or explicit
   `{ "type" => "workspace", "path" => "apps/storefront" }`;
 - `inventory.files`, `inventory.read(path)`, `inventory.exists?(path)`: read-only,
-  bounded, repository-relative paths inside that scope. `files` includes known
-  presence-only paths. `read(path, strict_encoding: true)` requires valid UTF-8;
+  bounded, repository-relative paths inside that scope. `exists?` checks visible
+  regular-file presence without reading content. Presence-only and oversized files
+  can exist even when `read` returns `nil`. `read(path, strict_encoding: true)`
+  requires valid UTF-8;
 - `inventory.directory?(path)` and `inventory.excluded_directories`: scoped
   directory-presence evidence without listing or reading contained files;
 - `generic_evidence`: the existing generic detector's static evidence;

@@ -41,7 +41,12 @@ module AgenticDeveloperSetup
         end
 
         def exists?(path)
-          files.include?(path) && !read(path).nil?
+          return false unless @mapping.key?(path)
+
+          Contracts.contained!(@root, path, exists: true)
+          true
+        rescue Error
+          false
         end
       end
 
