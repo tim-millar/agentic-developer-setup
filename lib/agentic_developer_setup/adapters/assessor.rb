@@ -186,6 +186,7 @@ module AgenticDeveloperSetup
           # Candidate scopes and references are validated before contributions
           # are collected; use the same repository-relative identity as markers.
           root = Contracts.scoped_path!(candidate["scope"]["path"], @scope)
+          roots[root]["families"] << candidate["id"] if candidate["category"] == "ecosystem"
           roots[root]["evidence_ids"].concat(candidate["evidence"])
         end
         roots.sort.to_h.transform_values do |record|

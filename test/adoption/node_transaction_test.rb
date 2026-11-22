@@ -10,7 +10,7 @@ class PublicNodeAdoptionTest < AdapterTest
 
   def setup
     super
-    install_node
+    install_public_ecosystems
     FileUtils.cp_r(File.join(ROOT, "baseline"), @framework)
     FileUtils.cp_r(File.join(ROOT, "schemas"), @framework)
     f1

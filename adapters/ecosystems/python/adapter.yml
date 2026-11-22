@@ -1,0 +1,20 @@
+schema_version: 1
+id: python
+category: ecosystem
+version: "1.0.0"
+description: Bounded static Python project, toolchain and native validation evidence.
+capabilities: [test, lint, format_check, typecheck, build, verify]
+detection_signals: [project_configuration, dependency_requirements, manager_lockfile, interpreter_configuration, executable_configuration]
+contribution_domains: [findings, commands, validation_profiles, paths]
+compatibility:
+  requires: []
+  incompatible: []
+inputs:
+  - key: ecosystem/python.package_manager
+    type: string
+    required: false
+    allowed_values: [uv, poetry, pip, pip-tools, pdm, hatch]
+    description: Reviewed manager choice when primary repository policy is absent.
+provider:
+  file: adapter.rb
+  constant: AgenticDeveloperSetup::Adapters::Providers::Python

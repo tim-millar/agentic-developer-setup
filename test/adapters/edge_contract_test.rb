@@ -68,6 +68,55 @@ class AdapterEdgeContractTest < AdapterTest
     assert_equal inputs, result.dig("composition", "explicit_inputs")
   end
 
+  def test_inventory_presence_is_independent_of_content_reads
+    presence_only = %w[setup.py noxfile.py .coverage scripts/test.sh]
+    presence_only.each { |path| write_target(path, "Presence fixture\n") }
+    write_target("README.md", "# Readable fixture\n")
+    write_target("requirements.txt", "x" * (AgenticDeveloperSetup::Assessment::Inventory::MAX_READ_BYTES + 1))
+    write_target("pyproject.toml", "\xFF")
+    inventory = AgenticDeveloperSetup::Assessment::Inventory.new(Pathname.new(@target)).discover
+    view = A::Context::InventoryView.new(inventory, @scope, @target)
+
+    reject_read = ->(*) { flunk "Inventory presence attempted a content read" }
+    with_replaced_method(AgenticDeveloperSetup::Assessment::Inventory, :read, reject_read) do
+      (presence_only + %w[README.md requirements.txt pyproject.toml]).each do |path|
+        assert view.exists?(path), path
+      end
+    end
+
+    (presence_only + %w[requirements.txt]).each { |path| assert_nil view.read(path), path }
+    assert_nil view.read("pyproject.toml", strict_encoding: true)
+    assert_equal "# Readable fixture\n", view.read("README.md")
+  end
+
+  def test_inventory_presence_respects_scope_exclusions_and_symlinks
+    workspace = "apps/api"
+    write_target("setup.py")
+    write_target("#{workspace}/.venv/setup.py")
+    write_target("#{workspace}/.pytest_cache/setup.py")
+    write_target("#{workspace}/noxfile.py")
+    write_target("#{workspace}/scripts/test.sh")
+    File.symlink(File.join(@target, "setup.py"), File.join(@target, workspace, "setup.py"))
+    scope = {"type" => "workspace", "path" => workspace}
+    inventory = AgenticDeveloperSetup::Assessment::Inventory.new(Pathname.new(@target).join(workspace)).discover
+    view = A::Context::InventoryView.new(inventory, scope, @target)
+
+    assert view.exists?("#{workspace}/noxfile.py")
+    assert view.exists?("#{workspace}/scripts/test.sh")
+    %W[setup.py #{workspace}/.venv/setup.py #{workspace}/.pytest_cache/setup.py #{workspace}/setup.py].each do |path|
+      refute view.exists?(path), path
+      assert_nil view.read(path), path
+    end
+
+    scripts = File.join(@target, workspace, "scripts")
+    replacement = File.join(@temporary, "scripts")
+    File.rename(scripts, replacement)
+    File.symlink(replacement, scripts)
+
+    refute view.exists?("#{workspace}/scripts/test.sh")
+    assert_nil view.read("#{workspace}/scripts/test.sh")
+  end
+
   def test_excluded_workspace_cannot_bypass_inventory
     write_target("node_modules/Gemfile")
     register("ruby")

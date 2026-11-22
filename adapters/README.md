@@ -6,11 +6,10 @@ structured composition, explicit conflict resolution and read-only assessment
 are documented in [the adapter architecture](../docs/adapter-architecture.md).
 
 `framework.yml` remains authoritative for identities, categories, paths and
-support status. **`ecosystem/node` v1.0.0 is supported** for bounded static
-Node.js/TypeScript assessment and native script recommendations. Other named
-production adapters remain planned. See [Node support, limits and complete
-reviewed adoption](ecosystems/node/README.md). Generic heuristic detection alone
-does not confer operational or adapter support.
+support status. The supported public ecosystem adapters are
+[Node.js/TypeScript](ecosystems/node/README.md) and
+[Python](ecosystems/python/README.md), both at version 1.0.0. Their scope
+and command support are documented with reviewed adoption examples.
 
 | Category | Source path | Responsibility |
 | --- | --- | --- |
@@ -37,8 +36,8 @@ material conflicts block composition until resolved through a permitted explicit
 repository decision. There is no last-adapter-wins rule.
 
 ```sh
-ruby scripts/assess_adapters.rb /path/to/repository
-ruby scripts/assess_adapters.rb /path/to/repository --selection selection.yml
+bundle exec ruby scripts/assess_adapters.rb /path/to/repository
+bundle exec ruby scripts/assess_adapters.rb /path/to/repository --selection selection.yml
 make assess-adapters REPO=/path/to/repository
 make test-adapters
 ```

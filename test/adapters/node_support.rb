@@ -4,13 +4,6 @@ require_relative "support"
 
 # Independently authored disposable fixtures: never install or execute them.
 module PublicNodeFixture
-  def install_node
-    @metadata["adapters"]["available"] = YAML.safe_load_file(File.join(AdapterTest::ROOT, "framework.yml")).fetch("adapters").fetch("available")
-    save_catalogue
-    FileUtils.mkdir_p(File.join(@framework, "adapters/ecosystems"))
-    FileUtils.cp_r(File.join(AdapterTest::ROOT, "adapters/ecosystems/node"), File.join(@framework, "adapters/ecosystems"))
-  end
-
   def node_selection(manager: nil, scope: @scope)
     inputs = manager ? [{"key" => "ecosystem/node.package_manager", "value" => manager}] : []
     selected(["ecosystem", "node"], inputs: inputs, scope: scope)

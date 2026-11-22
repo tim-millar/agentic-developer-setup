@@ -366,6 +366,9 @@ workspace limits and metadata-only decisions. The genuine-provider lifecycle tes
 is `test/adoption/node_transaction_test.rb`; generic synthetic fixtures continue
 to exercise the broader transaction contract. No recommendation executes during
 planning or adoption, and binding approval supplies no validation specification.
+The [Python v1.0.0 example](../adapters/ecosystems/python/README.md#complete-reviewed-adoption-example)
+exercises the same lifecycle with a synthetic uv fixture. Use the ADS Ruby
+bundle for Python manifest interpretation.
 
 Prepare existing external directories and explicit selection and decision files:
 

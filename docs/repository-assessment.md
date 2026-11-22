@@ -86,9 +86,15 @@ documentation, generic command, recognised CI, framework-capability, gap,
 risk, and readiness findings where evidence permits. Ruby-project assessment
 is not inferred from this framework's own implementation language.
 
-For a repository with multiple candidate roots, the result lists
-`scope.project_roots` and assesses shared surfaces. It does not recursively
-run independent assessments for each workspace.
+The generic `scope.project_roots` lists candidate locations from the bounded
+inventory. Python root markers include `pyproject.toml`, `requirements*.txt`,
+`requirements*.in`, the existing `uv.lock` convention, executable `setup.py`
+presence, and a literal `[metadata]` name in bounded `setup.cfg` content.
+Standalone Poetry and PDM locks and tooling-only configuration contribute no
+root. Root markers describe repository layout. Package and application intent
+require separate evidence from the Python adapter. With multiple candidate
+roots, generic assessment covers shared surfaces without running independent
+assessments for each workspace.
 
 Package-manager evidence uses this precedence: an explicit supported
 `packageManager` declaration, then a recognised lockfile, then npm as the
