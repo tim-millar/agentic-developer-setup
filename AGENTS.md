@@ -33,7 +33,7 @@ If applicable instructions conflict and the intended behaviour cannot be establi
 This repository has two distinct roles:
 
 1. it is a maintained repository with its own development workflow;
-2. it is the source of reusable framework artefacts intended for adoption by other repositories.
+2. it is the source of reusable framework artefacts for repository adoption and optional personal skill installation.
 
 Agents must preserve the distinction between repository-specific operation and distributable framework source.
 
@@ -77,6 +77,20 @@ Do not:
 When changing a baseline artefact, consider the effect on every repository that may adopt it.
 
 When changing a root specialisation, determine whether the change belongs only to this repository or represents an intentional framework-wide change.
+
+### Optional global skills
+
+`skills/` is the reusable distribution source for optional personal coding-agent
+skills. Root `scripts/ads-skills.rb` manages independent copies of the checked-in
+bundle in developer-global skill directories. This explicit installation works
+independently of repository adoption and the source-to-target mappings in
+`framework.yml`.
+
+Root operational files govern work in this repository. Baseline artefacts and
+their repository-local skills follow the adopting repository's contract.
+`REVIEW.md` governs repository review, and agent runtimes govern process
+execution, permissions and credentials. Personal skills provide task guidance
+within those boundaries.
 
 ## Framework flexibility
 

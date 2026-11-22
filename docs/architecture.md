@@ -7,7 +7,7 @@ This document describes the agent development framework as an engineering system
 This repository has two roles:
 
 1. It is a maintained software repository with its own operational development contract, validation, runtime entrypoint, and review workflow.
-2. It is the public framework source repository for reusable artefacts that target repositories can adopt or adapt.
+2. It is the public framework source repository for reusable artefacts that repositories can adopt or adapt and optional skills that developers can install personally.
 
 Reusable framework source includes baseline artefacts, machine-readable metadata, prompts, agent runtime integrations, the adapter taxonomy, adoption guidance, and templates. [`framework.yml`](../framework.yml) is authoritative for declared artefacts and their mappings:
 
@@ -34,6 +34,19 @@ It does not make an adopting repository's engineering decisions. A target reposi
 - issue or task acceptance criteria, non-goals, and public interfaces.
 
 Baseline artefacts provide places to express these decisions. Adapters can specialise framework assumptions. Neither substitutes for repository-specific judgement.
+
+### Optional skill distribution
+
+[`skills/`](../skills/README.md) provides developer-global copies of pinned skill
+bundles through an explicit, standalone lifecycle command. Each personal
+installation is independent of the framework checkout and of repository
+adoption. The global skill layer is documented outside the framework manifest.
+
+The vendored `show-me` skill presents an already-investigated topic visually.
+Repository-local `code-review` applies the repository's `REVIEW.md` to an
+independent implementation review. Repository policy, agent permissions and
+the human merge decision continue to govern work regardless of installed
+personal skills.
 
 ## Repository contract and execution context
 

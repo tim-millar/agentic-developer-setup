@@ -6,6 +6,7 @@ This public framework source repository provides:
 
 - a **baseline set of repo artefacts** for agent-enabled development
 - an **ecosystem, framework, runtime, and app-shape adapter taxonomy**, with supported public Node.js/TypeScript and Python ecosystem adapters
+- **optional personal coding-agent skills** for independent global installation
 - **adoption prompts** for greenfield, existing, and legacy repositories
 - **prompt packs** for using the framework with LLMs and coding agents
 - public technical documentation for the framework architecture, evolution, and evidence boundaries
@@ -35,7 +36,8 @@ The framework is not a single application template. It is a reusable operating l
 
 ```text
 baseline/    Shared baseline artefacts used in agent-enabled repos
-agent-runtimes/ Globally distributed coding-agent runtimes and their policies
+agent-runtimes/ Coding-agent launchers and execution policies
+skills/      Optional globally installable personal skill bundles
 adapters/    Adapter taxonomy, supported ecosystem adapters and planned implementations
 prompts/     Prompt packs for using the framework with agents/LLMs
 docs/        Documentation about the framework itself
@@ -97,6 +99,14 @@ An agent runtime is the tool-specific launcher and operating policy for a specif
 The framework is agent-runtime-aware rather than agent-agnostic: shared repository practices live in the baseline, while agent-specific execution behaviour lives in runtime launchers.
 
 Two distributions are supported. Repository runtimes, such as Codex, may declare target-repository paths for adopted artefacts where applicable. Global-user runtimes, such as `ads-claude-explore`, install outside repositories and deliberately have no target-repository paths.
+
+### Optional global skills
+
+The `skills/` directory distributes optional personal skills independently of
+baseline adoption and runtime setup. The first skill, HumanLayer's `show-me`,
+helps present a topic you've already investigated through concise diagrams and
+code-shape sketches. Repository-local `code-review` continues to apply the
+repository's review policy. [Installation and lifecycle guide](skills/README.md)
 
 ### Prompts
 
