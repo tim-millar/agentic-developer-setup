@@ -185,7 +185,126 @@ class AgentRunReportingTest < Minitest::Test
     assert_includes outcomes, "| unavailable/conflicting | 1 |"
     assert_includes outcomes, "- Creation-to-merge calendar time, median: unavailable"
     assert_includes outcomes, "- Merged PRs excluded for missing or inconsistent timestamps: 2"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for lifecycle, merged_at."
+  end
+
+  def test_equal_time_unavailable_lifecycle_conflicts_with_open_in_either_order
+    first_run = add_run
+    second_run = add_run
+    known = pull(42)
+    unknown = pull(42, lifecycle: "unavailable")
+    add_outcome(first_run, known)
+    add_outcome(second_run, unknown)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| unavailable/conflicting | 1 |"
+    assert_includes outcomes, "| open | 0 |"
     assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for lifecycle."
+
+    add_outcome(first_run, unknown)
+    add_outcome(second_run, known)
+    assert_equal markdown, report
+  end
+
+  def test_equal_time_null_creation_timestamp_conflicts_without_falling_back
+    add_outcome(add_run, pull(42))
+    add_outcome(add_run, pull(42, observed: APRIL), at: APRIL)
+    add_outcome(add_run, pull(42, created: nil, observed: APRIL), at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| open | 1 |"
+    cohorts = section(markdown, "### PR creation cohorts")
+    assert_includes cohorts, "#### Unknown cohort"
+    refute_match(/^#### \d{4}-\d{2}$/, cohorts)
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for created_at."
+  end
+
+  def test_equal_time_null_merge_timestamp_excludes_interval_but_preserves_merge
+    add_outcome(add_run, pull(42, lifecycle: "merged", merged: MARCH, observed: APRIL), at: APRIL)
+    add_outcome(add_run, pull(42, lifecycle: "merged", observed: APRIL), at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| merged | 1 |"
+    assert_includes outcomes, "- Creation-to-merge eligible PRs: 0/1 merged PRs"
+    assert_includes outcomes, "- Merged PRs excluded for missing or inconsistent timestamps: 1"
+    assert_includes outcomes, "- Creation-to-merge calendar time, median: unavailable"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for merged_at."
+  end
+
+  def test_unavailable_lifecycle_with_draft_evidence_is_an_eligible_snapshot
+    add_outcome(add_run, pull(42))
+    latest = pull(42, lifecycle: "unavailable", created: nil, observed: APRIL)
+    latest.fetch("current")["draft"] = false
+    add_outcome(add_run, latest, at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "| unavailable/conflicting | 1 |"
+    assert_includes outcomes, "| open | 0 |"
+    assert_includes section(markdown, "### PR creation cohorts"), "#### Unknown cohort"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_agreed_positive_revision_count_can_have_incomplete_review_evidence
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+    add_outcome(add_run, pull(42, reviews: [SHA, nil], post: "no"), state: "partial")
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 0"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_equal_time_reviewed_revision_count_conflict_is_unavailable
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+    add_outcome(add_run, pull(42, reviews: [SHA, "b" * 40], post: "no"))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 0"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 0"
+    refute_match(/^\| [012] \| \d+ \|$/, outcomes)
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for reviewed_revision_count."
+  end
+
+  def test_zero_reviewed_revisions_require_complete_evidence_from_each_selected_observation
+    add_outcome(add_run, pull(42), pull(43))
+    add_outcome(add_run, pull(42), state: "partial")
+    add_outcome(add_run, pull(43))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 2"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 1"
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "| 0 | 1 |"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_equal_time_post_first_review_change_disagreement_is_unavailable
+    changed = pull(42, reviews: [SHA], post: "yes")
+    changed.fetch("current")["head_sha"] = "b" * 40
+    add_outcome(add_run, changed)
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "| unavailable | 1 |"
+    assert_includes outcomes, "| yes | 0 |"
+    assert_includes outcomes, "| no | 0 |"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for post_first_review_change_observed."
   end
 
   def test_unmatched_candidates_partial_reconciliation_and_repository_scope
@@ -205,6 +324,8 @@ class AgentRunReportingTest < Minitest::Test
     assert_includes filtered, "- Source run count: 4"
     assert_includes filtered, "- Distinct associated PRs: 1"
     outcomes = section(filtered, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "| 1 | 1 |"
     assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
     assert_includes outcomes, "| unavailable | 1 |"
     assert_includes outcomes, "| no | 0 |"

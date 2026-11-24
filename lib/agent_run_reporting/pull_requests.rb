@@ -51,32 +51,36 @@ module AgentRunReporting
       observations = associations.select(&:pull)
       conflicts = []
       current = latest(observations.map { |item| item.pull.fetch("current") }) do |snapshot|
-        next if snapshot["lifecycle"] == "unavailable" && snapshot.values_at("created_at", "merged_at").compact.empty?
+        next if empty_current_snapshot?(snapshot)
 
         AgentRunReporting.utc_timestamp(snapshot.fetch("observed_at"))
       end
       lifecycle, created_at, merged_at = CURRENT_FIELDS.map do |field|
-        values = current.filter_map do |snapshot|
+        values = current.map do |snapshot|
           (field == "lifecycle") ? snapshot[field] : AgentRunReporting.utc_timestamp(snapshot[field])
         end
-        values.delete("unavailable")
         consensus(values, field, conflicts)
       end
+      lifecycle = "unavailable/conflicting" if lifecycle.nil? || lifecycle == "unavailable"
 
       review_observations = latest(observations) do |item|
         AgentRunReporting.utc_timestamp(item.reconciliation["last_successful_at"]) ||
           AgentRunReporting.utc_timestamp(item.pull.dig("current", "observed_at"))
       end
       count = consensus(review_observations.map { |item| item.pull.dig("derived", "reviewed_revision_count") }, "reviewed_revision_count", conflicts)
-      complete_reviews = review_observations.any? do |item|
+      complete_reviews = !count.nil? && review_observations.all? do |item|
         item.reconciliation["observation_state"] == "complete" && item.pull.fetch("reviews").all? { |review| review["commit_id"] }
       end
-      no_reviews = complete_reviews && count == 0
-      review_incomplete = !complete_reviews || count.nil?
+      no_reviews = complete_reviews && count.zero?
+      observed_count = count if no_reviews || count&.positive?
       post_change = consensus(review_observations.map { |item| item.pull.dig("derived", "post_first_review_change_observed") }, "post_first_review_change_observed", conflicts)
 
-      Pull.new(identity, run_ids, lifecycle || "unavailable/conflicting", created_at, merged_at,
-        (no_reviews || count&.positive?) ? count : nil, no_reviews, review_incomplete, post_change || "unavailable", conflicts)
+      Pull.new(identity, run_ids, lifecycle, created_at, merged_at,
+        observed_count, no_reviews, !complete_reviews, post_change || "unavailable", conflicts)
+    end
+
+    def empty_current_snapshot?(snapshot)
+      snapshot["lifecycle"] == "unavailable" && snapshot.except("lifecycle", "observed_at").values.all?(&:nil?)
     end
 
     def latest(items)
