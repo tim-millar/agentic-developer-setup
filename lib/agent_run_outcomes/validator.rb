@@ -38,7 +38,8 @@ module AgentRunOutcomes
       array(@record["pull_requests"], "pull_requests") { |item, index| pull_request(item, "pull_requests[#{index}]") }
       error("pull_requests", "contains duplicate identities") if duplicate?(@record["pull_requests"]) do |item|
         next unless item.is_a?(Hash) && item["identity"].is_a?(Hash)
-        [item.dig("identity", "repository")&.downcase, item.dig("identity", "number")]
+        repository = item.dig("identity", "repository")
+        [repository.downcase, item.dig("identity", "number")] if repository.is_a?(String)
       end
       errors.empty?
     end
