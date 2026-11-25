@@ -1,0 +1,559 @@
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "minitest/autorun"
+require "open3"
+require "rbconfig"
+require "tmpdir"
+
+class AgentRunReportingTest < Minitest::Test
+  SCRIPT = File.expand_path("../scripts/report_agent_runs.rb", __dir__)
+  REPOSITORY = "example-owner/example-repo"
+  FIRST = "2026-01-31T23:50:00.000Z"
+  FINISHED = "2026-02-01T00:20:00.000Z"
+  MARCH = "2026-03-01T00:00:00.000Z"
+  APRIL = "2026-04-01T00:00:00.000Z"
+  AS_OF = "2026-05-01T00:00:00Z"
+  SHA = "a" * 40
+
+  def setup
+    @scratch = Dir.mktmpdir("ads-report-test-")
+    @root = File.join(@scratch, "runs")
+    Dir.mkdir(@root)
+    @ordinal = 0
+  end
+
+  def teardown
+    FileUtils.remove_entry_secure(@scratch)
+  end
+
+  def test_empty_roots_are_explicit_and_implicit_missing_root_is_not_created
+    markdown = report
+    assert_includes markdown, "No valid run data"
+    assert_includes markdown, "- Complete usage coverage: 0/0 (unavailable)"
+    assert_includes markdown, "- Creation-to-merge calendar time, median: unavailable"
+
+    FileUtils.rmdir(@root)
+    assert_includes report(explicit: false), "No valid run data"
+    refute File.exist?(@root)
+    _, error, status = cli("--output", @root, explicit: false)
+    assert_equal 1, status.exitstatus
+    assert_includes error, "outside telemetry storage"
+    refute File.exist?(@root)
+    _, error, status = cli
+    assert_equal 1, status.exitstatus
+    assert_includes error, "Selected telemetry root does not exist"
+
+    File.write(@root, "")
+    _, error, status = cli
+    assert_equal 1, status.exitstatus
+    assert_includes error, "Cannot read selected telemetry root"
+  end
+
+  def test_cli_root_precedence_and_invalid_arguments
+    run = add_run
+    xdg = File.join(@scratch, "data")
+    home = File.join(@scratch, "home")
+    [xdg, File.join(home, ".local/share")].each do |base|
+      root = File.join(base, "agent-development-framework/telemetry/runs")
+      FileUtils.mkdir_p(root)
+      FileUtils.cp_r(File.join(@root, run), root)
+    end
+    assert_includes report(explicit: false, env: {"XDG_DATA_HOME" => xdg, "HOME" => home}), "- Source run count: 1"
+    assert_includes report(explicit: false, env: {"XDG_DATA_HOME" => xdg, "HOME" => home, "AGENT_TELEMETRY_DIR" => nil}), "- Source run count: 1"
+    assert_includes report(explicit: false, env: {"XDG_DATA_HOME" => "", "HOME" => home, "AGENT_TELEMETRY_DIR" => nil}), "- Source run count: 1"
+    [
+      %w[--repository invalid],
+      %w[--telemetry-dir relative],
+      %w[--output relative.md],
+      %w[--as-of 2026-02-30T00:00:00Z],
+      %w[--unknown],
+      %w[extra]
+    ].each do |arguments|
+      _, error, status = cli(*arguments, explicit: false)
+      assert_equal 2, status.exitstatus, arguments.inspect
+      assert_includes error, "Usage:"
+    end
+  end
+
+  def test_usage_populations_model_attribution_resumes_and_weighted_cache
+    first = add_run
+    second = add_run(start: MARCH, state: "interrupted")
+    add_usage(first, codex("model-a", input: 100, cache: 90), codex("model-b", input: 20, cache: 0, write: nil))
+    add_usage(second, codex("model-a", input: 80, cache: 10))
+    markdown = report
+    assert_includes markdown, "- Recorded valid runs: 2"
+    assert_includes markdown, "| interrupted | 1 |"
+    assert_includes markdown, "| openai | model-a | complete | 2 | 2 |"
+    assert_includes markdown, "| openai | model-b | complete | 1 | 1 |"
+    refute_includes markdown, "requested-model"
+    resources = section(markdown, "## Computational resource consumption")
+    assert_includes resources, "- Recorded measurements: 3"
+    assert_includes resources, "| input_total | 200 | 2/2 |"
+    assert_includes resources, "| input_uncached | 100 | 2/2 |"
+    assert_includes resources, "| input_cache_write | 5 | 1/2 |"
+    assert_includes resources, "| output_total | 21 | 2/2 |"
+    assert_includes resources, "| output_reasoning | 9 | 2/2 |"
+    assert_includes resources, "100/200 (50.00%) · 3/3 measurements"
+    assert_includes resources, "| unavailable | 2 |"
+    assert_includes resources, "Measurements with observed cost: 0/3 (0.00%)"
+    assert_includes section(markdown, "### Run start cohorts"), "#### 2026-02\n\nZero recorded activity."
+  end
+
+  def test_complete_zero_missing_dimensions_and_partial_or_unavailable_usage
+    add_run
+    add_usage(add_run, state: "unavailable")
+    add_usage(add_run, state: "disabled")
+    add_usage(add_run, state: "complete")
+    add_usage(add_run, codex("zero", input: 0, cache: 0))
+    add_usage(add_run, codex("retained", input: 10, cache: 11), state: "partial",
+      reason: "normalization_inconsistent", warnings: ["codex_cached_input_exceeds_total"])
+    markdown = report
+    coverage = section(markdown, "## Evidence coverage")
+    assert_includes coverage, "- Complete usage coverage: 2/6 (33.33%)"
+    %w[partial unavailable disabled].each { |state| assert_includes coverage, "| #{state} | 1 |" }
+    assert_includes coverage, "| sidecar absent | 1 |"
+    complete = section(markdown, "### Complete recorded usage")
+    assert_includes complete, "| input_total | 0 | 2/2 |"
+    assert_includes complete, "0/0 (unavailable) · 0/1 measurements"
+    partial = section(markdown, "### Partial observed usage")
+    assert_includes partial, "- Recorded measurements: 1"
+    assert_includes partial, "| input_cache_read | 11 | 1/1 |"
+    assert_includes partial, "| input_uncached | unavailable | 0/1 |"
+    assert_includes partial, "0/0 (unavailable) · 0/1 measurements"
+  end
+
+  def test_claude_provider_estimates_preserve_cost_states_and_price_coverage
+    add_usage(add_run(client: "claude-code"), claude(cost: 0), claude(cost: 7))
+    add_usage(add_run(client: "claude-code"), claude(cost: 13))
+    add_usage(add_run(client: "claude-code"), claude(cost: 9), claude(cost: nil))
+    add_usage(add_run, codex("openai-model"))
+    markdown = report
+    resources = section(markdown, "## Computational resource consumption")
+    assert_includes resources, "| complete | runtime_estimated | USD | 20 | 2 | 3/3 |"
+    assert_includes resources, "| partial | runtime_estimated | USD | 9 | 1 | 1/2 |"
+    assert_includes resources, "Measurements with observed cost: 4/6 (66.67%)"
+    assert_includes resources, "| output_reasoning | 3 | 1/4 |"
+    assert_includes markdown, "| claude-code | 3 |"
+  end
+
+  def test_many_to_many_associations_and_latest_current_snapshot_across_cohorts
+    first = add_run
+    second = add_run(start: MARCH, repository: "EXAMPLE-OWNER/EXAMPLE-REPO")
+    add_usage(first, codex("model-a"))
+    add_usage(second, codex("model-a"))
+    add_outcome(first, pull(42, observed: FINISHED), pull(61, created: nil, lifecycle: "merged", merged: FINISHED, observed: FINISHED))
+    add_outcome(second, pull(42, observed: APRIL, lifecycle: "merged", merged: MARCH, reviews: [SHA, SHA]),
+      pull(74, created: MARCH, observed: APRIL, reviews: [nil]), at: APRIL)
+    markdown = report("--as-of", "2026-02-04T00:00:00Z")
+    assert_includes markdown, "- Source run count: 2"
+    assert_includes markdown, "- Latest available outcome reconciliation: #{APRIL}"
+    assert_includes section(markdown, "### Complete recorded usage"), "- Recorded measurements: 2"
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 3"
+    assert_includes outcomes, "- Runs with confirmed associations in this PR population: 2"
+    assert_includes outcomes, "- Confirmed run–PR relationships: 4"
+    assert_includes outcomes, "| merged | 2 |"
+    assert_includes outcomes, "| open | 1 |"
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 2"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 1"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "- Creation-to-merge eligible PRs: 1/2"
+    assert_includes outcomes, "- Creation-to-merge calendar time, median: 28d 00h 10m 00.0000s"
+    assert_includes outcomes, "- Merged PRs excluded for missing or inconsistent timestamps: 1"
+    cohorts = section(markdown, "### PR creation cohorts")
+    assert_includes cohorts, "#### 2026-01"
+    assert_includes cohorts, "#### 2026-03"
+    assert_includes cohorts, "#### Unknown cohort"
+    assert_includes cohorts, "creation month is after the report timestamp"
+    assert_includes cohorts, "Zero recorded PR creations in this cohort."
+  end
+
+  def test_ties_and_newer_unavailable_snapshots_preserve_reliable_evidence
+    add_outcome(add_run, pull(42, lifecycle: "merged", merged: MARCH, observed: APRIL), at: APRIL)
+    add_outcome(add_run, pull(42, lifecycle: "open", observed: APRIL), at: APRIL)
+    placeholder = pull(73, lifecycle: "unavailable", observed: APRIL, created: nil, post: "unavailable")
+    add_outcome(add_run, placeholder, state: "partial", at: APRIL)
+    add_outcome(add_run, pull(73, lifecycle: "closed_unmerged", observed: MARCH),
+      pull(90, lifecycle: "merged", merged: FIRST, created: MARCH, observed: APRIL),
+      pull(91, lifecycle: "merged", created: MARCH, observed: APRIL), at: APRIL)
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "| closed_unmerged | 1 |"
+    assert_includes outcomes, "| unavailable/conflicting | 1 |"
+    assert_includes outcomes, "- Creation-to-merge calendar time, median: unavailable"
+    assert_includes outcomes, "- Merged PRs excluded for missing or inconsistent timestamps: 2"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for lifecycle, merged_at."
+  end
+
+  def test_equal_time_unavailable_lifecycle_conflicts_with_open_in_either_order
+    first_run = add_run
+    second_run = add_run
+    known = pull(42)
+    unknown = pull(42, lifecycle: "unavailable")
+    add_outcome(first_run, known)
+    add_outcome(second_run, unknown)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| unavailable/conflicting | 1 |"
+    assert_includes outcomes, "| open | 0 |"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for lifecycle."
+
+    add_outcome(first_run, unknown)
+    add_outcome(second_run, known)
+    assert_equal markdown, report
+  end
+
+  def test_equal_time_null_creation_timestamp_conflicts_without_falling_back
+    add_outcome(add_run, pull(42))
+    add_outcome(add_run, pull(42, observed: APRIL), at: APRIL)
+    add_outcome(add_run, pull(42, created: nil, observed: APRIL), at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| open | 1 |"
+    cohorts = section(markdown, "### PR creation cohorts")
+    assert_includes cohorts, "#### Unknown cohort"
+    refute_match(/^#### \d{4}-\d{2}$/, cohorts)
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for created_at."
+  end
+
+  def test_equal_time_null_merge_timestamp_excludes_interval_but_preserves_merge
+    add_outcome(add_run, pull(42, lifecycle: "merged", merged: MARCH, observed: APRIL), at: APRIL)
+    add_outcome(add_run, pull(42, lifecycle: "merged", observed: APRIL), at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 1"
+    assert_includes outcomes, "| merged | 1 |"
+    assert_includes outcomes, "- Creation-to-merge eligible PRs: 0/1 merged PRs"
+    assert_includes outcomes, "- Merged PRs excluded for missing or inconsistent timestamps: 1"
+    assert_includes outcomes, "- Creation-to-merge calendar time, median: unavailable"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for merged_at."
+  end
+
+  def test_unavailable_lifecycle_with_draft_evidence_is_an_eligible_snapshot
+    add_outcome(add_run, pull(42))
+    latest = pull(42, lifecycle: "unavailable", created: nil, observed: APRIL)
+    latest.fetch("current")["draft"] = false
+    add_outcome(add_run, latest, at: APRIL)
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "| unavailable/conflicting | 1 |"
+    assert_includes outcomes, "| open | 0 |"
+    assert_includes section(markdown, "### PR creation cohorts"), "#### Unknown cohort"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_agreed_positive_revision_count_can_have_incomplete_review_evidence
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+    add_outcome(add_run, pull(42, reviews: [SHA, nil], post: "no"), state: "partial")
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 0"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_equal_time_reviewed_revision_count_conflict_is_unavailable
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+    add_outcome(add_run, pull(42, reviews: [SHA, "b" * 40], post: "no"))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 0"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 0"
+    refute_match(/^\| [012] \| \d+ \|$/, outcomes)
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for reviewed_revision_count."
+  end
+
+  def test_zero_reviewed_revisions_require_complete_evidence_from_each_selected_observation
+    add_outcome(add_run, pull(42), pull(43))
+    add_outcome(add_run, pull(42), state: "partial")
+    add_outcome(add_run, pull(43))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "- Distinct associated PRs: 2"
+    assert_includes outcomes, "- PRs with no qualifying submitted review in complete evidence: 1"
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "| 0 | 1 |"
+    assert_includes markdown, "- PRs with conflicting observations: 0"
+  end
+
+  def test_equal_time_post_first_review_change_disagreement_is_unavailable
+    changed = pull(42, reviews: [SHA], post: "yes")
+    changed.fetch("current")["head_sha"] = "b" * 40
+    add_outcome(add_run, changed)
+    add_outcome(add_run, pull(42, reviews: [SHA], post: "no"))
+
+    markdown = report
+    outcomes = section(markdown, "## Observable engineering outcomes")
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "| unavailable | 1 |"
+    assert_includes outcomes, "| yes | 0 |"
+    assert_includes outcomes, "| no | 0 |"
+    assert_includes markdown, "#{REPOSITORY}#42 has conflicting observations for post_first_review_change_observed."
+  end
+
+  def test_unmatched_candidates_partial_reconciliation_and_repository_scope
+    add_outcome(add_run, correlation: "unmatched")
+    add_outcome(add_run, correlation: "ambiguous", candidates: [{"repository" => REPOSITORY, "number" => 42, "evidence" => []}])
+    add_outcome(add_run, pull(73, reviews: [SHA, nil], post: "unavailable"), state: "partial")
+    add_outcome(add_run(kind: "path_digest", repository: "sha256:#{"c" * 64}"), state: "not_applicable", correlation: "not_applicable")
+    add_outcome(add_run(repository: "another/example"), pull(73, repository: "another/example"))
+    add_run
+    markdown = report
+    assert_includes markdown, "Local path digest sha256:"
+    assert_includes markdown, "- Usable outcome coverage among applicable GitHub runs: 4/5 (80.00%)"
+    assert_includes markdown, "- Distinct associated PRs: 2"
+    coverage = section(markdown, "## Evidence coverage")
+    %w[unmatched ambiguous not_applicable partial].each { |state| assert_includes coverage, "| #{state} | 1 |" }
+    filtered = report("--repository", REPOSITORY.upcase)
+    assert_includes filtered, "- Source run count: 4"
+    assert_includes filtered, "- Distinct associated PRs: 1"
+    outcomes = section(filtered, "## Observable engineering outcomes")
+    assert_includes outcomes, "- PRs with usable reviewed-revision evidence: 1"
+    assert_includes outcomes, "| 1 | 1 |"
+    assert_includes outcomes, "- PRs with incomplete or unavailable review evidence: 1"
+    assert_includes outcomes, "| unavailable | 1 |"
+    assert_includes outcomes, "| no | 0 |"
+    refute_includes filtered, "another/example"
+  end
+
+  def test_invalid_runs_and_sidecars_are_isolated_without_printing_private_fields
+    bad_run = add_run
+    File.write(File.join(@root, bad_run, "run.json"), '{"SYNTHETIC PRIVATE')
+    add_usage(bad_run, codex("excluded-model"))
+    future = add_run
+    update(future, "run.json") { |run| run["schema_version"] = 2 }
+    mismatched = add_run
+    update(mismatched, "run.json") { |run| run["run_id"] = future }
+    valid = add_run
+    add_usage(valid, codex("excluded-model"))
+    update(valid, "usage.json") { |usage| usage["run_id"] = future }
+    add_outcome(valid, pull(73))
+    update(valid, "outcome.json") { |outcome| outcome["pull_requests"].first["identity"]["repository"] = 42 }
+    negative = add_run
+    add_usage(negative, codex("excluded-model"))
+    update(negative, "usage.json") { |usage| usage["observed_totals"]["input_total"] = -1 }
+    add_outcome(negative, pull(73))
+    update(negative, "outcome.json") { |outcome| outcome["source_run_schema_version"] = 2 }
+
+    markdown = report
+    assert_includes markdown, "- Source run count: 2"
+    assert_includes markdown, "Invalid or skipped run records in selected root (before filtering): 3"
+    assert_includes markdown, "| sidecar invalid or unsupported | 2 |"
+    assert_includes markdown, "run.json · malformed JSON (1): #{bad_run}"
+    assert_includes markdown, "run.json · unsupported schema version (1): #{future}"
+    assert_includes markdown, "run.json · run ID does not match its directory (1): #{mismatched}"
+    assert_includes markdown, "usage.json · run ID does not match its directory (1): #{valid}"
+    assert_includes markdown, "usage.json · failed v1 field or consistency validation (1): #{negative}"
+    assert_includes markdown, "outcome.json · failed v1 field or consistency validation (1): #{valid}"
+    assert_includes markdown, "outcome.json · unsupported schema version (1): #{negative}"
+    refute_includes markdown, "SYNTHETIC PRIVATE"
+    refute_includes markdown, "excluded-model"
+  end
+
+  def test_snapshot_is_deterministic_and_read_only_and_output_is_protected
+    run = add_run
+    add_usage(run, codex("model|[output]"))
+    add_outcome(run, pull(73))
+    task = File.join(@root, run, "task.txt")
+    File.write(task, "SYNTHETIC TASK SNAPSHOT")
+    contents = source_contents
+    expected = report
+    refute_includes expected, "SYNTHETIC TASK SNAPSHOT"
+    refute_includes expected, @scratch
+    assert_includes expected, "model&#124;&#91;output&#93;"
+    assert_equal(expected, report)
+    output = File.join(@scratch, "report.md")
+    File.write(output, "old report")
+    assert_empty report("--output", output)
+    assert_equal expected, File.read(output)
+    assert_equal contents, source_contents
+
+    alias_root = File.join(@scratch, "aliased-root")
+    File.symlink(@root, alias_root)
+    alias_file = File.join(@scratch, "aliased-run.md")
+    File.symlink(File.join(@root, run, "run.json"), alias_file)
+    [File.join(alias_root, "report.md"), alias_file, task].each do |destination|
+      _, error, status = cli("--output", destination)
+      assert_equal 1, status.exitstatus
+      assert_match(/outside telemetry storage|without links/, error)
+    end
+    assert_equal contents, source_contents
+  end
+
+  def test_linked_records_are_skipped
+    first = add_run
+    second = add_run
+    File.symlink(File.join(@root, first, "run.json"), File.join(@root, second, "usage.json"))
+    linked_id = "run-20260131T235000Z-#{"f" * 32}"
+    File.symlink(File.join(@root, first), File.join(@root, linked_id))
+    markdown = report
+    assert_includes markdown, "- Source run count: 2"
+    assert_includes markdown, "usage.json · expected a regular file without a symbolic link (1): #{second}"
+    assert_includes markdown, "run.json · run directory is not a regular directory (1): #{linked_id}"
+  end
+
+  private
+
+  def cli(*arguments, explicit: true, env: {})
+    defaults = {"AGENT_TELEMETRY_DIR" => @root, "XDG_DATA_HOME" => nil, "HOME" => @scratch}
+    root = explicit ? ["--telemetry-dir", @root] : []
+    Open3.capture3(defaults.merge(env), RbConfig.ruby, SCRIPT, "--as-of", AS_OF, *root, *arguments)
+  end
+
+  def report(...)
+    output, error, status = cli(...)
+    assert status.success?, error
+    assert_empty error
+    output
+  end
+
+  def section(markdown, title)
+    level = title[/\A#+/].length
+    content = markdown.split("#{title}\n", 2).fetch(1)
+    content.split(/^\#{1,#{level}} /, 2).first
+  end
+
+  def source_contents
+    Dir.glob(File.join(@root, "*", "*")).sort.to_h { |path| [path, File.binread(path)] }
+  end
+
+  def store(run_id, name, record)
+    File.write(File.join(@root, run_id, name), JSON.generate(record))
+  end
+
+  def update(run_id, name)
+    record = JSON.parse(File.read(File.join(@root, run_id, name)))
+    yield record
+    store(run_id, name, record)
+  end
+
+  def add_run(start: FIRST, state: "completed", kind: "github", repository: REPOSITORY, client: "codex-cli")
+    @ordinal += 1
+    run_id = format("run-20260131T235000Z-%032x", @ordinal)
+    FileUtils.mkdir_p(File.join(@root, run_id))
+    unavailable = {"evidence_kind" => "unavailable", "value" => nil}
+    unavailable_config = unavailable.merge("source" => nil)
+    requested = {"evidence_kind" => "launcher_requested", "value" => "requested-model", "source" => "argument"}
+    harness = (client == "codex-cli") ? "codex" : "claude-explore"
+    store(run_id, "run.json", {
+      "schema_version" => 1, "run_id" => run_id, "state" => state,
+      "runtime" => {"client" => {"id" => client, "version" => unavailable},
+                    "harness" => {"id" => "agent-development-framework/#{harness}", "version" => 1, "revision" => "sha256:#{"a" * 64}"},
+                    "session" => {"evidence_kind" => "launcher_requested", "value" => "shared-session"}},
+      "configuration" => {"model" => {"requested" => requested, "initial_effective" => unavailable_config},
+                          "reasoning_effort" => {"requested" => unavailable_config, "initial_effective" => unavailable_config}, "configuration_stability" => "unknown"},
+      "repository" => {"identity" => {"kind" => kind, "value" => repository}, "start" => nil, "finish" => nil},
+      "task" => {"source" => "unavailable", "identifier" => nil, "content_sha256" => nil, "snapshot" => nil},
+      "timing" => {"run_started_at" => start, "child_started_at" => start, "child_finished_at" => [start, FINISHED].max,
+                   "run_finished_at" => [start, FINISHED].max, "calendar_elapsed_ms" => 1_800_000},
+      "termination" => {"child_exit_code" => (0 if state == "completed"), "signal" => ("INT" if state == "interrupted"), "reason" => state},
+      "extensions" => {}
+    })
+    run_id
+  end
+
+  def codex(model, input: 10, cache: 2, write: 5)
+    native = {"kind" => "codex_response_completed", "input_token_count" => input, "cached_token_count" => cache,
+              "cache_write_token_count" => write, "output_token_count" => 7, "reasoning_token_count" => 3}
+    tokens = [input, (input - cache if cache && cache <= input), cache, write, 7, 3]
+    measurement("openai", model, native, tokens)
+  end
+
+  def claude(cost:)
+    estimate = {"currency" => "USD", "semantics" => "runtime_estimated", "usd_micros" => cost} if cost
+    native = {"kind" => "claude_code_api_request", "input_tokens" => 20, "cache_read_tokens" => 4,
+              "cache_creation_tokens" => 6, "output_tokens" => 7}
+    measurement("anthropic", "claude-model", native, [30, 20, 4, 6, 7, nil], estimate)
+  end
+
+  def measurement(provider, model, native, tokens, estimate = nil)
+    {"provider" => provider, "model" => model, "provider_session_id" => "shared-session", "tokens" => token_fields.zip(tokens).to_h,
+     "native_usage" => native, "runtime_cost" => estimate, "request_source" => nil, "service_tier" => nil, "reasoning_effort" => nil, "duration_ms" => nil}
+  end
+
+  def token_fields
+    %w[input_total input_uncached input_cache_read input_cache_write output_total output_reasoning]
+  end
+
+  def add_usage(run, *measurements, state: "complete", reason: nil, warnings: [])
+    is_claude = measurements.first&.fetch("provider") == "anthropic"
+    count = measurements.length
+    numeric = token_fields.to_h do |field|
+      values = measurements.map { |item| item.dig("tokens", field) }
+      [field, (values.sum if %w[complete partial].include?(state) && values.none?(&:nil?))]
+    end
+    amounts = measurements.filter_map { |item| item.dig("runtime_cost", "usd_micros") }
+    cost_state, cost_reason = if count.zero?
+      ["not_applicable", nil]
+    elsif amounts.empty?
+      ["unavailable", is_claude ? "runtime_cost_missing" : "source_does_not_report_cost"]
+    elsif amounts.length < count
+      ["partial", "runtime_cost_missing"]
+    else
+      ["complete", nil]
+    end
+    source = if %w[complete partial].include?(state)
+      is_claude ? "claude_code_otel_api_request_v1" : "codex_otel_response_completed_v1"
+    end
+    reason ||= {"unavailable" => "collector_unavailable", "disabled" => "usage_telemetry_disabled"}[state]
+    store(run, "usage.json", {
+      "schema_version" => 1, "run_id" => run,
+      "collection" => {"state" => state, "source_interface" => source, "client_version" => nil, "finalized_at" => FINISHED, "reason" => reason, "warnings" => warnings},
+      "measurements" => measurements.each_with_index.map { |item, index| item.merge("sequence" => index + 1) },
+      "provider_sessions" => count.zero? ? [] : ["shared-session"],
+      "observed_totals" => numeric.merge("measurement_count" => count),
+      "cost_summary" => {"state" => cost_state, "reason" => cost_reason, "observed_usd_micros" => (amounts.sum unless amounts.empty?),
+                         "semantics" => ("runtime_estimated" unless amounts.empty?), "currency" => ("USD" unless amounts.empty?),
+                         "measurement_count" => count, "priced_measurement_count" => amounts.length}
+    })
+  end
+
+  def pull(number, lifecycle: "open", created: FIRST, merged: nil, observed: FINISHED, reviews: [], post: nil, repository: REPOSITORY)
+    identity = {"repository" => repository, "number" => number}
+    current = %w[draft head_repository head_ref head_sha base_repository base_ref base_sha updated_at closed_at merge_commit_sha].to_h { |key| [key, nil] }
+    history = reviews.each_with_index.map do |sha, index|
+      {"commit_id" => sha, "state" => "COMMENTED", "source_id" => "review-#{index}", "submitted_at" => FIRST, "dismissed_at" => nil,
+       "reviewer_login" => nil, "reviewer_type" => nil, "source_kind" => "github_pull_review", "first_observed_at" => observed, "last_observed_at" => observed}
+    end
+    first = if reviews.empty?
+      "not_applicable"
+    else
+      reviews.first ? "available" : "unavailable"
+    end
+    {
+      "identity" => identity.merge("node_id" => nil),
+      "association" => identity.merge("first_observed_at" => observed, "last_observed_at" => observed,
+        "established_by" => ["unique_head_branch"], "supporting_evidence" => []),
+      "current" => current.merge("lifecycle" => lifecycle, "created_at" => created, "merged_at" => merged, "observed_at" => observed),
+      "head_history" => [], "commits" => [], "timeline_events" => [], "reviews" => history, "checks_by_sha" => [],
+      "derived" => {"reviewed_revision_count" => reviews.compact.uniq.length, "first_reviewed_revision" => {"state" => first, "sha" => reviews.first},
+                    "post_first_review_change_observed" => post || ((first == "available") ? "yes" : first), "merged_on_first_reviewed_revision" => "not_applicable"}
+    }
+  end
+
+  def add_outcome(run, *pulls, at: FINISHED, state: "complete", correlation: "matched", candidates: [])
+    store(run, "outcome.json", {
+      "schema_version" => 1, "source_run_schema_version" => 1, "run_id" => run,
+      "reconciliation" => {"last_attempted_at" => at, "last_successful_at" => at, "attempt_count" => 1, "observation_state" => state,
+                           "automatic_state" => "quiescent", "next_eligible_at" => nil, "last_error" => nil},
+      "correlation" => {"state" => correlation, "associations" => pulls.map { |pull| pull.fetch("association") }, "candidates" => candidates},
+      "pull_requests" => pulls
+    })
+  end
+end
