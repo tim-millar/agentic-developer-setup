@@ -9,6 +9,7 @@ require "tmpdir"
 
 class AgentRunReportingTest < Minitest::Test
   SCRIPT = File.expand_path("../scripts/report_agent_runs.rb", __dir__)
+  RUNS_CLI = File.expand_path("../scripts/ads-agent-runs", __dir__)
   REPOSITORY = "example-owner/example-repo"
   FIRST = "2026-01-31T23:50:00.000Z"
   FINISHED = "2026-02-01T00:20:00.000Z"
@@ -406,6 +407,42 @@ class AgentRunReportingTest < Minitest::Test
     assert_includes markdown, "- Source run count: 2"
     assert_includes markdown, "usage.json · expected a regular file without a symbolic link (1): #{second}"
     assert_includes markdown, "run.json · run directory is not a regular directory (1): #{linked_id}"
+  end
+
+  def test_human_cli_lists_shows_and_reuses_the_existing_reporter
+    run = add_run
+    add_usage(run, codex("observed-model"))
+    File.write(File.join(@root, run, "task.txt"), "SYNTHETIC PRIVATE TASK CONTENT")
+    list, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Started UTC\s+Run ID/, list)
+    assert_includes list, run
+    show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes show, "Initial effective model: unavailable"
+    assert_includes show, "observed-model"
+    assert_includes show, "task.txt:"
+    refute_includes show, "SYNTHETIC PRIVATE TASK CONTENT"
+    expected = report("--as-of", AS_OF)
+    actual, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "report", "--telemetry-dir", @root, "--as-of", AS_OF)
+    assert status.success?, error
+    assert_equal expected, actual
+  end
+
+  def test_human_cli_argument_errors_and_ambiguous_prefix
+    first = add_run
+    second = add_run
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--all", "--limit", "2", "--telemetry-dir", @root)
+    assert_equal 2, status.exitstatus
+    assert_includes error, "cannot be combined"
+    prefix = first[0, 12]
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", prefix, "--telemetry-dir", @root)
+    assert_equal 2, status.exitstatus
+    assert_includes error, "ambiguous"
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "unknown")
+    assert_equal 2, status.exitstatus
+    assert_includes error, "unknown command"
+    refute_equal first, second
   end
 
   private
