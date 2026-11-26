@@ -2,6 +2,7 @@
 
 require "json"
 require "optparse"
+require "stringio"
 require "time"
 require_relative "agent_run_reporting/markdown"
 
@@ -253,7 +254,7 @@ module AgentRunCLI
           validator = (name == "usage.json") ? AgentRunUsage::Validator : AgentRunOutcomes::Validator
           catalog.sidecar_state(entry, name, validator)
         end
-        lines << "  #{name}: #{path} (#{state})"
+        lines << "  #{name}: #{safe(path)} (#{state})"
       end
       lines.join("\n") + "\n"
     end
@@ -292,7 +293,17 @@ module AgentRunCLI
 
     def run_report(args)
       require_relative "../scripts/report_agent_runs"
-      AgentRunReporting::Command.new.run(args)
+      return AgentRunReporting::Command.new.run(args) unless args.any? { |arg| %w[-h --help].include?(arg) }
+
+      original_stdout = $stdout
+      captured = StringIO.new
+      $stdout = captured
+      status = AgentRunReporting::Command.new.run(args)
+      body = captured.string.sub(/\AUsage: [^\n]+/, "Usage: ads-agent-runs report [options]")
+      original_stdout.write(body)
+      status
+    ensure
+      $stdout = original_stdout if original_stdout
     end
 
     def catalog(options)
@@ -316,7 +327,7 @@ module AgentRunCLI
 
     def snapshot_state(path)
       stat = File.lstat(path)
-      stat.file? ? "available" : "unavailable or unusable"
+      (stat.file? && File.readable?(path)) ? "available" : "unavailable or unusable"
     rescue Errno::ENOENT
       "absent"
     rescue SystemCallError

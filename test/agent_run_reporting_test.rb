@@ -442,6 +442,9 @@ class AgentRunReportingTest < Minitest::Test
     _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "unknown")
     assert_equal 2, status.exitstatus
     assert_includes error, "unknown command"
+    help, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "report", "--help")
+    assert status.success?, error
+    assert_includes help, "Usage: ads-agent-runs report"
     refute_equal first, second
   end
 

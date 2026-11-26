@@ -186,7 +186,11 @@ class AgentRunsInstaller
       parts = relative.split("/")
       (1...parts.length).map { |count| File.join(@payload, *parts.first(count)) }
     end.uniq.sort_by { |path| -path.length }
-    directories.each { |path| Dir.rmdir(path) if File.directory?(path) && Dir.empty?(path) }
+    directories.each do |path|
+      Dir.rmdir(path) if File.directory?(path) && Dir.empty?(path)
+    rescue Errno::ENOTEMPTY
+      next
+    end
     Dir.rmdir(@payload) if File.directory?(@payload) && Dir.empty?(@payload)
     puts "Removed ADS-managed ads-agent-runs files"
     0
