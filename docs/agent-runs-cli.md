@@ -20,8 +20,11 @@ The installer reports if `~/.local/bin` is not on `PATH`; add it using the
 instructions for your shell. The installer does not edit shell configuration.
 Run `install` again to update a managed installation. Remove it with
 `ruby scripts/manage_agent_runs.rb uninstall`. Status is read-only. Foreign or
-locally modified files are reported as conflicts and are not overwritten or
-removed. The installed command uses Ruby's standard library and does not need
+locally modified files, unsupported ownership records, symlinks or unexpected
+payload entries are refused and are not overwritten or removed. Updates stage
+and verify the replacement before publishing; an operational failure restores
+the prior usable installation. Removal deletes only the verified managed
+files. The installed command uses Ruby's standard library and does not need
 the checkout, Bundler, credentials, or a network connection.
 
 ## Commands
@@ -32,7 +35,10 @@ ads-agent-runs show <run_id|unique-prefix|latest> [--telemetry-dir ABSOLUTE_PATH
 ads-agent-runs report [--telemetry-dir ABSOLUTE_PATH] [--repository OWNER/REPO] [--as-of YYYY-MM-DDTHH:MM:SSZ] [--output ABSOLUTE_PATH]
 ```
 
-No command prints help. `-h` and `--help` work globally and per command.
+Running `ads-agent-runs` without a command prints global usage. `-h` and
+`--help` work globally and per command. Invalid options,
+malformed selectors, and unexpected arguments are argument errors (exit 2); a
+valid selector with no matching run is an operational error (exit 1).
 `list` defaults to the 20 newest valid runs. It sorts by parsed UTC start time,
 then full run ID descending; unusable timestamps follow dated records. `--limit`
 accepts a positive decimal integer and cannot be combined with `--all`.
@@ -47,6 +53,9 @@ execution lifecycle, observed usage, confirmed outcome evidence, and the local
 evidence paths. It never opens or prints `task.txt` contents. Elapsed duration
 is calendar time, including waiting and interruptions. `completed` describes
 execution termination only; it does not mean the implementation was accepted.
+Only complete and partial usage collections expose an observed measurement
+count. Partial counts and totals are labelled as partial observations;
+disabled or unavailable collection does not mean zero provider responses.
 
 `report` invokes the existing longitudinal Markdown reporter and preserves its
 aggregation and output-file rules. Give `--as-of` an explicit UTC timestamp to

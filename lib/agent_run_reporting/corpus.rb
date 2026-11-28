@@ -9,6 +9,51 @@ require_relative "../agent_run_outcomes/validator"
 module AgentRunReporting
   class InputError < StandardError; end
 
+  class RecordReader
+    Result = Data.define(:record, :state, :reason, :path)
+
+    def self.read(directory, run_id, name, validator_class, schema: nil)
+      path = File.join(directory, name)
+      begin
+        stat = File.lstat(path)
+      rescue Errno::ENOENT
+        return Result.new(nil, (name == "run.json") ? "invalid" : "absent",
+          (name == "run.json") ? "missing run record" : "sidecar absent", path)
+      end
+      return invalid(path, "expected a regular file without a symbolic link") unless stat.file?
+
+      nofollow = File.const_defined?(:NOFOLLOW) ? File::NOFOLLOW : 0
+      content = File.open(path, File::RDONLY | nofollow) do |file|
+        opened = file.stat
+        return invalid(path, "evidence changed while opening") unless opened.file? && opened.dev == stat.dev && opened.ino == stat.ino
+        file.read.force_encoding(Encoding::UTF_8)
+      end
+      return invalid(path, "invalid UTF-8") unless content.valid_encoding?
+
+      record = JSON.parse(content)
+      return invalid(path, "expected a JSON object") unless record.is_a?(Hash)
+      return invalid(path, "run ID does not match its directory") unless record["run_id"] == run_id
+
+      versions = [record["schema_version"]]
+      versions << record["source_run_schema_version"] if validator_class == AgentRunOutcomes::Validator
+      if versions.any? { |version| version.is_a?(Integer) && version != 1 }
+        return invalid(path, "unsupported schema version")
+      end
+      options = schema ? {schema: schema} : {}
+      return invalid(path, "failed v1 field or consistency validation") unless validator_class.new(record, **options).validate
+
+      Result.new(record, "valid", nil, path)
+    rescue JSON::ParserError
+      invalid(path, "malformed JSON")
+    rescue SystemCallError
+      invalid(path, "record could not be read")
+    end
+
+    def self.invalid(path, reason)
+      Result.new(nil, "invalid", reason, path)
+    end
+  end
+
   def self.utc_timestamp(value, precision: 3)
     return unless value
 
@@ -118,32 +163,11 @@ module AgentRunReporting
     end
 
     def load_record(directory, run_id, name, validator_class, **options)
-      path = File.join(directory, name)
-      stat = File.lstat(path)
-      return record_error(run_id, name, "expected a regular file without a symbolic link") unless stat.file?
+      result = RecordReader.read(directory, run_id, name, validator_class, **options)
+      return [result.record, nil] if result.state == "valid"
+      return [nil, "sidecar absent"] if result.state == "absent"
 
-      json = File.read(path, encoding: "UTF-8")
-      return record_error(run_id, name, "invalid UTF-8") unless json.valid_encoding?
-
-      record = JSON.parse(json)
-      return record_error(run_id, name, "expected a JSON object") unless record.is_a?(Hash)
-      versions = [record["schema_version"]]
-      versions << record["source_run_schema_version"] if validator_class == OUTCOME_VALIDATOR
-      if versions.any? { |version| version.is_a?(Integer) && version != 1 }
-        return record_error(run_id, name, "unsupported schema version")
-      end
-      return record_error(run_id, name, "run ID does not match its directory") unless record["run_id"] == run_id
-      return record_error(run_id, name, "failed v1 field or consistency validation") unless validator_class.new(record, **options).validate
-
-      [record, nil]
-    rescue JSON::ParserError
-      record_error(run_id, name, "malformed JSON")
-    rescue Errno::ENOENT
-      return [nil, "sidecar absent"] unless name == "run.json"
-
-      record_error(run_id, name, "missing run record")
-    rescue SystemCallError
-      record_error(run_id, name, "record could not be read")
+      record_error(run_id, name, result.reason)
     end
 
     def record_error(run_id, name, reason)

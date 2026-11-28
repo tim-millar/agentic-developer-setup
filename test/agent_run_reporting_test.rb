@@ -6,6 +6,8 @@ require "minitest/autorun"
 require "open3"
 require "rbconfig"
 require "tmpdir"
+require_relative "../lib/agent_run_cli"
+require_relative "../scripts/manage_agent_runs"
 
 class AgentRunReportingTest < Minitest::Test
   SCRIPT = File.expand_path("../scripts/report_agent_runs.rb", __dir__)
@@ -446,6 +448,205 @@ class AgentRunReportingTest < Minitest::Test
     assert status.success?, error
     assert_includes help, "Usage: ads-agent-runs report"
     refute_equal first, second
+  end
+
+  def test_public_cli_help_and_selector_argument_contract
+    [[[], /Usage: ads-agent-runs/], [["-h"], /Usage: ads-agent-runs/], [["--help"], /Usage: ads-agent-runs/],
+      [["list", "--help"], /Usage: ads-agent-runs list/], [["list", "-h"], /Usage: ads-agent-runs list/],
+      [["show", "--help"], /Usage: ads-agent-runs show <run_id\|unique-prefix\|latest>/],
+      [["show", "-h"], /Usage: ads-agent-runs show <run_id\|unique-prefix\|latest>/],
+      [["report", "--help"], /Usage: ads-agent-runs report/], [["report", "-h"], /Usage: ads-agent-runs report/]].each do |args, usage|
+      output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, *args)
+      assert_equal 0, status.exitstatus, error
+      assert_match usage, output
+    end
+    [["show"], ["show", ""], ["show", "/tmp/run.json"], ["show", "nonsense"],
+      ["show", "latest", "extra"], ["list", "--help", "extra"], ["--help", "extra"]].each do |args|
+      _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, *args)
+      assert_equal 2, status.exitstatus, args.inspect
+      refute_match(/No valid run|selected telemetry root/, error)
+    end
+  end
+
+  def test_usage_measurement_count_distinguishes_disabled_partial_and_zero
+    disabled = add_run
+    add_usage(disabled, state: "disabled")
+    partial = add_run
+    add_usage(partial, codex("partial-model"), state: "partial", reason: "collector_parse_failed")
+    zero = add_run
+    add_usage(zero)
+    update(zero, "usage.json") do |record|
+      record["observed_totals"] = record["observed_totals"].transform_values { 0 }
+      record["measurements"] = []
+      record["provider_sessions"] = []
+      record["cost_summary"].merge!("state" => "not_applicable", "observed_usd_micros" => nil, "semantics" => nil, "currency" => nil, "measurement_count" => 0, "priced_measurement_count" => 0)
+    end
+    disabled_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", disabled, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Successful-response measurements: unavailable/, disabled_show)
+    refute_match(/Successful-response measurements: 0/, disabled_show)
+    partial_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", partial, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Observed successful-response measurements \(partial\): 1/, partial_show)
+    assert_match(/Observed input total \(partial\): 10/, partial_show)
+    zero_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", zero, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Successful-response measurements: 0/, zero_show)
+    assert_match(/Input total: 0/, zero_show)
+  end
+
+  def test_cli_counts_rejected_symlinked_canonical_runs_without_following_them
+    run = add_run
+    target = File.join(@scratch, "external-run")
+    FileUtils.mkdir_p(target)
+    File.write(File.join(target, "run.json"), "private sentinel")
+    linked_id = "run-20260131T235001Z-#{"f" * 32}"
+    File.symlink(target, File.join(@root, linked_id))
+    output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes output, run
+    assert_match(/Skipped 1 invalid base record/, error)
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", linked_id, "--telemetry-dir", @root)
+    assert_equal 1, status.exitstatus
+    assert_includes error, "unusable base evidence"
+    assert_equal "private sentinel", File.read(File.join(target, "run.json"))
+  end
+
+  def test_selected_sidecars_are_read_once_and_limited_listing_stays_lazy
+    run_ids = 21.times.map { add_run }
+    reads = Hash.new(0)
+    reader = AgentRunReporting::RecordReader.method(:read)
+    spy = lambda do |directory, id, name, validator, **options|
+      reads[name] += 1 if %w[usage.json outcome.json].include?(name)
+      reader.call(directory, id, name, validator, **options)
+    end
+    AgentRunReporting::RecordReader.define_singleton_method(:read, spy)
+    begin
+      output, _error = capture_io do
+        @cli_status = AgentRunCLI::Command.new.run(["list", "--telemetry-dir", @root])
+      end
+      assert_equal 0, @cli_status
+      assert_includes output, run_ids.last
+    ensure
+      AgentRunReporting::RecordReader.define_singleton_method(:read, reader)
+    end
+    assert_equal 20, reads["usage.json"]
+    assert_equal 20, reads["outcome.json"]
+
+    reads.clear
+    AgentRunReporting::RecordReader.define_singleton_method(:read, spy)
+    begin
+      capture_io { @cli_status = AgentRunCLI::Command.new.run(["show", run_ids.first, "--telemetry-dir", @root]) }
+    ensure
+      AgentRunReporting::RecordReader.define_singleton_method(:read, reader)
+    end
+    assert_equal 1, reads["usage.json"]
+    assert_equal 1, reads["outcome.json"]
+  end
+
+  def test_listing_filters_before_limits_and_handles_large_limits
+    codex_run = add_run(repository: REPOSITORY, client: "codex-cli")
+    claude_run = add_run(repository: "Other-Owner/Other-Repo", client: "claude-code")
+    path_run = add_run(kind: "path_digest", repository: "sha256:#{"c" * 64}")
+    19.times { add_run }
+    output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes output, path_run
+    assert_match(/Displayed 20 run\(s\); 2 additional valid run\(s\) omitted\./, output)
+    all, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--all", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes all, codex_run
+    assert_includes all, claude_run
+
+    filtered, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--repository", "OTHER-OWNER/OTHER-REPO", "--limit", "1", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes filtered, claude_run
+    refute_includes filtered, codex_run
+    refute_includes filtered, path_run
+    huge, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--limit", "999999999999999999999999999999", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes huge, path_run
+    assert_equal 22, huge.scan(/run-\d{8}T\d{6}Z-[0-9a-f]{32}/).length
+  end
+
+  def test_snapshot_is_never_opened_and_terminal_controls_are_escaped
+    run = add_run
+    update(run, "run.json") do |record|
+      record["task"] = {"source" => "local_prompt", "identifier" => "safe\nINJECTED", "content_sha256" => "sha256:#{"a" * 64}", "snapshot" => "task.txt"}
+    end
+    snapshot = File.join(@root, run, "task.txt")
+    File.write(snapshot, "synthetic private task contents")
+    original_open = File.method(:open)
+    guarded_open = lambda do |path, *args, **kwargs, &block|
+      raise "task snapshot must not be opened" if File.expand_path(path.to_s) == File.expand_path(snapshot)
+      original_open.call(path, *args, **kwargs, &block)
+    end
+    output = nil
+    File.define_singleton_method(:open, guarded_open)
+    begin
+      output, _error = capture_io do
+        @cli_status = AgentRunCLI::Command.new.run(["show", run, "--telemetry-dir", @root])
+      end
+    ensure
+      File.define_singleton_method(:open, original_open)
+    end
+    assert_equal 0, @cli_status
+    assert_includes output, "safe\\u000AINJECTED"
+    refute_includes output, "synthetic private task contents"
+    refute_includes output, "\nINJECTED"
+
+    FileUtils.rm(snapshot)
+    external = File.join(@scratch, "private-task")
+    File.write(external, "external private sentinel")
+    File.symlink(external, snapshot)
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "unavailable or unusable"
+    refute_includes shown, "external private sentinel"
+    assert_equal "external private sentinel", File.read(external)
+  end
+
+  def test_installed_report_matches_populated_corpus_from_outside_checkout
+    first = add_run
+    add_usage(first, codex("report-model"))
+    add_outcome(first, pull(71, lifecycle: "merged", merged: FINISHED, reviews: ["b" * 40], post: "yes"))
+    add_run(repository: "other-owner/other-repo") # Historical incomplete run: both sidecars absent.
+    install_home = File.join(@scratch, "installed-home")
+    FileUtils.mkdir_p(install_home)
+    data = File.join(install_home, "data")
+    env = {"HOME" => install_home, "XDG_DATA_HOME" => data, "PATH" => "/usr/bin:/bin"}
+    source_copy = File.join(@scratch, "install-source")
+    AgentRunsInstaller::FILES.each do |relative|
+      source = File.expand_path("../#{relative}", __dir__)
+      target = File.join(source_copy, relative)
+      FileUtils.mkdir_p(File.dirname(target))
+      FileUtils.cp(source, target)
+    end
+    install_output, install_error = capture_io do
+      @install_status = AgentRunsInstaller.run(["install"], env: env, source_root: source_copy)
+    end
+    assert_equal 0, @install_status, install_error
+    assert_includes install_output, "Installed"
+    installed = File.join(install_home, ".local/bin/ads-agent-runs")
+    options = ["--telemetry-dir", @root, "--as-of", AS_OF]
+    expected, error, status = Open3.capture3(RbConfig.ruby, SCRIPT, *options)
+    assert status.success?, error
+    unavailable_copy = "#{source_copy}.unavailable"
+    File.rename(source_copy, unavailable_copy)
+    begin
+      actual, error, status = Open3.capture3(env, installed, "report", *options, chdir: "/tmp")
+      assert status.success?, error
+      assert_equal expected, actual
+      listed, error, status = Open3.capture3(env, installed, "list", "--telemetry-dir", @root, chdir: "/tmp")
+      assert status.success?, error
+      assert_includes listed, first
+      shown, error, status = Open3.capture3(env, installed, "show", first, "--telemetry-dir", @root, chdir: "/tmp")
+      assert status.success?, error
+      %w[Run Task Execution Usage Outcome Evidence].each { |heading| assert_includes shown, heading }
+      assert_includes shown, "example-owner/example-repo#71"
+    ensure
+      File.rename(unavailable_copy, source_copy) if File.exist?(unavailable_copy)
+    end
   end
 
   private

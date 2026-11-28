@@ -11,13 +11,15 @@ module AgentRunCLI
 
   class Catalog
     Entry = Data.define(:id, :path, :run, :started)
-    attr_reader :root, :invalid
+    attr_reader :root, :invalid, :entries
 
     def initialize(root, explicit:, repository:)
       raise AgentRunReporting::InputError, "Telemetry root must be absolute" unless root.start_with?("/")
       @root = AgentRunReporting::Corpus.canonical_path(File.expand_path(root))
       @invalid = 0
       @invalid_ids = []
+      @sidecars = {}
+      @usage_schema = nil
       @entries = []
       names = begin
         Dir.children(@root)
@@ -30,18 +32,17 @@ module AgentRunCLI
       raise AgentRunReporting::InputError, "Cannot search selected telemetry root" unless !File.exist?(@root) || File.executable?(@root)
       names.grep(AgentRunTelemetry::Validator::RUN_ID).sort.each do |id|
         path = File.join(@root, id)
-        next if File.symlink?(path)
-        unless File.directory?(path)
+        result = if File.symlink?(path) || !File.directory?(path)
+          AgentRunReporting::RecordReader.invalid(path, "run directory is not a regular directory")
+        else
+          AgentRunReporting::RecordReader.read(path, id, "run.json", AgentRunTelemetry::Validator)
+        end
+        unless result.state == "valid"
           @invalid += 1
           @invalid_ids << id
           next
         end
-        record = read_record(path, id, "run.json", AgentRunTelemetry::Validator)
-        unless record
-          @invalid += 1
-          @invalid_ids << id
-          next
-        end
+        record = result.record
         identity = record.dig("repository", "identity")
         next if repository && (identity["kind"] != "github" || identity["value"].casecmp?(repository) == false)
         time = AgentRunReporting.utc_timestamp(record.dig("timing", "run_started_at"))
@@ -63,28 +64,21 @@ module AgentRunCLI
       raise AgentRunReporting::InputError, "Cannot read selected telemetry root"
     end
 
-    attr_reader :entries
-
     def select(selector)
       return entries.first if selector == "latest"
+      raise Error, "Selected run has unusable base evidence" if @invalid_ids.include?(selector)
       matches = entries.select { |entry| entry.id.start_with?(selector) }
-      raise Error, "Selected run has unusable base evidence" if matches.empty? && @invalid_ids.include?(selector)
       raise Error, "No valid run matches that selector" if matches.empty?
       raise ArgumentError, "Run selector is ambiguous; provide a longer prefix" if matches.length > 1
       matches.first
     end
 
-    def sidecar(entry, name, validator)
-      schema = (name == "usage.json") ? JSON.parse(File.binread(AgentRunUsage::Validator::SCHEMA_PATH)) : nil
-      read_record(entry.path, entry.id, name, validator, schema: schema)
-    rescue SystemCallError, JSON::ParserError
-      nil
-    end
-
-    def sidecar_state(entry, name, validator)
-      path = File.join(entry.path, name)
-      return "absent" unless File.exist?(path) || File.symlink?(path)
-      sidecar(entry, name, validator) ? "present and valid" : "invalid or unsupported"
+    def sidecar(entry, name)
+      @sidecars[[entry.id, name]] ||= begin
+        validator = (name == "usage.json") ? AgentRunUsage::Validator : AgentRunOutcomes::Validator
+        schema = usage_schema if name == "usage.json"
+        AgentRunReporting::RecordReader.read(entry.path, entry.id, name, validator, schema: schema)
+      end
     end
 
     def evidence_path(entry, name)
@@ -93,27 +87,21 @@ module AgentRunCLI
 
     private
 
-    def read_record(directory, id, name, validator, schema: nil)
-      path = File.join(directory, name)
-      stat = File.lstat(path)
-      return nil unless stat.file?
-      content = File.read(path, encoding: "UTF-8")
-      return nil unless content.valid_encoding?
-      record = JSON.parse(content)
-      return nil unless record.is_a?(Hash) && record["run_id"] == id
-      versions = [record["schema_version"]]
-      versions << record["source_run_schema_version"] if validator == AgentRunOutcomes::Validator
-      return nil if versions.any? { |version| version.is_a?(Integer) && version != 1 }
-      options = schema ? {schema: schema} : {}
-      validator.new(record, **options).validate ? record : nil
+    def usage_schema
+      @usage_schema ||= JSON.parse(File.binread(AgentRunUsage::Validator::SCHEMA_PATH))
     rescue SystemCallError, JSON::ParserError
-      nil
+      raise AgentRunReporting::InputError, "Cannot read bundled usage schema"
     end
   end
 
   class Command
     def run(argv)
-      if argv.empty? || %w[-h --help].include?(argv.first)
+      if argv.empty?
+        puts top_help
+        return 0
+      end
+      if %w[-h --help].include?(argv.first)
+        raise OptionParser::InvalidArgument, "unexpected arguments after help" unless argv.length == 1
         puts top_help
         return 0
       end
@@ -134,16 +122,20 @@ module AgentRunCLI
 
     private
 
-    def parse(args, command, defaults = {})
+    def parse(args, command, defaults = {}, positionals: 0)
       options = defaults
       parser = OptionParser.new do |p|
-        p.banner = "Usage: ads-agent-runs #{command} [options]"
+        p.banner = if command == "show"
+          "Usage: ads-agent-runs show <run_id|unique-prefix|latest> [options]"
+        else
+          "Usage: ads-agent-runs #{command} [options]"
+        end
         p.on("--telemetry-dir ABSOLUTE_PATH") { |v| options[:root] = absolute(v) }
         p.on("--repository OWNER/REPO") do |v|
           raise OptionParser::InvalidArgument, "expected OWNER/REPO" unless AgentRunTelemetry::Validator::GITHUB_REPOSITORY.match?(v)
           options[:repository] = v.downcase
         end
-        p.on("-h", "--help") {
+        p.on("-h", "--help", "Show usage") {
           puts p
           options[:help] = true
         }
@@ -151,8 +143,8 @@ module AgentRunCLI
       end
       parser.require_exact = true
       parser.parse!(args)
-      raise OptionParser::InvalidArgument, "unexpected positional arguments" unless args.empty?
-      [options, parser]
+      raise OptionParser::InvalidArgument, "unexpected positional arguments" if args.length > positionals
+      [options, parser, args.dup]
     end
 
     def run_list(args)
@@ -166,7 +158,7 @@ module AgentRunCLI
       return 0 if options[:help]
       raise OptionParser::InvalidArgument, "--limit and --all cannot be combined" if options[:all] && options[:limit_specified]
       catalog = catalog(options)
-      selected = options[:all] ? catalog.entries : catalog.entries.first(options[:limit])
+      selected = options[:all] ? catalog.entries : catalog.entries.first([options[:limit], catalog.entries.length].min)
       if selected.empty?
         puts "No recorded runs in the selected scope."
       else
@@ -183,20 +175,24 @@ module AgentRunCLI
 
     def list_row(catalog, entry)
       run = entry.run
-      usage = catalog.sidecar(entry, "usage.json", AgentRunUsage::Validator)
-      outcome = catalog.sidecar(entry, "outcome.json", AgentRunOutcomes::Validator)
+      usage = catalog.sidecar(entry, "usage.json")
+      outcome = catalog.sidecar(entry, "outcome.json")
       [entry.started&.iso8601(3) || "unavailable", entry.id,
         run.dig("repository", "identity", "value"), run.dig("task", "identifier") || "unavailable",
         run.dig("runtime", "client", "id"), run["state"],
-        usage&.dig("collection", "state") || catalog.sidecar_state(entry, "usage.json", AgentRunUsage::Validator),
-        outcome&.dig("correlation", "state") || catalog.sidecar_state(entry, "outcome.json", AgentRunOutcomes::Validator)]
+        usage.record&.dig("collection", "state") || sidecar_label(usage),
+        outcome.record&.dig("correlation", "state") || sidecar_label(outcome)]
     end
 
     def run_show(args)
-      raise OptionParser::MissingArgument, "run selector" if args.empty?
-      selector = args.shift
-      options, = parse(args, "show")
-      return 0 if options[:help]
+      options, _parser, positionals = parse(args, "show", {}, positionals: 1)
+      if options[:help]
+        raise OptionParser::InvalidArgument, "invalid run selector" if positionals.any? && !valid_selector?(positionals.first)
+        return 0
+      end
+      raise OptionParser::MissingArgument, "run selector" if positionals.empty?
+      selector = positionals.first
+      raise OptionParser::InvalidArgument, "invalid run selector" unless valid_selector?(selector)
       catalog = catalog(options)
       entry = catalog.select(selector)
       unless entry
@@ -204,13 +200,13 @@ module AgentRunCLI
         puts "No recorded runs in the selected scope."
         return 0
       end
-      usage = catalog.sidecar(entry, "usage.json", AgentRunUsage::Validator)
-      outcome = catalog.sidecar(entry, "outcome.json", AgentRunOutcomes::Validator)
+      usage = catalog.sidecar(entry, "usage.json")
+      outcome = catalog.sidecar(entry, "outcome.json")
       puts show_record(catalog, entry, usage, outcome)
       0
     end
 
-    def show_record(catalog, entry, usage, outcome)
+    def show_record(catalog, entry, usage_result, outcome_result)
       r = entry.run
       lines = []
       section = ->(title, fields) {
@@ -227,18 +223,20 @@ module AgentRunCLI
         ["Configuration stability", r.dig("configuration", "configuration_stability")]])
       snap = r.dig("task", "snapshot")
       snap_path = snap ? catalog.evidence_path(entry, snap) : nil
+      task_evidence_path = catalog.evidence_path(entry, "task.txt")
       snap_state = if !snap
         "not recorded"
       else
         snapshot_state(snap_path)
       end
+      task_file_state = snapshot_state(task_evidence_path)
       section.call("Task", [["Source", r.dig("task", "source")], ["Identifier", r.dig("task", "identifier")], ["Snapshot", snap_state], ["Snapshot path", snap_path]])
       timing = r["timing"]
       term = r["termination"]
       repos = r["repository"]
       section.call("Execution", [["Started UTC", timestamp(timing["run_started_at"])], ["Finished UTC", timestamp(timing["run_finished_at"])], ["Calendar elapsed", timing["calendar_elapsed_ms"] && format("%02d:%02d:%02d", *timing["calendar_elapsed_ms"].divmod(3_600_000).then { |h, rem| [h, rem / 60_000, (rem % 60_000) / 1000] })], ["State", (r["state"] == "started") ? "started / not finalised" : r["state"]], ["Child exit code", term["child_exit_code"]], ["Signal", term["signal"]], ["Termination reason", term["reason"]], ["Git start", git(repos["start"])], ["Git finish", git(repos["finish"])]])
-      section.call("Usage", usage_fields(usage, catalog.sidecar_state(entry, "usage.json", AgentRunUsage::Validator)))
-      section.call("Outcome", outcome_fields(outcome, catalog.sidecar_state(entry, "outcome.json", AgentRunOutcomes::Validator)))
+      section.call("Usage", usage_fields(usage_result))
+      section.call("Outcome", outcome_fields(outcome_result))
       lines << "Evidence"
       %w[run.json usage.json outcome.json task.txt].each do |name|
         path = catalog.evidence_path(entry, name)
@@ -246,33 +244,49 @@ module AgentRunCLI
           "present and valid"
         elsif name == "task.txt" && snap
           snap_state
-        elsif name == "task.txt" && snapshot_state(path) == "absent"
+        elsif name == "task.txt" && task_file_state == "absent"
           "absent"
         elsif name == "task.txt"
-          "unreferenced or unusable"
+          snap ? snap_state : "unreferenced or unusable"
         else
-          validator = (name == "usage.json") ? AgentRunUsage::Validator : AgentRunOutcomes::Validator
-          catalog.sidecar_state(entry, name, validator)
+          result = (name == "usage.json") ? usage_result : outcome_result
+          sidecar_label(result)
         end
         lines << "  #{name}: #{safe(path)} (#{state})"
       end
       lines.join("\n") + "\n"
     end
 
-    def usage_fields(record, absent_state)
-      return [["Collection", absent_state]] unless record
+    def usage_fields(result)
+      return [["Collection", sidecar_label(result)]] unless result.record
+      record = result.record
       totals = record["observed_totals"] || {}
       cost = record["cost_summary"] || {}
-      fields = [["Collection", record.dig("collection", "state")], ["Reason", record.dig("collection", "reason")], ["Observed provider/model", record["measurements"].map { |m| "#{m["provider"]}/#{m["model"]}" }.uniq.join(", ").then { |s| s.empty? ? "unavailable" : s }], ["Successful-response measurements", record["measurements"].length]]
-      AgentRunUsage::Validator::TOKEN_FIELDS.each { |key| fields << [key, totals[key]] }
+      collection_state = record.dig("collection", "state")
+      measurement_count = if %w[complete partial].include?(collection_state)
+        totals["measurement_count"]
+      end
+      measurement_label = (collection_state == "partial") ? "Observed successful-response measurements (partial)" : "Successful-response measurements"
+      fields = [["Collection", collection_state], ["Reason", record.dig("collection", "reason")], ["Observed provider/model", record["measurements"].map { |m| "#{m["provider"]}/#{m["model"]}" }.uniq.join(", ").then { |s| s.empty? ? "unavailable" : s }], [measurement_label, measurement_count]]
+      dimension_labels = {
+        "input_total" => "Input total", "input_uncached" => "Input uncached",
+        "input_cache_read" => "Input cache read", "input_cache_write" => "Input cache write",
+        "output_total" => "Output total", "output_reasoning" => "Output reasoning"
+      }
+      AgentRunUsage::Validator::TOKEN_FIELDS.each do |key|
+        label = dimension_labels.fetch(key)
+        label = "Observed #{label.downcase} (partial)" if collection_state == "partial"
+        fields << [label, totals[key]]
+      end
       fields << ["Runtime monetary evidence", cost["observed_usd_micros"] && "#{cost["observed_usd_micros"]} USD micros (provider-reported/runtime estimate)"]
       fields << ["Cost state", cost["state"]]
       fields << ["Cost semantics", cost["semantics"]]
       fields
     end
 
-    def outcome_fields(record, absent_state)
-      return [["Evidence", absent_state]] unless record
+    def outcome_fields(result)
+      return [["Evidence", sidecar_label(result)]] unless result.record
+      record = result.record
       rec = record["reconciliation"]
       corr = record["correlation"]
       fields = [["Observation state", rec["observation_state"]], ["Correlation state", corr["state"]]]
@@ -319,6 +333,40 @@ module AgentRunCLI
     def positive(value)
       raise OptionParser::InvalidArgument, "limit must be a positive decimal integer" unless value.match?(/\A[1-9][0-9]*\z/)
       Integer(value, 10)
+    end
+
+    def sidecar_label(result)
+      case result.state
+      when "absent" then "absent"
+      when "invalid" then "invalid or unsupported"
+      else "present and valid"
+      end
+    end
+
+    def valid_selector?(selector)
+      return true if selector == "latest"
+      return false if selector.empty?
+
+      possible_run_id_prefix?(selector)
+    end
+
+    def possible_run_id_prefix?(value)
+      return "run-".start_with?(value) if value.length <= 4
+      return false unless value.start_with?("run-")
+
+      suffix = value.delete_prefix("run-")
+      return suffix.match?(/\A\d{1,8}\z/) if suffix.length <= 8
+      return false unless suffix[0, 8].match?(/\A\d{8}\z/) && suffix[8] == "T"
+
+      time = suffix[9..]
+      return time.match?(/\A\d{1,6}\z/) if time.length <= 6
+      return false unless time[0, 6].match?(/\A\d{6}\z/) && time[6] == "Z"
+
+      id_suffix = time[7..]
+      return true if id_suffix.empty?
+      return false unless id_suffix.start_with?("-")
+
+      id_suffix.delete_prefix("-").match?(/\A[0-9a-f]{0,32}\z/)
     end
 
     def git(state)
