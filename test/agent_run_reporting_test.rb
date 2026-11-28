@@ -6,9 +6,12 @@ require "minitest/autorun"
 require "open3"
 require "rbconfig"
 require "tmpdir"
+require_relative "../lib/agent_run_cli"
+require_relative "../scripts/manage_agent_runs"
 
 class AgentRunReportingTest < Minitest::Test
   SCRIPT = File.expand_path("../scripts/report_agent_runs.rb", __dir__)
+  RUNS_CLI = File.expand_path("../scripts/ads-agent-runs", __dir__)
   REPOSITORY = "example-owner/example-repo"
   FIRST = "2026-01-31T23:50:00.000Z"
   FINISHED = "2026-02-01T00:20:00.000Z"
@@ -406,6 +409,362 @@ class AgentRunReportingTest < Minitest::Test
     assert_includes markdown, "- Source run count: 2"
     assert_includes markdown, "usage.json · expected a regular file without a symbolic link (1): #{second}"
     assert_includes markdown, "run.json · run directory is not a regular directory (1): #{linked_id}"
+  end
+
+  def test_human_cli_lists_shows_and_reuses_the_existing_reporter
+    run = add_run
+    add_usage(run, codex("observed-model"))
+    File.write(File.join(@root, run, "task.txt"), "SYNTHETIC PRIVATE TASK CONTENT")
+    list, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Started UTC\s+Run ID/, list)
+    assert_includes list, run
+    show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes show, "Initial effective model: unavailable"
+    assert_includes show, "Requested model: requested-model"
+    assert_includes show, "observed-model"
+    assert_includes show, "task.txt:"
+    refute_includes show, "SYNTHETIC PRIVATE TASK CONTENT"
+    expected = report("--as-of", AS_OF)
+    actual, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "report", "--telemetry-dir", @root, "--as-of", AS_OF)
+    assert status.success?, error
+    assert_equal expected, actual
+  end
+
+  def test_human_cli_argument_errors_and_ambiguous_prefix
+    first = add_run
+    second = add_run
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--all", "--limit", "2", "--telemetry-dir", @root)
+    assert_equal 2, status.exitstatus
+    assert_includes error, "cannot be combined"
+    prefix = first[0, 12]
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", prefix, "--telemetry-dir", @root)
+    assert_equal 2, status.exitstatus
+    assert_includes error, "ambiguous"
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "unknown")
+    assert_equal 2, status.exitstatus
+    assert_includes error, "unknown command"
+    help, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "report", "--help")
+    assert status.success?, error
+    assert_includes help, "Usage: ads-agent-runs report"
+    refute_equal first, second
+  end
+
+  def test_public_cli_help_and_selector_argument_contract
+    [[[], /Usage: ads-agent-runs/], [["-h"], /Usage: ads-agent-runs/], [["--help"], /Usage: ads-agent-runs/],
+      [["list", "--help"], /Usage: ads-agent-runs list/], [["list", "-h"], /Usage: ads-agent-runs list/],
+      [["show", "--help"], /Usage: ads-agent-runs show <run_id\|unique-prefix\|latest>/],
+      [["show", "-h"], /Usage: ads-agent-runs show <run_id\|unique-prefix\|latest>/],
+      [["report", "--help"], /Usage: ads-agent-runs report/], [["report", "-h"], /Usage: ads-agent-runs report/]].each do |args, usage|
+      output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, *args)
+      assert_equal 0, status.exitstatus, error
+      assert_match usage, output
+    end
+    [["show"], ["show", ""], ["show", "/tmp/run.json"], ["show", "nonsense"],
+      ["show", "latest", "extra"], ["list", "--help", "extra"], ["--help", "extra"]].each do |args|
+      _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, *args)
+      assert_equal 2, status.exitstatus, args.inspect
+      refute_match(/No valid run|selected telemetry root/, error)
+    end
+  end
+
+  def test_usage_measurement_count_distinguishes_disabled_partial_and_zero
+    disabled = add_run
+    add_usage(disabled, state: "disabled")
+    partial = add_run
+    add_usage(partial, codex("partial-model"), state: "partial", reason: "collector_parse_failed")
+    zero = add_run
+    add_usage(zero)
+    update(zero, "usage.json") do |record|
+      record["observed_totals"] = record["observed_totals"].transform_values { 0 }
+      record["measurements"] = []
+      record["provider_sessions"] = []
+      record["cost_summary"].merge!("state" => "not_applicable", "observed_usd_micros" => nil, "semantics" => nil, "currency" => nil, "measurement_count" => 0, "priced_measurement_count" => 0)
+    end
+    disabled_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", disabled, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Successful-response measurements: unavailable/, disabled_show)
+    refute_match(/Successful-response measurements: 0/, disabled_show)
+    partial_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", partial, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Observed successful-response measurements \(partial\): 1/, partial_show)
+    assert_match(/Observed input total \(partial\): 10/, partial_show)
+    zero_show, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", zero, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_match(/Successful-response measurements: 0/, zero_show)
+    assert_match(/Input total: 0/, zero_show)
+  end
+
+  def test_cli_counts_rejected_symlinked_canonical_runs_without_following_them
+    run = add_run
+    target = File.join(@scratch, "external-run")
+    FileUtils.mkdir_p(target)
+    File.write(File.join(target, "run.json"), "private sentinel")
+    linked_id = "run-20260131T235001Z-#{"f" * 32}"
+    File.symlink(target, File.join(@root, linked_id))
+    output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes output, run
+    assert_match(/Skipped 1 invalid base record/, error)
+    _, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", linked_id, "--telemetry-dir", @root)
+    assert_equal 1, status.exitstatus
+    assert_includes error, "unusable base evidence"
+    assert_equal "private sentinel", File.read(File.join(target, "run.json"))
+  end
+
+  def test_selected_sidecars_are_read_once_and_limited_listing_stays_lazy
+    run_ids = 21.times.map { add_run }
+    reads = Hash.new(0)
+    reader = AgentRunReporting::RecordReader.method(:read)
+    spy = lambda do |directory, id, name, validator, **options|
+      reads[name] += 1 if %w[usage.json outcome.json].include?(name)
+      reader.call(directory, id, name, validator, **options)
+    end
+    AgentRunReporting::RecordReader.define_singleton_method(:read, spy)
+    begin
+      output, _error = capture_io do
+        @cli_status = AgentRunCLI::Command.new.run(["list", "--telemetry-dir", @root])
+      end
+      assert_equal 0, @cli_status
+      assert_includes output, run_ids.last
+    ensure
+      AgentRunReporting::RecordReader.define_singleton_method(:read, reader)
+    end
+    assert_equal 20, reads["usage.json"]
+    assert_equal 20, reads["outcome.json"]
+
+    reads.clear
+    AgentRunReporting::RecordReader.define_singleton_method(:read, spy)
+    begin
+      capture_io { @cli_status = AgentRunCLI::Command.new.run(["show", run_ids.first, "--telemetry-dir", @root]) }
+    ensure
+      AgentRunReporting::RecordReader.define_singleton_method(:read, reader)
+    end
+    assert_equal 1, reads["usage.json"]
+    assert_equal 1, reads["outcome.json"]
+  end
+
+  def test_listing_filters_before_limits_and_handles_large_limits
+    codex_run = add_run(repository: REPOSITORY, client: "codex-cli")
+    claude_run = add_run(repository: "Other-Owner/Other-Repo", client: "claude-code")
+    path_run = add_run(kind: "path_digest", repository: "sha256:#{"c" * 64}")
+    19.times { add_run }
+    output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes output, path_run
+    assert_match(/Displayed 20 run\(s\); 2 additional valid run\(s\) omitted\./, output)
+    all, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--all", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes all, codex_run
+    assert_includes all, claude_run
+
+    filtered, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--repository", "OTHER-OWNER/OTHER-REPO", "--limit", "1", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes filtered, claude_run
+    refute_includes filtered, codex_run
+    refute_includes filtered, path_run
+    huge, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "list", "--limit", "999999999999999999999999999999", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes huge, path_run
+    assert_equal 22, huge.scan(/run-\d{8}T\d{6}Z-[0-9a-f]{32}/).length
+  end
+
+  def test_snapshot_is_never_opened_and_terminal_controls_are_escaped
+    run = add_run
+    update(run, "run.json") do |record|
+      record["task"] = {"source" => "local_prompt", "identifier" => "safe\nINJECTED", "content_sha256" => "sha256:#{"a" * 64}", "snapshot" => "task.txt"}
+    end
+    snapshot = File.join(@root, run, "task.txt")
+    File.write(snapshot, "synthetic private task contents")
+    original_open = File.method(:open)
+    guarded_open = lambda do |path, *args, **kwargs, &block|
+      raise "task snapshot must not be opened" if File.expand_path(path.to_s) == File.expand_path(snapshot)
+      original_open.call(path, *args, **kwargs, &block)
+    end
+    output = nil
+    File.define_singleton_method(:open, guarded_open)
+    begin
+      output, _error = capture_io do
+        @cli_status = AgentRunCLI::Command.new.run(["show", run, "--telemetry-dir", @root])
+      end
+    ensure
+      File.define_singleton_method(:open, original_open)
+    end
+    assert_equal 0, @cli_status
+    assert_includes output, "safe\\u000AINJECTED"
+    refute_includes output, "synthetic private task contents"
+    refute_includes output, "\nINJECTED"
+
+    FileUtils.rm(snapshot)
+    external = File.join(@scratch, "private-task")
+    File.write(external, "external private sentinel")
+    File.symlink(external, snapshot)
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "unavailable or unusable"
+    refute_includes shown, "external private sentinel"
+    assert_equal "external private sentinel", File.read(external)
+  end
+
+  def test_show_execution_lifecycles_and_latest_or_unique_selection
+    %w[completed preflight_failed launch_failed runtime_failed launcher_failed interrupted].each do |state|
+      run = add_run(state: state)
+      shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+      assert status.success?, error
+      assert_includes shown, "State: #{state}"
+    end
+
+    started = add_run(state: "started")
+    update(started, "run.json") do |record|
+      record["timing"].merge!("child_finished_at" => nil, "run_finished_at" => nil, "calendar_elapsed_ms" => nil)
+      record["termination"] = {"child_exit_code" => nil, "signal" => nil, "reason" => nil}
+    end
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", started, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "State: started / not finalised"
+    assert_includes shown, "Finished UTC: unavailable"
+    assert_includes shown, "Calendar elapsed: unavailable"
+
+    older = add_run(start: FIRST)
+    unique_id = older.sub(/-[0-9a-f]{32}\z/, "-f#{"0" * 31}")
+    File.rename(File.join(@root, older), File.join(@root, unique_id))
+    update_record = JSON.parse(File.read(File.join(@root, unique_id, "run.json")))
+    update_record["run_id"] = unique_id
+    File.write(File.join(@root, unique_id, "run.json"), JSON.generate(update_record))
+    older = unique_id
+    latest = add_run(start: MARCH)
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", "latest", "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Run ID: #{latest}"
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", older[0, 22], "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Run ID: #{older}"
+  end
+
+  def test_show_projects_usage_and_all_outcome_correlation_states_without_promotion
+    usage_run = add_run
+    add_usage(usage_run, codex("model-one"), codex("model-two", input: 4))
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", usage_run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "openai/model-one, openai/model-two"
+    assert_includes shown, "Successful-response measurements: 2"
+    assert_includes shown, "Runtime monetary evidence: unavailable"
+    refute_match(/billed|invoiced/, shown)
+
+    claude_run = add_run(client: "claude-code")
+    add_usage(claude_run, claude(cost: 123))
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", claude_run, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Output reasoning: unavailable"
+    assert_includes shown, "123 USD micros (provider-reported/runtime estimate)"
+    refute_match(/billed|invoiced/, shown)
+
+    matched = add_run
+    open_pull = pull(73, lifecycle: "open", reviews: [SHA], post: "yes")
+    open_pull["current"]["head_sha"] = SHA
+    open_pull["checks_by_sha"] = [
+      {"sha" => "b" * 40, "check_runs" => [], "statuses" => [], "evidence" => {"checks" => "complete", "statuses" => "complete"}, "observed_check_rollup" => "failing"},
+      {"sha" => SHA, "check_runs" => [], "statuses" => [], "evidence" => {"checks" => "complete", "statuses" => "complete"}, "observed_check_rollup" => "passing"}
+    ]
+    add_outcome(matched, open_pull, pull(74, lifecycle: "merged", merged: FINISHED), pull(75, lifecycle: "closed_unmerged"))
+    matched_evidence = JSON.parse(File.read(File.join(@root, matched, "outcome.json")))
+    matched_validator = AgentRunOutcomes::Validator.new(matched_evidence)
+    assert matched_validator.validate, matched_validator.errors.join("; ")
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", matched, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Correlation state: matched"
+    assert_includes shown, "example-owner/example-repo#73 · open"
+    assert_includes shown, "example-owner/example-repo#74 · merged"
+    assert_includes shown, "example-owner/example-repo#75 · closed_unmerged"
+    assert_includes shown, "Reviewed revisions: 1"
+    assert_includes shown, "Post-first-review change observed: yes"
+    assert_includes shown, "Current-head checks: passing"
+    refute_includes shown, "Current-head checks: failing"
+
+    [
+      ["unmatched", "complete", "unmatched", "github", REPOSITORY, []],
+      ["ambiguous", "complete", "ambiguous", "github", REPOSITORY, [{"repository" => REPOSITORY, "number" => 99, "evidence" => []}]],
+      ["unavailable", "unavailable", "unavailable", "github", REPOSITORY, []],
+      ["not_applicable", "not_applicable", "not_applicable", "path_digest", "sha256:#{"c" * 64}", []]
+    ].each do |identifier, observation, correlation, kind, repository, candidates|
+      run = add_run(kind: kind, repository: repository)
+      add_outcome(run, state: observation, correlation: correlation, candidates: candidates)
+      output, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", run, "--telemetry-dir", @root)
+      assert status.success?, error
+      assert_includes output, "Correlation state: #{correlation}"
+      assert_includes output, "Observation state: #{observation}"
+      refute_includes output, "Confirmed PR: #{repository}#99" if correlation == "ambiguous"
+    end
+
+    invalid_optional = add_run
+    add_usage(invalid_optional, codex("still-valid-usage"))
+    add_outcome(invalid_optional, pull(80))
+    File.write(File.join(@root, invalid_optional, "outcome.json"), "{invalid optional record")
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", invalid_optional, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Observed provider/model: openai/still-valid-usage"
+    assert_includes shown, "Evidence: invalid or unsupported"
+    assert_includes shown, "outcome.json (invalid or unsupported)"
+
+    unavailable_usage = add_run
+    add_usage(unavailable_usage, state: "unavailable", reason: "collector_unavailable")
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", unavailable_usage, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Collection: unavailable"
+    assert_includes shown, "Successful-response measurements: unavailable"
+    refute_match(/Successful-response measurements: 0/, shown)
+
+    invalid_usage = add_run
+    add_outcome(invalid_usage, pull(81))
+    File.write(File.join(@root, invalid_usage, "usage.json"), "{invalid usage record")
+    shown, error, status = Open3.capture3(RbConfig.ruby, RUNS_CLI, "show", invalid_usage, "--telemetry-dir", @root)
+    assert status.success?, error
+    assert_includes shown, "Correlation state: matched"
+    assert_includes shown, "Collection: invalid or unsupported"
+  end
+
+  def test_installed_report_matches_populated_corpus_from_outside_checkout
+    first = add_run
+    add_usage(first, codex("report-model"))
+    add_outcome(first, pull(71, lifecycle: "merged", merged: FINISHED, reviews: ["b" * 40], post: "yes"))
+    add_run(repository: "other-owner/other-repo") # Historical incomplete run: both sidecars absent.
+    install_home = File.join(@scratch, "installed-home")
+    FileUtils.mkdir_p(install_home)
+    data = File.join(install_home, "data")
+    env = {"HOME" => install_home, "XDG_DATA_HOME" => data, "PATH" => "/usr/bin:/bin"}
+    source_copy = File.join(@scratch, "install-source")
+    AgentRunsInstaller::FILES.each do |relative|
+      source = File.expand_path("../#{relative}", __dir__)
+      target = File.join(source_copy, relative)
+      FileUtils.mkdir_p(File.dirname(target))
+      FileUtils.cp(source, target)
+    end
+    install_output, install_error = capture_io do
+      @install_status = AgentRunsInstaller.run(["install"], env: env, source_root: source_copy)
+    end
+    assert_equal 0, @install_status, install_error
+    assert_includes install_output, "Installed"
+    installed = File.join(install_home, ".local/bin/ads-agent-runs")
+    options = ["--telemetry-dir", @root, "--as-of", AS_OF]
+    expected, error, status = Open3.capture3(RbConfig.ruby, SCRIPT, *options)
+    assert status.success?, error
+    unavailable_copy = "#{source_copy}.unavailable"
+    File.rename(source_copy, unavailable_copy)
+    begin
+      actual, error, status = Open3.capture3(env, installed, "report", *options, chdir: "/tmp")
+      assert status.success?, error
+      assert_equal expected, actual
+      listed, error, status = Open3.capture3(env, installed, "list", "--telemetry-dir", @root, chdir: "/tmp")
+      assert status.success?, error
+      assert_includes listed, first
+      shown, error, status = Open3.capture3(env, installed, "show", first, "--telemetry-dir", @root, chdir: "/tmp")
+      assert status.success?, error
+      %w[Run Task Execution Usage Outcome Evidence].each { |heading| assert_includes shown, heading }
+      assert_includes shown, "example-owner/example-repo#71"
+    ensure
+      File.rename(unavailable_copy, source_copy) if File.exist?(unavailable_copy)
+    end
   end
 
   private
